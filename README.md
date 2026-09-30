@@ -63,6 +63,10 @@
 2. `remotion/`：Remotion 合成标题卡、转场、字幕、旁白与混音（`src/data.js` 是分镜与时间线，`npm run render`）。
 3. 旁白与大招喊招：Gemini 3.8 Flash TTS（`tts.py`，`vo-lines.json` / `ult-lines.json`；喊招音色按原著人物性格匹配）。
 
+## 宣传首页
+
+`site/`：宣传首页（宣传片、特色、十二张账号卡、试玩与联机说明），部署在 NAS 的 Traefik 静态站 `http://glory.naszqun.com:47080/`，`/play/` 为单机试玩。改完运行 `site/deploy.sh`；NAS 侧的 compose 与 nginx 配置在 `site/nas/`。
+
 ## 美术资源与费用
 
 图生 3D 与绑骨/动作通过 fal.ai 付费接口完成（经用户同意）：Tripo P1 图生 3D、Meshy 绑骨与动作库；早先一版 Hunyuan3D 模型保留在 `assets/models/*.glb` 作为无动捕时的后备。重新生成的脚本在 Mini 的 `~/glory-3d/`（`p1batch.sh`、`rig.py`、`rig1.py`、`gt/*.mjs`）；本目录 `tools/pull-rigged.sh` 负责拉取与生成清单。

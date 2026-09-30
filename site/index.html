@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>荣耀 Glory</title>
+<meta name="description" content="《全职高手》同人：把小说里的网游《荣耀》做成可以直接玩的网页动作游戏。十二张账号卡、第一人称 / 越肩 / 第三人称、副本与局域网联机。">
+<meta name="theme-color" content="#0d0c0a">
+<meta property="og:title" content="荣耀 Glory">
+<meta property="og:description" content="《全职高手》里的那款网游，现在就在浏览器里。">
+<meta property="og:image" content="img/poster.jpg">
+<link rel="icon" href="play/assets/icons/umbrella.svg" type="image/svg+xml">
+<style>
+@font-face { font-family: GlorySerif; src: url(fonts/glory-serif.woff2) format('woff2'); font-display: swap; }
+:root {
+  --bg: #0d0c0a; --bg2: #15130f; --card: #1b1813; --line: rgba(232, 183, 90, .22);
+  --gold: #e8b75a; --gold2: #f3d69a; --ink: #f1e7d2; --mute: #b7aa8c; --dim: #8a7f69;
+  --serif: GlorySerif, "Songti SC", "Noto Serif SC", serif;
+  --sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --wrap: 1120px;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.75 var(--sans); overflow-x: hidden; }
+img { display: block; max-width: 100%; }
+a { color: var(--gold2); }
+.wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 16px; }
+
+/* ---- 顶栏 ---- */
+.top { position: sticky; top: 0; z-index: 10; background: rgba(13, 12, 10, .82); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid rgba(232, 183, 90, .12); }
+.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+.brand { display: flex; align-items: baseline; gap: 10px; text-decoration: none; color: var(--gold2); }
+.brand b { font: 900 24px/1 var(--serif); letter-spacing: .12em; }
+.brand span { font: 12px/1 Georgia, serif; letter-spacing: .5em; color: var(--mute); }
+.nav { display: flex; gap: 4px; }
+.nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; color: var(--mute); text-decoration: none; font-size: 15px; border-radius: 8px; }
+.nav a:hover { color: var(--gold2); background: rgba(232, 183, 90, .08); }
+@media (max-width: 560px) { .nav a.opt { display: none; } }
+
+/* ---- 首屏 ---- */
+.hero { position: relative; padding: 44px 0 28px; overflow: hidden; }
+.hero::before { content: ''; position: absolute; inset: 0; background: url(img/poster.jpg) center 30%/cover; opacity: .16; filter: blur(2px) saturate(1.1); transform: scale(1.05); }
+.hero::after { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 0%, rgba(232, 183, 90, .16), transparent 60%), linear-gradient(180deg, rgba(13, 12, 10, .2), var(--bg) 92%); }
+.hero .wrap { position: relative; z-index: 1; text-align: center; }
+.logo { margin: 0; font: 900 clamp(72px, 18vw, 150px)/1.05 var(--serif); letter-spacing: .14em; padding-left: .14em;
+  background: linear-gradient(100deg, #c38f3c 20%, #fff2cc 48%, #c38f3c 76%); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 6px 30px rgba(232, 183, 90, .25)); }
+.en { margin-top: 6px; font: 15px/1 Georgia, serif; letter-spacing: .9em; padding-left: .9em; color: var(--mute); }
+.tag { margin: 22px auto 0; max-width: 34em; font: 900 clamp(20px, 4.6vw, 30px)/1.5 var(--serif); letter-spacing: .06em; color: var(--ink); }
+.sub { margin: 10px auto 0; color: var(--mute); font-size: 16px; }
+
+.player { margin: 28px auto 0; max-width: 960px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #000; box-shadow: 0 24px 60px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 0, 0, .6); }
+.player video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 18px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 20px; border-radius: 10px; font-size: 16px; text-decoration: none; border: 1px solid var(--line); color: var(--ink); background: rgba(255, 255, 255, .03); }
+.btn.primary { background: linear-gradient(180deg, #e8b75a, #c48f3a); color: #1a140a; border-color: transparent; font-weight: 600; }
+.btn:hover { filter: brightness(1.08); }
+.note { margin-top: 10px; color: var(--dim); font-size: 14px; }
+
+/* ---- 区块 ---- */
+section { padding: 56px 0; scroll-margin-top: 48px; }
+.hero { scroll-margin-top: 56px; }
+.sec-h { text-align: center; margin-bottom: 28px; }
+.sec-h small { display: block; font: 13px/1 Georgia, serif; letter-spacing: .5em; color: var(--dim); }
+.sec-h h2 { margin: 10px 0 0; font: 900 clamp(28px, 6vw, 40px)/1.3 var(--serif); letter-spacing: .12em; color: var(--gold2); }
+.sec-h p { margin: 10px auto 0; max-width: 36em; color: var(--mute); }
+.bar { width: 72px; height: 2px; margin: 14px auto 0; background: linear-gradient(90deg, transparent, var(--gold), transparent); }
+
+.feats { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 720px) { .feats { grid-template-columns: 1fr 1fr; } }
+.feat { background: var(--card); border: 1px solid rgba(232, 183, 90, .12); border-radius: 14px; overflow: hidden; }
+.feat img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+.feat .t { padding: 16px 18px 20px; }
+.feat h3 { margin: 0; font: 900 22px/1.4 var(--serif); letter-spacing: .08em; color: var(--gold2); }
+.feat p { margin: 8px 0 0; color: var(--mute); font-size: 16px; }
+
+.modes { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 26px; }
+.mode { padding: 10px 16px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink); font-size: 15px; background: rgba(232, 183, 90, .05); }
+.mode b { color: var(--gold2); font-weight: 600; margin-right: 6px; }
+
+/* ---- 角色 ---- */
+.roster-band { margin: 0 auto 26px; max-width: 1280px; border-radius: 14px; overflow: hidden; border: 1px solid rgba(232, 183, 90, .12); }
+.roster-band img { width: 100%; }
+.cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+@media (min-width: 640px) { .cards { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 960px) { .cards { grid-template-columns: repeat(4, 1fr); } }
+.cardx { position: relative; background: var(--card); border: 1px solid rgba(232, 183, 90, .12); border-radius: 12px; overflow: hidden; }
+.cardx img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; object-position: center 12%; }
+.cardx .t { position: absolute; left: 0; right: 0; bottom: 0; padding: 40px 12px 12px; background: linear-gradient(180deg, transparent, rgba(8, 7, 5, .92) 55%); }
+.cardx h3 { margin: 0; font: 900 21px/1.3 var(--serif); letter-spacing: .06em; color: var(--ink); }
+.cardx .c { font-size: 14px; color: var(--gold2); }
+.cardx .p { font-size: 13px; color: var(--mute); line-height: 1.5; }
+.cardx .u { display: inline-block; margin-top: 6px; font-size: 13px; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); color: var(--gold2); }
+
+/* ---- 开玩 ---- */
+.play { display: grid; grid-template-columns: 1fr; gap: 16px; }
+@media (min-width: 760px) { .play { grid-template-columns: 1fr 1fr; } }
+.box { background: var(--card); border: 1px solid rgba(232, 183, 90, .12); border-radius: 14px; padding: 18px 20px; }
+.box h3 { margin: 0 0 6px; font: 900 21px/1.4 var(--serif); color: var(--gold2); letter-spacing: .06em; }
+.box p, .box li { color: var(--mute); }
+.box ol { margin: 8px 0 0; padding-left: 1.3em; }
+code { font: 15px/1.4 ui-monospace, Menlo, monospace; background: rgba(255, 255, 255, .06); padding: 1px 6px; border-radius: 5px; color: var(--ink); }
+details { margin-top: 14px; background: var(--card); border: 1px solid rgba(232, 183, 90, .12); border-radius: 12px; }
+summary { display: flex; align-items: center; min-height: 52px; padding: 0 18px; cursor: pointer; font-size: 17px; color: var(--ink); list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: '+'; margin-left: auto; color: var(--gold); font-size: 22px; }
+details[open] summary::after { content: '−'; }
+details .in { padding: 0 18px 16px; color: var(--mute); }
+.keys { width: 100%; border-collapse: collapse; font-size: 15px; }
+.keys td { padding: 9px 0; border-top: 1px solid rgba(255, 255, 255, .06); vertical-align: top; }
+.keys td:first-child { width: 36%; color: var(--gold2); padding-right: 10px; }
+
+footer { padding: 36px 0 48px; border-top: 1px solid rgba(232, 183, 90, .1); color: var(--dim); font-size: 14px; text-align: center; }
+footer p { margin: 6px 0; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#"><b>荣耀</b><span>GLORY</span></a>
+    <nav class="nav">
+      <a href="#trailer" class="opt">宣传片</a>
+      <a href="#features" class="opt">特色</a>
+      <a href="#roster">角色</a>
+      <a href="#play">开玩</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero" id="trailer">
+    <div class="wrap">
+      <h1 class="logo">荣耀</h1>
+      <div class="en">GLORY</div>
+      <p class="tag">《全职高手》里的那款网游，现在就在浏览器里。</p>
+      <p class="sub">十二张账号卡 · 第一人称 / 越肩 / 第三人称 · 副本与局域网联机</p>
+      <div class="player">
+        <video controls playsinline preload="metadata" poster="img/poster.jpg">
+          <source src="media/glory-promo.mp4" type="video/mp4">
+          你的浏览器不支持视频播放，可以<a href="media/glory-promo.mp4">直接下载宣传片</a>。
+        </video>
+      </div>
+      <div class="actions">
+        <a class="btn primary" href="play/">电脑上直接试玩</a>
+        <a class="btn" href="media/glory-promo-1080p.mp4" download>下载 1080p 高清版（143MB）</a>
+      </div>
+      <p class="note">宣传片 67 秒，全部画面录自游戏本身。试玩需要电脑、键盘和鼠标，推荐 Chrome / Edge。</p>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="sec-h"><small>FEATURES</small><h2>这一版能玩什么</h2><div class="bar"></div></div>
+      <div class="feats">
+        <article class="feat">
+          <img src="img/fp.jpg" alt="第一人称视角：夜雨声烦持剑逼近" loading="lazy">
+          <div class="t"><h3>第一人称，原著的视角</h3>
+            <p>低头看得见自己的身体，走到镜廊照得见自己。按 F5 随时切到越肩或第三人称，看清自己的出招。</p></div>
+        </article>
+        <article class="feat">
+          <img src="img/parry.jpg" alt="裂天蓄力重击被夜雨声烦振刀" loading="lazy">
+          <div class="t"><h3>蓄力 · 霸体 · 振刀</h3>
+            <p>按住左键蓄力重击，带霸体硬吃普攻，蓄满破防；看准时机举刀就是振刀，把对手震开。武器的蓝光、金光提示你读招。</p></div>
+        </article>
+        <article class="feat">
+          <img src="img/juggle.jpg" alt="一叶之秋天击把裂天挑上半空" loading="lazy">
+          <div class="t"><h3>浮空 · 追击 · 受身</h3>
+            <p>挑空、空中追击、倒地追打，落地前后按空格受身。连段有保护和伤害递减，第 12 击强制击倒，不会被一套打死。</p></div>
+        </article>
+        <article class="feat">
+          <img src="img/ult.jpg" alt="夜雨声烦大招银光千刃" loading="lazy">
+          <div class="t"><h3>十二个大招</h3>
+            <p>银光·千刃、伏龙翔天、猛虎硬爬山、卫星射线……喊招按原著人物性格配音：叶修懒洋洋的烟嗓，黄少天飞快的快嘴，韩文清一字一顿。</p></div>
+        </article>
+        <article class="feat">
+          <img src="img/mirror.jpg" alt="镜廊训练室里对镜换装" loading="lazy">
+          <div class="t"><h3>镜廊训练室</h3>
+            <p>木桩、训练目标清单、四档难度的陪练。走到镜子前按 G 换装，镜中是你实时的全身模型。</p></div>
+        </article>
+        <article class="feat">
+          <img src="img/boss.jpg" alt="副本寒铁遗庭的寒铁守卫" loading="lazy">
+          <div class="t"><h3>副本 · 寒铁遗庭</h3>
+            <p>三波骸骨卫兵与冰晶术士，开门后是两阶段 Boss「寒铁守卫」。可以带两名 AI 队友一起打。</p></div>
+        </article>
+      </div>
+      <div class="modes">
+        <span class="mode"><b>训练场</b>木桩与陪练</span>
+        <span class="mode"><b>个人赛</b>1v1 三局两胜</span>
+        <span class="mode"><b>擂台赛</b>3v3 车轮战</span>
+        <span class="mode"><b>团队赛</b>3v3 同场混战</span>
+        <span class="mode"><b>副本</b>寒铁遗庭</span>
+        <span class="mode"><b>联机</b>局域网 1v1</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="roster">
+    <div class="wrap">
+      <div class="sec-h"><small>ACCOUNTS</small><h2>十二张账号卡</h2><div class="bar"></div>
+        <p>每个角色都是图生 3D 建模、自动绑骨，再配上动作捕捉；下面是游戏内的实拍。</p></div>
+      <div class="roster-band"><img src="img/rosterA.jpg" alt="君莫笑、一叶之秋、夜雨声烦、大漠孤烟、一枪穿云、沐雨橙风在联赛赛场列队" loading="lazy"></div>
+      <div class="cards">
+        <div class="cardx"><img src="img/cards/jmx.jpg" alt="君莫笑" loading="lazy"><div class="t"><h3>君莫笑</h3><div class="c">散人 · 千机伞</div><div class="p">叶修 · 兴欣</div><span class="u">千机·百式</span></div></div>
+        <div class="cardx"><img src="img/cards/yyzq.jpg" alt="一叶之秋" loading="lazy"><div class="t"><h3>一叶之秋</h3><div class="c">战斗法师 · 却邪</div><div class="p">孙翔 · 嘉世</div><span class="u">伏龙翔天</span></div></div>
+        <div class="cardx"><img src="img/cards/yysf.jpg" alt="夜雨声烦" loading="lazy"><div class="t"><h3>夜雨声烦</h3><div class="c">剑客 · 冰雨</div><div class="p">黄少天 · 蓝雨</div><span class="u">银光·千刃</span></div></div>
+        <div class="cardx"><img src="img/cards/dmgy.jpg" alt="大漠孤烟" loading="lazy"><div class="t"><h3>大漠孤烟</h3><div class="c">拳法家 · 拳套</div><div class="p">韩文清 · 霸图</div><span class="u">猛虎硬爬山</span></div></div>
+        <div class="cardx"><img src="img/cards/yqcy.jpg" alt="一枪穿云" loading="lazy"><div class="t"><h3>一枪穿云</h3><div class="c">神枪手 · 荒火 · 碎霜</div><div class="p">周泽楷 · 轮回</div><span class="u">枪林弹雨</span></div></div>
+        <div class="cardx"><img src="img/cards/myc.jpg" alt="沐雨橙风" loading="lazy"><div class="t"><h3>沐雨橙风</h3><div class="c">枪炮师 · 重炮</div><div class="p">苏沐橙 · 兴欣</div><span class="u">卫星射线</span></div></div>
+        <div class="cardx"><img src="img/cards/skse.jpg" alt="索克萨尔" loading="lazy"><div class="t"><h3>索克萨尔</h3><div class="c">术士 · 魔典</div><div class="p">喻文州 · 蓝雨</div><span class="u">地狱之门</span></div></div>
+        <div class="cardx"><img src="img/cards/xsbl.jpg" alt="小手冰凉" loading="lazy"><div class="t"><h3>小手冰凉</h3><div class="c">牧师 · 十字杖</div><div class="p">安文逸 · 兴欣</div><span class="u">天使之翼</span></div></div>
+        <div class="cardx"><img src="img/cards/wblx.jpg" alt="王不留行" loading="lazy"><div class="t"><h3>王不留行</h3><div class="c">魔道学者 · 灭神的诅咒</div><div class="p">王杰希 · 微草</div><span class="u">星陨</span></div></div>
+        <div class="cardx"><img src="img/cards/bzrq.jpg" alt="包子入侵" loading="lazy"><div class="t"><h3>包子入侵</h3><div class="c">流氓 · 板砖</div><div class="p">包荣兴 · 兴欣</div><span class="u">流氓连环</span></div></div>
+        <div class="cardx"><img src="img/cards/lt.jpg" alt="裂天" loading="lazy"><div class="t"><h3>裂天</h3><div class="c">狂剑士 · 赤血大剑</div><div class="p">原创账号</div><span class="u">血之狂怒</span></div></div>
+        <div class="cardx"><img src="img/cards/yr.jpg" alt="影刃" loading="lazy"><div class="t"><h3>影刃</h3><div class="c">刺客 · 双匕</div><div class="p">原创账号</div><span class="u">千影绝杀</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="play">
+    <div class="wrap">
+      <div class="sec-h"><small>PLAY</small><h2>现在开打</h2><div class="bar"></div></div>
+      <div class="play">
+        <div class="box">
+          <h3>在线试玩（单机）</h3>
+          <p>用电脑打开 <a href="play/">本站 /play/</a>，点一下画面锁定鼠标即可开始。训练场、个人赛、擂台赛、团队赛、副本都能玩，<code>Esc</code> 暂停。</p>
+          <p>手机上只能看宣传片：游戏需要键盘和鼠标。</p>
+        </div>
+        <div class="box">
+          <h3>局域网联机</h3>
+          <ol>
+            <li>拿到游戏目录，双击 <code>start.command</code>（macOS）或 <code>start.bat</code>（Windows），需要 Node 18 以上。</li>
+            <li>浏览器打开 <code>http://localhost:8780/</code>。</li>
+            <li>同一局域网的朋友用终端里打印的地址进入，一人创建房间，另一人加入。</li>
+          </ol>
+        </div>
+      </div>
+      <details>
+        <summary>操作按键</summary>
+        <div class="in">
+          <table class="keys">
+            <tr><td>WASD / 鼠标</td><td>移动 / 视角</td></tr>
+            <tr><td>左键</td><td>普攻三段；近战按住蓄力重击，远程按住连射</td></tr>
+            <tr><td>右键</td><td>格挡或瞄准；对手蓄力命中前一瞬格挡即振刀</td></tr>
+            <tr><td>Q E R F C X · V</td><td>六个技能 · 大招</td></tr>
+            <tr><td>空格 / Shift</td><td>跳跃（被击飞时受身）/ 闪避冲刺</td></tr>
+            <tr><td>1–4</td><td>散人切换千机伞：剑 / 矛 / 枪 / 盾</td></tr>
+            <tr><td>T · Tab · F5 · G</td><td>锁定 · 数据面板 · 切换视角 · 镜前换装</td></tr>
+          </table>
+        </div>
+      </details>
+      <details>
+        <summary>它是怎么做出来的</summary>
+        <div class="in">
+          <p>浏览器原生 three.js，无需安装。角色由概念图经 Tripo 图生 3D，Meshy 自动绑骨，共用 70 段动作捕捉；音效用 WebAudio 实时合成；大招喊招与宣传片旁白用 Gemini TTS 配音；宣传片在游戏里逐帧录制，再用 Remotion 合成。平衡用 AI 对 AI 的 132 局矩阵反复调过。</p>
+        </div>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>《全职高手》同人 · 非商业作品</p>
+    <p>角色账号名与部分招式名取自原著；模型、数值与关卡为本作原创，不代表原著设定。</p>
+  </div>
+</footer>
+</body>
+</html>
