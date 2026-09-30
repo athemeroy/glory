@@ -658,6 +658,8 @@ export class Game {
   }
 
   render(dt = 1 / 60) {
+    // 录制工具用：外部接管机位（宣传片运镜），游戏本身不设置
+    if (this.camHook) { try { this.camHook(this.camera, this); } catch (e) { this.camHook = null; console.warn('camHook', e); } }
     if (this.settings.post !== false && this.post) { this.post.render(dt); return; }
     const r = this.renderer;
     r.autoClear = true;

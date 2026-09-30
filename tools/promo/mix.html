@@ -1,0 +1,60 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>宣传片音频素材</title></head>
+<body>
+<script type="module">
+// 宣传片音频素材：按镜头渲染游戏音效分轨、渲染整段配乐，输出 16 位立体声 WAV（base64）。旁白与混音在 Remotion 里做。
+import { audio } from '../../src/engine/audio.js';
+
+const SR = 48000;
+
+async function fetchBuf(oc, url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + ' ' + r.status);
+  return oc.decodeAudioData(await r.arrayBuffer());
+}
+
+function toWav(buf) {
+  const ch = buf.numberOfChannels, n = buf.length;
+  const out = new DataView(new ArrayBuffer(44 + n * ch * 2));
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); out.setUint32(4, 36 + n * ch * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, ch, true); out.setUint32(24, SR, true);
+  out.setUint32(28, SR * ch * 2, true); out.setUint16(32, ch * 2, true); out.setUint16(34, 16, true); w(36, 'data'); out.setUint32(40, n * ch * 2, true);
+  const data = []; for (let c = 0; c < ch; c++) data.push(buf.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < n; i++) for (let c = 0; c < ch; c++) { const v = Math.max(-1, Math.min(1, data[c][i])); out.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true); o += 2; }
+  const bytes = new Uint8Array(out.buffer);
+  let s = ''; const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  return btoa(s);
+}
+
+// 一个镜头的游戏音效分轨：events=[{time,t:'sfx'|'voice',n,g,r}]（time 为镜头内秒数）
+const cache = new Map();
+window.renderStem = async (events, sec) => {
+  const oc = new OfflineAudioContext(2, Math.ceil(SR * (sec + 1)), SR);
+  const comp = oc.createDynamicsCompressor();
+  comp.threshold.value = -12; comp.ratio.value = 3; comp.attack.value = 0.003; comp.release.value = 0.15;
+  comp.connect(oc.destination);
+  const log = [];
+  const put = (buf, t, gain) => {
+    const s = oc.createBufferSource(); s.buffer = buf;
+    const g = oc.createGain(); g.gain.value = gain; s.connect(g); g.connect(comp);
+    if (t >= 0) s.start(t); else s.start(0, -t);
+  };
+  for (const e of events) {
+    try {
+      if (e.t === 'sfx') {
+        const k = e.n + '@' + (e.r || 1);
+        if (!cache.has(k)) cache.set(k, await audio._renderOffline(e.n, { sampleRate: SR, rate: e.r || 1 }));
+        put(cache.get(k), e.time - 0.3, Math.min(1.2, e.g ?? 1)); // _renderOffline 前面留了 0.3s
+      } else if (e.t === 'voice') put(await fetchBuf(oc, `../../assets/voice/${e.n}.mp3`), e.time, 0.9 * (e.g ?? 1));
+    } catch (err) { log.push(String(err).slice(0, 120)); }
+  }
+  return { wav: toWav(await oc.startRendering()), kinds: cache.size, log };
+};
+// 整段配乐（游戏菜单音乐的离线渲染）
+window.renderMusicWav = async (sec) => ({ wav: toWav(await audio._renderMusic(sec, { sampleRate: SR })) });
+window.mixReady = true;
+</script>
+</body></html>

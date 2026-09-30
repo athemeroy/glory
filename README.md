@@ -3,7 +3,7 @@
 《全职高手》同人：把小说里的网游《荣耀》做成可以直接玩的第一人称动作游戏。浏览器运行，three.js 渲染。
 
 - 角色：12 个职业 + Boss + 2 种小怪由概念图经 **Tripo P1 图生 3D**（约 2 万面、2048 贴图）得到，经 **Meshy 自动绑骨**成为标准 24 骨角色；动作来自 Meshy 动捕库的 70 个片段（战斗待机、走跑、跳跃、闪避、格挡、各类劈砍/突刺/拳脚/射击/施法、受击、击飞、倒地、起身、死亡、欢呼），所有角色共享。第一人称手臂为专门调过可读性的程序化动作。武器、场景、特效由程序生成。
-- 声音：音效用 WebAudio 实时合成；解说与大招喊招由 macOS 神经语音预先合成。
+- 声音：音效用 WebAudio 实时合成；解说由 macOS 神经语音预先合成，大招喊招由 Gemini 3.8 Flash TTS 按原著人物性格配音。
 - 画面：泛光、调色、SMAA 后期管线；标题字体为思源宋体子集（自托管，国内网络可用）。
 
 ## 怎么启动
@@ -55,6 +55,13 @@
 - `src/ui/`：HUD 与菜单。`src/engine/`：输入、合成音效、语音、联机。
 - `server/server.mjs`：零依赖静态文件 + WebSocket 房间服务器。
 - `tools/`：自动化测试（`pwrun.py` 单局、`fpseq.py` 逐帧、`balance.py` 平衡矩阵、`tour.py` 画面巡检、`nettest.py` 联机冒烟测试）。详见 `ARCHITECTURE.md`。
+
+## 宣传片
+
+`tools/promo/` 生成宣传片 `media/glory-promo.mp4`（约 67 秒，1080p）：
+1. `promo.py`（Mini 上跑）：按分镜在游戏里逐帧录制原始镜头（`?manual=1` + 录制用机位钩子 `game.camHook`），同时拦截游戏的音效/喊招调用，用 `mix.html` 离线渲染成与画面同步的音效分轨，并渲染整段配乐。
+2. `remotion/`：Remotion 合成标题卡、转场、字幕、旁白与混音（`src/data.js` 是分镜与时间线，`npm run render`）。
+3. 旁白与大招喊招：Gemini 3.8 Flash TTS（`tts.py`，`vo-lines.json` / `ult-lines.json`；喊招音色按原著人物性格匹配）。
 
 ## 美术资源与费用
 

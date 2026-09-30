@@ -1,0 +1,17 @@
+{
+  "name": "glory-promo",
+  "private": true,
+  "description": "《荣耀》宣传片（Remotion 合成）：素材由 tools/promo/promo.py 在 Mini 上录制",
+  "scripts": {
+    "studio": "remotion studio src/index.jsx",
+    "render": "remotion render src/index.jsx GloryPromo out/glory-promo.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.531",
+    "@remotion/transitions": "4.0.531",
+    "@remotion/media-utils": "4.0.531",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "remotion": "4.0.531"
+  }
+}

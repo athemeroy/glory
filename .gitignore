@@ -8,3 +8,9 @@ node_modules/
 media/*.mp4
 media/*.mov
 media/work/
+
+# 宣传片：依赖、录制素材与成品只在 Mini 上
+tools/promo/remotion/node_modules/
+tools/promo/remotion/public/rec/
+tools/promo/remotion/public/img/
+tools/promo/remotion/out/
