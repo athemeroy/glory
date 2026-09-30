@@ -1,0 +1,46 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Skin Test</title>
+<style>html,body{margin:0;background:#222;overflow:hidden}#l{position:fixed;left:6px;top:4px;color:#ddd;font:12px sans-serif;white-space:pre}</style>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+</head><body><div id="l"></div>
+<script type="module">
+import * as THREE from 'three';
+import { buildCharacter } from '../src/game/model.js';
+import { buildWeapon } from '../src/game/weapons.js';
+import { Animator } from '../src/game/anim.js';
+import { CLASSES } from '../src/data/classes.js';
+import { loadModel, applySkinnedModel } from '../src/game/skin.js';
+const q = new URLSearchParams(location.search);
+const C = CLASSES[q.get('cls') || 'unspecialized'];
+const url = q.get('m') || '../assets/models/_wip/uns_h3_30k.glb';
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#8a94a3');
+scene.add(new THREE.HemisphereLight('#dfe8f5', '#4a4038', 1.3));
+const sun = new THREE.DirectionalLight('#fff4e0', 2.2); sun.position.set(3, 6, 4); sun.castShadow = true; scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshStandardMaterial({ color: '#b8b2a6' })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const poses = (q.get('poses') || 'idle,slash1,thrust,punchR,air,down').split(',');
+const rigs = [];
+const glb = await loadModel(url);
+poses.forEach((pose, i) => {
+  const rig = buildCharacter(C.look);
+  rig.root.position.set((i - (poses.length - 1) / 2) * 1.5, 0, 0);
+  scene.add(rig.root);
+  const W = buildWeapon(C.weapon, C.weaponOpts || {}); rig.bones.gripR.add(W.obj);
+  if (glb && q.get('proc') !== '1') applySkinnedModel(rig, glb.clone ? glb : glb);
+  const anim = new Animator(rig);
+  const st = { speed: pose === 'run' ? 6 : 0, onGround: true, stance: C.stance, pitch: 0 };
+  if (['air', 'down', 'hit'].includes(pose)) st.react = { type: pose, t: 0.5, dur: 0.4 };
+  else if (pose !== 'idle' && pose !== 'run') st.action = { clip: pose, stage: 'active', t: 1 };
+  for (let k = 0; k < 90; k++) anim.update(1 / 60, st);
+  rigs.push(rig);
+});
+const cam = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.1, 100);
+const view = q.get('view') || 'front';
+if (view === 'front') cam.position.set(0, 1.4, 8.5); else cam.position.set(6, 1.6, 5);
+cam.lookAt(0, 0.9, 0);
+renderer.render(scene, cam);
+document.getElementById('l').textContent = `glb ${glb ? 'ok' : 'FAIL'} ${url}  arms ${rigs[0].skinned ? rigs[0].skinned.armAngles.map(a=>a.toFixed(2)) : '-'}`;
+window.__ready = true;
+</script></body></html>

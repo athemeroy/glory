@@ -1,0 +1,96 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>GLB Preview</title>
+<style>html,body{margin:0;background:#9aa3ae;color:#111;font:13px sans-serif;overflow:hidden}#l{position:fixed;left:8px;top:6px;white-space:pre;z-index:2;background:rgba(255,255,255,.6);padding:3px 6px}</style>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+</head><body><div id="l">loading…</div>
+<script>window.__errs=[];window.onerror=(m,s,l,c)=>{window.__errs.push(m+' @'+l+':'+c);document.getElementById('l').textContent='ERR '+m};</script>
+<script type="module">
+// 用法: glb-preview.html?m=<clsId>            -> ../assets/models/<clsId>.glb
+//       &src=<相对 glory 根的路径>             -> 任意 glb
+//       &view=front|side|back|three(默认)|face  &bg=#rrggbb  &wire=1  &unlit=1(只看底色贴图)  &env=0.8  &ruler=1
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+
+const q = new URLSearchParams(location.search);
+const m = q.get('m') || 'unspecialized';
+const src = q.get('src') ? '../' + q.get('src') : `../assets/models/${m}.glb`;
+const view = q.get('view') || 'three';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.setScissorTest(true);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(q.get('bg') || '#9aa3ae');
+scene.add(new THREE.HemisphereLight('#eef2f8', '#5a5046', 1.4));
+const sun = new THREE.DirectionalLight('#fff6e8', 2.0); sun.position.set(2, 5, 4); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -2, right: 2, top: 3, bottom: -1 });
+scene.add(sun);
+const back = new THREE.DirectionalLight('#dfe6ff', 0.9); back.position.set(-3, 3, -4); scene.add(back);
+const ground = new THREE.Mesh(new THREE.CircleGeometry(3, 48), new THREE.MeshStandardMaterial({ color: '#bdb6aa' }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const grid = new THREE.GridHelper(4, 16, '#555', '#888'); grid.position.y = 0.001; scene.add(grid);
+// 1.76m 标尺（&ruler=1）
+if (q.get('ruler')) { const ruler = new THREE.Mesh(new THREE.BoxGeometry(0.03, 1.76, 0.03), new THREE.MeshBasicMaterial({ color: '#c33' }));
+  ruler.position.set(0.75, 0.88, 0.75); scene.add(ruler); }
+// 简易环境光照（渐变天空 → PMREM），让金属材质不发黑
+{ const envScene = new THREE.Scene();
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), new THREE.ShaderMaterial({ side: THREE.BackSide,
+    vertexShader: 'varying vec3 vp; void main(){ vp = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.); }',
+    fragmentShader: 'varying vec3 vp; void main(){ float h = normalize(vp).y; vec3 c = mix(vec3(.45,.42,.38), vec3(.85,.9,1.), smoothstep(-.3,.6,h)); gl_FragColor = vec4(c,1.); }' }));
+  envScene.add(sky);
+  scene.environment = new THREE.PMREMGenerator(renderer).fromScene(envScene, 0.02).texture;
+  scene.environmentIntensity = +(q.get('env') || 0.8); }
+// +Z 方向箭头（角色应面朝 +Z）
+scene.add(new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0.01, 0), 0.6, 0x2266ff, 0.12, 0.08));
+
+const info = document.getElementById('l');
+const views = {
+  front: { pos: [0, 0.95, 4.2], look: [0, 0.88, 0] },
+  side: { pos: [4.2, 0.95, 0], look: [0, 0.88, 0] },   // 从 +X 看（角色左侧）
+  back: { pos: [0, 0.95, -4.2], look: [0, 0.88, 0] },
+  face: { pos: [0, 1.6, 1.1], look: [0, 1.58, 0], fov: 22 },
+};
+const layout = view === 'three' ? ['front', 'side', 'back'] : [view];
+const cams = layout.map(k => {
+  const v = views[k];
+  const c = new THREE.PerspectiveCamera(v.fov || 28, 1, 0.05, 50);
+  c.position.set(...v.pos); c.lookAt(...v.look); return c;
+});
+
+function render() {
+  const W = innerWidth, H = innerHeight, w = W / cams.length;
+  cams.forEach((c, i) => {
+    c.aspect = w / H; c.updateProjectionMatrix();
+    renderer.setViewport(i * w, 0, w, H); renderer.setScissor(i * w, 0, w, H);
+    renderer.render(scene, c);
+  });
+}
+
+new GLTFLoader().load(src, g => {
+  const root = g.scene;
+  let tris = 0, texs = new Set();
+  root.traverse(o => {
+    if (o.isMesh) {
+      o.castShadow = o.receiveShadow = true;
+      const idx = o.geometry.index; tris += (idx ? idx.count : o.geometry.attributes.position.count) / 3;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach(mt => { if (mt.map) texs.add(mt.map.image.width + 'x' + mt.map.image.height); if (q.get('wire')) mt.wireframe = true; });
+      if (q.get('unlit')) o.material = new THREE.MeshBasicMaterial({ map: (Array.isArray(o.material) ? o.material[0] : o.material).map });
+    }
+  });
+  scene.add(root);
+  const bb = new THREE.Box3().setFromObject(root);
+  const s = bb.getSize(new THREE.Vector3()), c = bb.getCenter(new THREE.Vector3());
+  info.textContent = `${src}\ntris ${tris}  tex ${[...texs].join(',')}\nsize ${s.x.toFixed(3)} x ${s.y.toFixed(3)} x ${s.z.toFixed(3)}  minY ${bb.min.y.toFixed(3)}\ncenter ${c.x.toFixed(3)}, ${c.z.toFixed(3)}   views: ${layout.join(' | ')}`;
+  window.__stats = { tris, size: s.toArray(), min: bb.min.toArray(), center: c.toArray(), tex: [...texs] };
+  render();
+  requestAnimationFrame(() => { render(); window.__ready = true; });
+}, undefined, e => { info.textContent = 'LOAD ERR ' + e; window.__errs.push(String(e)); window.__ready = true; });
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); render(); });
+</script></body></html>

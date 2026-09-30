@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>荣耀 · 音频试听</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#dde3ee; --dim:#8b93a3; --acc:#e0b04a; --ok:#5fc27e; --bad:#e2655b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, "PingFang SC", sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 8px; color:var(--acc); }
+  h2 { font-size:13px; margin:14px 0 6px; color:var(--dim); font-weight:600; letter-spacing:.05em; }
+  .bar { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .bar label { display:flex; gap:6px; align-items:center; color:var(--dim); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:6px; }
+  .snd { display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:var(--panel); }
+  .snd button { background:none; border:0; color:var(--fg); padding:7px 8px; cursor:pointer; font:inherit; }
+  .snd button.main { flex:1; text-align:left; }
+  .snd button.main:hover { background:#232835; }
+  .snd button.wav { color:var(--dim); font-size:11px; border-left:1px solid var(--line); }
+  .snd button.on { background:#3a2f14; color:var(--acc); }
+  button.tool { background:#232835; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; cursor:pointer; font:inherit; }
+  pre { background:#0a0c10; border:1px solid var(--line); border-radius:8px; padding:10px; overflow:auto; font:12px/1.45 ui-monospace, Menlo, monospace; white-space:pre-wrap; }
+  .hint { color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<h1>荣耀 · 音频试听 / 自检</h1>
+<div class="hint">点任意按钮即初始化 AudioContext。自检模式：<code>?selftest=1</code>（离线渲染全部声音并检查）。</div>
+
+<h2>控制</h2>
+<div class="bar">
+  <label>位置 <select id="pos">
+    <option value="">2D（无声像）</option>
+    <option value="0,1,3">前方 3m</option>
+    <option value="-4,1,0">右侧 4m</option>
+    <option value="4,1,0">左侧 4m</option>
+    <option value="0,1,-4">后方 4m</option>
+    <option value="0,1,25">前方 25m</option>
+    <option value="rand">随机 2~15m</option>
+  </select></label>
+  <label>rate <input id="rate" type="range" min="0.5" max="2" step="0.05" value="1"><span id="rateV">1.00</span></label>
+  <label>master <input id="vM" type="range" min="0" max="1" step="0.01" value="0.85"></label>
+  <label>sfx <input id="vS" type="range" min="0" max="1" step="0.01" value="1"></label>
+  <label>music <input id="vMu" type="range" min="0" max="1" step="0.01" value="0.7"></label>
+  <button class="tool" id="music">菜单音乐：关</button>
+  <button class="tool" id="spam">连打 hit_flesh ×10（应只响 3 次）</button>
+  <button class="tool" id="combo">连击 1→10（rate 递增）</button>
+  <span class="hint" id="stats"></span>
+</div>
+<div id="groups"></div>
+<h2>结果</h2>
+<pre id="out">（手动模式）</pre>
+
+<script type="module">
+import { audio } from '../src/engine/audio.js';
+
+const GROUPS = {
+  '近战': ['swing_light','swing_heavy','thrust','punch','hit_flesh','hit_heavy','hit_metal','block','parry','guard_break'],
+  '身法': ['dash','jump','land','footstep','launch','knockdown','tech','getup'],
+  '枪械': ['gun_shot','rifle_shot','cannon','explosion','reload','shell_drop'],
+  '法术': ['magic_cast','magic_bolt','fire','ice','thunder','dark','holy','heal','summon','shadow_step'],
+  '千机伞': ['form_switch','umbrella_open','shield_up'],
+  'Boss / 怪物': ['boss_roar','boss_warn','boss_slam','mob_hit','mob_die','bone_rattle'],
+  '界面': ['ui_hover','ui_click','ui_confirm','ui_back','countdown','round_start','victory','defeat','levelup','combo','skill_ready','no_mana'],
+};
+const $ = (id) => document.getElementById(id);
+const out = $('out');
+const log = (s) => { out.textContent += s + '\n'; };
+
+// ---------------- 分析工具 ----------------
+function fft(re, im) { // 原地 radix-2
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cr = 1, ci = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const a = i + k, b = a + len / 2;
+        const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
+      }
+    }
+  }
+}
+const BANDS = [[0,150],[150,600],[600,2000],[2000,6000],[6000,24000]];
+function analyze(buf) {
+  const sr = buf.sampleRate, Lc = buf.getChannelData(0), Rc = buf.numberOfChannels > 1 ? buf.getChannelData(1) : Lc, n = Lc.length;
+  const m = new Float32Array(n);
+  let peak = 0, eL = 0, eR = 0, nan = false;
+  for (let i = 0; i < n; i++) {
+    const a = Lc[i], b = Rc[i];
+    if (!Number.isFinite(a) || !Number.isFinite(b)) nan = true;
+    m[i] = (a + b) / 2; eL += a * a; eR += b * b;
+    const p = Math.max(Math.abs(a), Math.abs(b)); if (p > peak) peak = p;
+  }
+  let st = 0, en = n - 1;
+  while (st < n && Math.abs(m[st]) < peak * 0.01) st++;
+  while (en > st && Math.abs(m[en]) < peak * 0.003) en--;
+  let pw = 0, zc = 0, pk = 0, pkI = st;
+  for (let i = st; i <= en; i++) { pw += m[i] * m[i]; if (i > st && (m[i] >= 0) !== (m[i - 1] >= 0)) zc++; if (Math.abs(m[i]) > pk) { pk = Math.abs(m[i]); pkI = i; } }
+  const len = Math.max(1, en - st + 1);
+  let a90 = st; while (a90 < n && Math.abs(m[a90]) < pk * 0.9) a90++;
+  let a50 = st; while (a50 < n && Math.abs(m[a50]) < pk * 0.5) a50++;
+  let tail = 0; for (let i = Math.max(0, n - Math.floor(sr * 0.02)); i < n; i++) tail = Math.max(tail, Math.abs(Lc[i]), Math.abs(Rc[i]));
+  // 5ms 帧能量 → 起音计数
+  const fr = Math.floor(sr * 0.005), frames = [];
+  for (let i = st; i + fr <= en; i += fr) { let s = 0; for (let k = 0; k < fr; k++) s += m[i + k] * m[i + k]; frames.push(Math.sqrt(s / fr)); }
+  const fmax = Math.max(1e-9, ...frames);
+  let onsets = 0, last = -99;
+  for (let i = 0; i < frames.length; i++) {
+    const prev = Math.max(1e-6, frames[i - 1] || 0, frames[i - 2] || 0);
+    if (frames[i] > 0.08 * fmax && frames[i] > 2.5 * prev && i - last > 6) { onsets++; last = i; }
+  }
+  // Welch 频谱
+  const N = 2048, win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (N - 1));
+  const spec = new Float64Array(N / 2); let cnt = 0;
+  const hop = Math.max(N / 2, Math.floor(len / 48));
+  // 帧从 st-N/2 开始（越界补零），避免起音瞬态落在 Hann 窗边缘被抹掉
+  for (let s0 = st - N / 2; s0 < en; s0 += hop) {
+    const re = new Float32Array(N), im = new Float32Array(N);
+    for (let i = 0; i < N; i++) { const j = s0 + i; re[i] = j >= 0 && j < n ? m[j] * win[i] : 0; }
+    fft(re, im); for (let k = 0; k < N / 2; k++) spec[k] += re[k] * re[k] + im[k] * im[k]; cnt++;
+  }
+  let tot = 0, cen = 0; const bands = BANDS.map(() => 0);
+  for (let k = 1; k < N / 2; k++) {
+    const f = k * sr / N, e = spec[k]; tot += e; cen += f * e;
+    for (let b = 0; b < BANDS.length; b++) if (f >= BANDS[b][0] && f < BANDS[b][1]) bands[b] += e;
+  }
+  return {
+    peak, rms: Math.sqrt(pw / len), dur: len / sr, start: st / sr, attackMs: (a90 - st) / sr * 1000, a50Ms: (a50 - st) / sr * 1000, peakAt: (pkI - st) / sr,
+    zcr: zc / (len / sr), crest: pk / Math.max(1e-9, Math.sqrt(pw / len)), tail, onsets, nan,
+    centroid: tot ? cen / tot : 0, bands: bands.map((e) => tot ? e / tot : 0), lr: 10 * Math.log10((eL + 1e-12) / (eR + 1e-12)),
+  };
+}
+const f2 = (x, d = 3) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
+const pct = (b) => b.map((x) => String(Math.round(x * 100)).padStart(2)).join('/');
+
+function wavBlob(buf) {
+  const ch = buf.numberOfChannels, sr = buf.sampleRate, n = buf.length, bytes = 44 + n * ch * 2;
+  const dv = new DataView(new ArrayBuffer(bytes));
+  const ws = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  ws(0, 'RIFF'); dv.setUint32(4, bytes - 8, true); ws(8, 'WAVE'); ws(12, 'fmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, ch, true); dv.setUint32(24, sr, true); dv.setUint32(28, sr * ch * 2, true);
+  dv.setUint16(32, ch * 2, true); dv.setUint16(34, 16, true); ws(36, 'data'); dv.setUint32(40, n * ch * 2, true);
+  const chans = [...Array(ch)].map((_, i) => buf.getChannelData(i));
+  let o = 44;
+  for (let i = 0; i < n; i++) for (let c = 0; c < ch; c++) { const s = Math.max(-1, Math.min(1, chans[c][i])); dv.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); o += 2; }
+  return new Blob([dv.buffer], { type: 'audio/wav' });
+}
+
+// ---------------- 手动试听 ----------------
+function curPos() {
+  const v = $('pos').value;
+  if (!v) return undefined;
+  if (v === 'rand') { const a = Math.random() * Math.PI * 2, d = 2 + Math.random() * 13; return [Math.sin(a) * d, 1, Math.cos(a) * d]; }
+  return v.split(',').map(Number);
+}
+function buildUI() {
+  const root = $('groups');
+  const all = { ...GROUPS, '循环': audio._loopNames() };
+  const loops = {};
+  for (const [g, names] of Object.entries(all)) {
+    const h = document.createElement('h2'); h.textContent = g; root.appendChild(h);
+    const grid = document.createElement('div'); grid.className = 'grid'; root.appendChild(grid);
+    for (const name of names) {
+      const box = document.createElement('div'); box.className = 'snd';
+      const b = document.createElement('button'); b.className = 'main'; b.textContent = name;
+      b.onclick = () => {
+        audio.init();
+        if (g === '循环') {
+          if (loops[name]) { loops[name].stop(); loops[name] = null; b.classList.remove('on'); }
+          else { loops[name] = audio.loop(name, { pos: curPos() }); b.classList.add('on'); }
+        } else audio.play(name, { pos: curPos(), rate: +$('rate').value });
+      };
+      const w = document.createElement('button'); w.className = 'wav'; w.textContent = 'wav';
+      w.title = '离线渲染并下载 WAV，同时在结果区显示统计';
+      w.onclick = async () => {
+        const buf = await audio._renderOffline(name, { rate: +$('rate').value, pos: curPos() });
+        const a = analyze(buf);
+        log(`${name}: peak ${f2(a.peak)} rms ${f2(a.rms)} dur ${f2(a.dur, 2)}s attack ${f2(a.attackMs, 1)}ms zcr ${Math.round(a.zcr)}/s centroid ${Math.round(a.centroid)}Hz bands% ${pct(a.bands)} onsets ${a.onsets}`);
+        const url = URL.createObjectURL(wavBlob(buf)), l = document.createElement('a');
+        l.href = url; l.download = name + '.wav'; l.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+      };
+      box.append(b, w); grid.appendChild(box);
+    }
+  }
+  $('rate').oninput = () => { $('rateV').textContent = (+$('rate').value).toFixed(2); };
+  const vol = () => audio.setVolume(+$('vM').value, +$('vS').value, +$('vMu').value);
+  $('vM').oninput = vol; $('vS').oninput = vol; $('vMu').oninput = vol;
+  let mOn = false;
+  $('music').onclick = () => { audio.init(); mOn = !mOn; audio.music(mOn); $('music').textContent = '菜单音乐：' + (mOn ? '开' : '关'); };
+  $('spam').onclick = () => { audio.init(); for (let i = 0; i < 10; i++) audio.play('hit_flesh', { pos: curPos() }); };
+  $('combo').onclick = () => { audio.init(); for (let i = 0; i < 10; i++) setTimeout(() => audio.play('combo', { rate: 1 + i * 0.06 }), i * 140); };
+  setInterval(() => { const s = audio._stats(); $('stats').textContent = `ctx=${s.ctx} voices=${s.voices}/${s.maxVoices} music=${s.music}`; }, 300);
+  // 听者朝 +Z（yaw=0）；+X 在听者左侧（右手系，右方向量 = (-cos yaw, 0, sin yaw)）
+  audio.setListener(0, 1, 0, 0);
+}
+
+// ---------------- 自检 ----------------
+async function selftest() {
+  out.textContent = '';
+  const t0 = performance.now();
+  const fails = [], warns = [], rows = {};
+  const fail = (s) => { fails.push(s); log('  ✗ ' + s); };
+  const check = (cond, s) => { if (!cond) fail(s); return cond; };
+
+  // 1) 未初始化时静默
+  try {
+    audio.setListener(1, 2, 3, 0.5); audio.play('hit_flesh', { pos: [1, 0, 1] }); audio.music(true); audio.music(false);
+    audio.setVolume(0.85, 1, 0.7);
+    const h = audio.loop('fire_loop'); h.setPos(1, 2, 3); h.stop();
+    check(audio._stats().ctx === null, '未 init 时不应创建 AudioContext');
+    log('✓ 未初始化时所有调用静默返回');
+  } catch (e) { fail('未初始化调用抛异常: ' + e); }
+
+  // 2) 声音清单完整
+  const names = audio._names(), expected = Object.values(GROUPS).flat();
+  const missing = expected.filter((n) => !names.includes(n)), extra = names.filter((n) => !expected.includes(n));
+  check(!missing.length, '缺少声音: ' + missing.join(','));
+  if (extra.length) warns.push('清单外声音: ' + extra.join(','));
+  log(`声音 ${names.length} 个，循环 ${audio._loopNames().length} 个`);
+
+  // 3) 逐个离线渲染（经压缩器的实际输出 + 不过压缩器的原始峰值）
+  log('\nname              peak  rawPk   rms   dur(s)  atk(ms) zcr/s  cent(Hz) bands%(<150/-600/-2k/-6k/>6k) ons');
+  const all = [...names, ...audio._loopNames()];
+  for (const name of all) {
+    let a, raw;
+    try {
+      const buf = await audio._renderOffline(name);
+      const rbuf = await audio._renderOffline(name, { raw: true });
+      a = analyze(buf); raw = analyze(rbuf);
+    } catch (e) { fail(`${name}: 渲染失败 ${e}`); continue; }
+    rows[name] = { ...a, rawPeak: raw.peak };
+    log(`${name.padEnd(16)} ${f2(a.peak)} ${f2(raw.peak)} ${f2(a.rms, 4)} ${f2(a.dur, 2).padStart(6)} ${f2(a.attackMs, 1).padStart(7)} ${String(Math.round(a.zcr)).padStart(6)} ${String(Math.round(a.centroid)).padStart(8)}  ${pct(a.bands)}  ${a.onsets}`);
+    check(!a.nan, `${name}: 含 NaN`);
+    check(a.peak >= 0.02, `${name}: 近乎静音 peak=${f2(a.peak)}`);
+    check(a.rms >= 0.002, `${name}: RMS 过低 ${f2(a.rms, 4)}`);
+    check(a.peak < 1.0, `${name}: 输出削波 peak=${f2(a.peak)}`);
+    check(raw.peak < 1.0, `${name}: 合成原始峰值削波 rawPeak=${f2(raw.peak)}`);
+    check(a.dur >= 0.02 && a.dur <= 6, `${name}: 时长不合理 ${f2(a.dur, 2)}s`);
+    check(a.tail < 0.004, `${name}: 结尾未衰减到静音（可能被截断）tail=${f2(a.tail, 4)}`);
+  }
+
+  // 4) 关键声音的瞬态/频率分布
+  log('\n关键声音检查');
+  const k = rows, B = (r, i) => r.bands[i];
+  if (k.hit_flesh) {
+    const r = k.hit_flesh;
+    check(r.attackMs < 10, `hit_flesh 起音应 <10ms（${f2(r.attackMs, 1)}）`);
+    check(B(r, 0) + B(r, 1) > 0.3, 'hit_flesh 低频（<600Hz）闷响不足');
+    check(B(r, 3) + B(r, 4) > 0.02, 'hit_flesh 缺少高频脆响（>2k）');
+    check(r.dur < 0.6, 'hit_flesh 过长');
+  }
+  if (k.swing_light) {
+    const r = k.swing_light;
+    check(r.attackMs > 15, `swing_light 应为渐强风声（起音 ${f2(r.attackMs, 1)}ms）`);
+    check(r.centroid > 1000 && r.centroid < 6000, `swing_light 频谱重心应在 1–6kHz（${Math.round(r.centroid)}）`);
+    check(r.dur < 0.5, 'swing_light 应短促');
+  }
+  if (k.cannon) {
+    const r = k.cannon;
+    check(B(r, 0) > 0.35, `cannon 低频（<150Hz）占比应 >35%（${Math.round(B(r, 0) * 100)}%）`);
+    check(r.a50Ms < 15, `cannon 应有冲击瞬态（到半峰 ${f2(r.a50Ms, 1)}ms）`);
+    check(r.dur > 0.8, 'cannon 应有尾音');
+  }
+  if (k.parry) {
+    const r = k.parry;
+    check(r.a50Ms < 5, `parry 应清脆起音（到半峰 ${f2(r.a50Ms, 1)}ms）`);
+    check(r.centroid > 1200, `parry 应明亮（重心 ${Math.round(r.centroid)}Hz）`);
+    check(r.dur > 0.8, `parry 应有长尾（${f2(r.dur, 2)}s）`);
+  }
+  if (k.form_switch) check(k.form_switch.onsets >= 3, `form_switch 应有多个机械瞬态（${k.form_switch.onsets}）`);
+  if (k.boss_warn) check(k.boss_warn.centroid > 800, 'boss_warn 应在中高频以穿透混战');
+  for (const n of ['hit_flesh', 'swing_light', 'cannon', 'parry', 'form_switch']) {
+    const r = k[n]; if (!r) continue;
+    log(`  ${n.padEnd(12)} 峰值 ${f2(r.peak)} 原始峰值 ${f2(r.rawPeak)} RMS ${f2(r.rms, 4)} 波峰因数 ${f2(r.crest, 1)} 时长 ${f2(r.dur, 2)}s 起音(到90%/50%峰) ${f2(r.attackMs, 1)}/${f2(r.a50Ms, 1)}ms 峰值位置 ${f2(r.peakAt * 1000, 0)}ms 过零率 ${Math.round(r.zcr)}/s 重心 ${Math.round(r.centroid)}Hz 频段% ${pct(r.bands)} 起音数 ${r.onsets}`);
+  }
+
+  // 5) 3D 声像与距离衰减（听者在原点朝 +Z；+X 在左侧）
+  log('\n3D 声像');
+  try {
+    const lb = analyze(await audio._renderOffline('swing_light', { pos: [4, 0, 0] }));
+    const rb = analyze(await audio._renderOffline('swing_light', { pos: [-4, 0, 0] }));
+    const near = analyze(await audio._renderOffline('hit_flesh', { pos: [0, 0, 2], raw: true }));
+    const far = analyze(await audio._renderOffline('hit_flesh', { pos: [0, 0, 30], raw: true }));
+    log(`  swing_light +X: L/R ${f2(lb.lr, 1)}dB   -X: L/R ${f2(rb.lr, 1)}dB   hit_flesh 2m 峰值 ${f2(near.peak)} / 30m 峰值 ${f2(far.peak)}`);
+    check(lb.lr > 4 && rb.lr < -4, 'HRTF 左右声像不明显');
+    check(far.peak < near.peak * 0.25, '距离衰减不明显');
+  } catch (e) { fail('3D 渲染失败 ' + e); }
+
+  // 5b) 混战叠加：多个重声音同时触发，经压缩器后仍不削波
+  try {
+    const mix = ['cannon', 'explosion', 'hit_heavy', 'boss_slam', 'hit_flesh', 'guard_break', 'rifle_shot', 'boss_roar'];
+    const a = analyze(await audio._renderOffline(mix));
+    const raw = analyze(await audio._renderOffline(mix, { raw: true }));
+    log(`\n混战叠加 ${mix.length} 个重声音：输出峰值 ${f2(a.peak)}（未压缩 ${f2(raw.peak)}）`);
+    check(a.peak < 1.0, `混战叠加削波 peak=${f2(a.peak)}`);
+  } catch (e) { fail('叠加渲染失败 ' + e); }
+
+  // 6) 音乐
+  try {
+    const mb = await audio._renderMusic(14);
+    const a = analyze(mb);
+    const late = mb.getChannelData(0).subarray(Math.floor(mb.sampleRate * 8), Math.floor(mb.sampleRate * 13));
+    let lr = 0; for (const x of late) lr += x * x; lr = Math.sqrt(lr / late.length);
+    log(`\n菜单音乐 14s：peak ${f2(a.peak)} rms ${f2(a.rms, 4)} 8–13s rms ${f2(lr, 4)} 重心 ${Math.round(a.centroid)}Hz 频段% ${pct(a.bands)}`);
+    check(a.peak < 1 && a.peak > 0.05, '音乐峰值异常');
+    check(lr > 0.005, '音乐后段静音');
+  } catch (e) { fail('音乐渲染失败 ' + e); }
+
+  // 7) 实时上下文：节流与发声上限
+  try {
+    audio.init();
+    const s0 = audio._stats();
+    if (s0.ctx) {
+      for (let i = 0; i < 10; i++) audio.play('hit_flesh');
+      const s1 = audio._stats().voices;
+      check(s1 === 3, `40ms 内同名应最多 3 次（实际 ${s1}）`);
+      for (let rep = 0; rep < 3; rep++) for (const n of names) audio.play(n, { vol: 0 });
+      const s2 = audio._stats().voices;
+      check(s2 <= 48, `发声数应 ≤48（实际 ${s2}）`);
+      const h = audio.loop('wind_loop', { vol: 0 }); h.setPos(3, 1, 3); h.stop();
+      audio.music(true); audio.music(false);
+      log(`\n实时上下文(${s0.ctx})：连打 10 次 → ${s1} 个发声；批量触发后 ${s2} 个（上限 48）`);
+    } else warns.push('无法创建实时 AudioContext，跳过节流测试');
+  } catch (e) { fail('实时上下文测试抛异常 ' + e); }
+
+  // 8) 可选：导出 wav（base64）供外部核对，?wav=a,b
+  const wavs = new URLSearchParams(location.search).get('wav');
+  if (wavs) for (const n of wavs.split(',')) {
+    const buf = await audio._renderOffline(n);
+    const b = new Uint8Array(await wavBlob(buf).arrayBuffer());
+    let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+    const el = document.createElement('script'); el.type = 'text/plain'; el.id = 'wav-' + n; el.textContent = btoa(s); document.body.appendChild(el);
+  }
+
+  const pass = fails.length === 0;
+  log(`\n${pass ? 'PASS' : 'FAIL'}：${all.length} 个声音，失败 ${fails.length}，警告 ${warns.length}，用时 ${((performance.now() - t0) / 1000).toFixed(1)}s`);
+  warns.forEach((w) => log('  ! ' + w));
+  window.__result = { pass, fails, warns, count: all.length, rows };
+  document.title = pass ? 'SELFTEST PASS' : 'SELFTEST FAIL';
+  document.body.dataset.selftest = pass ? 'pass' : 'fail';
+}
+
+buildUI();
+if (new URLSearchParams(location.search).get('selftest')) {
+  out.textContent = '自检中…';
+  selftest().catch((e) => { log('自检异常 ' + e.stack); window.__result = { pass: false, error: String(e) }; });
+}
+</script>
+</body>
+</html>

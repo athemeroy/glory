@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body><pre id="o"></pre>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+const out = [];
+await loadClipLibrary('../assets/anim/anims.glb');
+for (const k of (new URLSearchParams(location.search).get('m') || 'swordmaster').split(',')) {
+  const g = await new GLTFLoader().loadAsync(`../assets/models/rigged/${k}.glb`);
+  const body = createMocapBody(g.scene); const sc = new THREE.Scene(); sc.add(body.model); body.model.updateMatrixWorld(true);
+  const V = () => new THREE.Vector3();
+  const bb = new THREE.Box3().setFromObject(body.model);
+  const head = body.bones.Head.getWorldPosition(V()), hips = body.bones.Hips.getWorldPosition(V());
+  const arm = body.model.getObjectByName('Armature');
+  out.push(`${k} rest: head ${head.y.toFixed(2)} hips ${hips.y.toFixed(2)} hipsLocal ${body.bones.Hips.position.toArray().map(v=>v.toFixed(1))} armScale ${arm ? arm.scale.x : '-'} bbox y ${bb.min.y.toFixed(2)}..${bb.max.y.toFixed(2)}`);
+  const an = new MocapAnimator(body); an.update(0.016, { onGround: true, speed: 0, pitch: 0 }); an.update(0.3, { onGround: true, speed: 0, pitch: 0 });
+  body.model.updateMatrixWorld(true);
+  out.push(`   stance: head ${body.bones.Head.getWorldPosition(V()).y.toFixed(2)} hips ${body.bones.Hips.getWorldPosition(V()).y.toFixed(2)} hipsLocal ${body.bones.Hips.position.toArray().map(v=>v.toFixed(1))} clip ${an.curName}`);
+}
+document.getElementById('o').textContent = out.join('\n'); window.__ready = true;
+</script></body></html>

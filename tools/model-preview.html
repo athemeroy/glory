@@ -1,0 +1,87 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Model Preview</title>
+<style>html,body{margin:0;background:#222;color:#ddd;font:12px sans-serif;overflow:hidden}#l{position:fixed;left:6px;top:4px;white-space:pre}</style>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+</head><body><div id="l"></div><script>window.onerror=(m,s,l,c,e)=>{document.body.insertAdjacentHTML("beforeend","<pre id=err>"+m+" @"+l+":"+c+"</pre>")};</script>
+<script type="module">
+import * as THREE from 'three';
+import { buildCharacter } from '../src/game/model.js';
+import { buildWeapon } from '../src/game/weapons.js';
+import { Animator } from '../src/game/anim.js';
+import { CLASSES } from '../src/data/classes.js';
+import { FPView, hideWorldArmsForFP } from '../src/game/fpview.js';
+
+const q = new URLSearchParams(location.search);
+const clsId = q.get('cls') || 'unspecialized';
+const C = CLASSES[clsId];
+const stance = q.get('stance') || C.stance;
+const clip = q.get('clip');
+const stage = q.get('stage') || 'active';
+const t = parseFloat(q.get('t') || '1');
+const react = q.get('react');
+const pitch = parseFloat(q.get('pitch') || '0') * Math.PI / 180;
+const form = q.get('form');
+const speed = parseFloat(q.get('speed') || '0');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(1);
+renderer.shadowMap.enabled = true;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#8a94a3');
+scene.add(new THREE.HemisphereLight('#dfe8f5', '#4a4038', 1.2));
+const sun = new THREE.DirectionalLight('#fff4e0', 2.2); sun.position.set(3, 6, 4); sun.castShadow = true; scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshStandardMaterial({ color: '#b8b2a6' }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+// 参照物：前方 3m 处的柱子
+const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.8, 0.3), new THREE.MeshStandardMaterial({ color: '#7a5' })); post.position.set(0, 0.9, 3); scene.add(post);
+
+const rig = buildCharacter(C.look);
+scene.add(rig.root);
+const W = buildWeapon(C.weapon, C.weaponOpts || {});
+rig.bones.gripR.add(W.obj);
+if (W.makeLeft) { const l = W.makeLeft(); rig.bones.gripL.add(l); }
+if (form && W.setForm) W.setForm(form, true);
+const anim = new Animator(rig);
+const st = { speed, fwd: 1, side: 0, onGround: true, vy: 0, stance, pitch, action: clip ? { clip, stage, t } : null, react: react ? { type: react, t: parseFloat(q.get('rt') || '0.2'), dur: 0.4 } : null };
+const fp = new FPView(C.look, C.weapon, C.weaponOpts || {});
+if (form) { fp.setForm(form); for (let i=0;i<60;i++) fp.update(1/60); }
+for (let i = 0; i < 90; i++) { anim.update(1 / 60, st); fp.sync(rig, 1/60, speed); }
+rig.root.updateMatrixWorld(true);
+
+const camSide = new THREE.PerspectiveCamera(40, 1, 0.05, 100); camSide.position.set(3.4, 1.4, 0.6); camSide.lookAt(0, 1.0, 0.4);
+const camFront = new THREE.PerspectiveCamera(40, 1, 0.05, 100); if (q.get('face')) { camFront.position.set(0.25, 1.65, 0.8); camFront.lookAt(0, 1.62, 0); } else { camFront.position.set(-0.8, 1.5, 3.6); camFront.lookAt(0, 1.0, 0); }
+const fpAspect = 16 / 9;
+const vfov = 2 * Math.atan(Math.tan(95 / 2 * Math.PI / 180) / fpAspect) * 180 / Math.PI;
+const camFP = new THREE.PerspectiveCamera(vfov, fpAspect, 0.05, 100);
+const eye = new THREE.Vector3(); rig.bones.head.getWorldPosition(eye);
+camFP.position.set(0, eye.y + 0.07, 0.1);
+camFP.rotation.order = 'YXZ'; camFP.rotation.set(pitch, Math.PI, 0);
+camFP.layers.set(0);
+for (const m of rig.headParts) m.layers.set(1);
+hideWorldArmsForFP(rig, W.obj, rig.bones.gripL.children[0], true);
+const vmCam = new THREE.PerspectiveCamera(parseFloat(q.get('vmfov')||'60'), fpAspect, 0.02, 20);
+vmCam.layers.set(2);
+camFP.add(vmCam); scene.add(camFP); camFP.add(fp.root);
+scene.traverse(o=>{ if(o.isLight) { o.layers.enable(2); o.layers.enable(1);} });
+camFP.updateMatrixWorld(true);
+camSide.layers.set(0); camSide.layers.enable(1); camFront.layers.set(0); camFront.layers.enable(1);
+
+renderer.setScissorTest(true);
+const w = innerWidth, h = innerHeight;
+const draw = (cam, x, y, ww, hh) => { renderer.setViewport(x, y, ww, hh); renderer.setScissor(x, y, ww, hh); cam.aspect = ww / hh; if (cam !== camFP) cam.updateProjectionMatrix(); renderer.render(scene, cam); };
+camFP.updateProjectionMatrix();
+draw(camSide, 0, h / 2, w / 2, h / 2);
+draw(camFront, w / 2, h / 2, w / 2, h / 2);
+draw(camFP, w / 4, 0, w / 2, h / 2);
+renderer.autoClear=false; renderer.clearDepth(); const bg=scene.background; scene.background=null; vmCam.updateProjectionMatrix(); renderer.setViewport(w/4,0,w/2,h/2); renderer.setScissor(w/4,0,w/2,h/2); renderer.render(scene, vmCam); scene.background=bg;
+document.getElementById('l').textContent = `${clsId} stance=${stance} clip=${clip || '-'} ${stage} t=${t} react=${react || '-'} pitch=${q.get('pitch') || 0}`;
+{ const v=new THREE.Vector3(); const out=[]; fp.root.updateMatrixWorld(true);
+  for (const [n,o] of [['tip',fp.weapon.tip],['haR',fp.rig.bones.haR],['chest',fp.rig.bones.chest],['shR',fp.rig.bones.shR]]) { o.getWorldPosition(v); const c=v.clone().applyMatrix4(camFP.matrixWorldInverse); out.push(n+': world '+v.toArray().map(x=>x.toFixed(2))+' cam '+c.toArray().map(x=>x.toFixed(2))); }
+  let n=0; fp.root.traverse(o=>{ if(o.isMesh&&o.visible) n++; }); out.push('fp visible meshes '+n+' layer '+fp.weapon.obj.children[0].layers.mask);
+  document.getElementById('l').textContent += '\n'+out.join('\n'); }
+window.__ready = true;
+</script></body></html>

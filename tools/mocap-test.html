@@ -1,0 +1,48 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mocap Test</title>
+<style>html,body{margin:0;background:#222;overflow:hidden}#l{position:fixed;left:6px;top:4px;color:#ddd;font:12px sans-serif;white-space:pre}</style>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+</head><body><div id="l"></div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+import { buildWeapon } from '../src/game/weapons.js';
+const q = new URLSearchParams(location.search);
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight); renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#8a94a3');
+scene.add(new THREE.HemisphereLight('#dfe8f5', '#4a4038', 1.3));
+const sun = new THREE.DirectionalLight('#fff4e0', 2.2); sun.position.set(3, 6, 4); sun.castShadow = true; scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshStandardMaterial({ color: '#b8b2a6' })); ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+await loadClipLibrary('../assets/anim/anims.glb');
+const rigged = (await new GLTFLoader().loadAsync(q.get('m') || '../assets/models/rigged/_master.glb')).scene;
+const clips = (q.get('clips') || 'Combat_Stance,Run_02,Walk_Fight_Back,ForwardLeft_Run_Fight,Idle').split(',');
+const t01 = parseFloat(q.get('t') || '0.3');
+const [rx, ry, rz] = (q.get('r') || '0,0,0').split(',').map(Number);
+const [px, py, pz] = (q.get('p') || '0,0,0').split(',').map(Number);
+const out = [];
+clips.forEach((c, i) => {
+  const body = createMocapBody(rigged);
+  body.model.position.x = (i - (clips.length - 1) / 2) * 1.4;
+  scene.add(body.model);
+  const wl = (q.get('w') || 'sword').split(','); const W = buildWeapon(wl[i % wl.length]);
+  const mount = new THREE.Group(); mount.rotation.set(rx * Math.PI / 180, ry * Math.PI / 180, rz * Math.PI / 180); mount.position.set(px, py, pz);
+  mount.add(W.obj); body.bones.RightHand.add(mount);
+  body.model.updateMatrixWorld(true);
+  const ws = body.bones.RightHand.getWorldScale(new THREE.Vector3()).x; mount.scale.setScalar(1 / ws);
+  const anim = new MocapAnimator(body);
+  const a = anim.play(c, { manual: true, loop: false });
+  if (a) a.time = t01 * a.getClip().duration;
+  anim.mixer.update(0.016);
+  out.push(c + (a ? ' ' + a.getClip().duration.toFixed(2) + 's' : ' MISSING'));
+  if (i === 0) { const hb = body.bones.RightHand; body.model.updateMatrixWorld(true); const e = new THREE.Euler().setFromQuaternion(hb.getWorldQuaternion(new THREE.Quaternion())); out.push('hand world euler ' + [e.x, e.y, e.z].map((v) => (v * 180 / Math.PI).toFixed(0)).join(',') + ' scale ' + hb.getWorldScale(new THREE.Vector3()).toArray().map(v=>v.toFixed(3))); }
+});
+const cam = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.1, 100);
+if (q.get('view') === 'side') cam.position.set(9, 1.4, 3); else cam.position.set(0, 1.3, 9);
+cam.lookAt(0, 0.9, 0);
+renderer.render(scene, cam);
+document.getElementById('l').textContent = out.join('\n');
+window.__ready = true;
+</script></body></html>
