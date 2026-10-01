@@ -12,6 +12,7 @@ import { repairClericWeights } from './cleric-weights.js';
 import { repairSleeveWeights } from './sleeve.js';
 import { repairRobeWeights } from './robe.js';
 import { repairSkirtWeights } from './skirt.js';
+import { protectBerserkerLimbs } from './berserker-limbs.js';
 
 const loader = new GLTFLoader();
 let clipLib = null;      // name -> AnimationClip（已去掉水平根位移）
@@ -152,6 +153,7 @@ export function createMocapBody(riggedScene) {
     bodyClipCaches.set(riggedScene, cache);
   }
   body.rest = rest; body.retargetedClips = cache.clips;
+  protectBerserkerLimbs(body, riggedScene.userData.gloryClass);
   repairClothWeights(body, riggedScene.userData.gloryClass);
   repairAttachmentWeights(body, riggedScene.userData.gloryClass);
   repairClericWeights(body, riggedScene.userData.gloryClass);

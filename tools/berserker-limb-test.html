@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Certified Berserker limb protection</title><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body><pre id="result">原GLB护腿保护掩码检查…</pre><script type="module">
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import * as THREE from 'three';
+import { createMocapBody } from '../src/game/mocap.js';
+import { protectBerserkerLimbs } from '../src/game/berserker-limbs.js';
+import { repairClothWeights } from '../src/game/cloth.js';
+import { repairClothWeights as oldCloth } from './fixtures/cloth-before-berserker-limbs.js';
+import { repairAttachmentWeights } from '../src/game/attachment.js';
+import { trialBerserkerWeights } from './berserker-body-trial.js';
+import { disposeRig } from '../src/game/model.js';
+window.__results=[];window.__errors=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label);
+const same=(a,b)=>a.length===b.length&&a.every((v,i)=>v===b[i]);
+try {
+  const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/berserker.glb')).scene;
+  const raw=createMocapBody(source),g=raw.meshes[0].geometry,rawIndices=g.attributes.skinIndex.array.slice(),rawWeights=g.attributes.skinWeight.array.slice();
+  const independent=createMocapBody(source);oldCloth(independent,'berserker');repairAttachmentWeights(independent,'berserker');independent.model.userData.gloryClass='berserker';
+  const expected=trialBerserkerWeights(raw,independent);
+  const body=createMocapBody(source),result=protectBerserkerLimbs(body,'berserker'),mask=body.meshes[0].userData.clothProtectedLimbMask;
+  check(result?.protectedLimbVertices===1134,'只认证571右护腿与563左护腿，共1134点');
+  check(mask&&same(mask,expected.target),'掩码逐点等于独立原绑定连通片候选');
+  check(body.meshes[0].geometry===g,'仅提供保护语义，不改原几何与权重');
+  repairClothWeights(body,'berserker');repairAttachmentWeights(body,'berserker');
+  const fixed=body.meshes[0].geometry,want=independent.meshes[0].geometry;
+  check(same(fixed.attributes.skinIndex.array,want.attributes.skinIndex.array)&&same(fixed.attributes.skinWeight.array,want.attributes.skinWeight.array),'跳过护腿的正式权重逐分量等于独立原权重恢复候选');
+  let allBoots=true,clearStrength=true;
+  for(let i=0;i<mask.length;i++)if(mask[i]){
+    for(let k=0;k<4;k++)allBoots&&=fixed.attributes.skinIndex.getComponent(i,k)===g.attributes.skinIndex.getComponent(i,k)&&fixed.attributes.skinWeight.getComponent(i,k)===g.attributes.skinWeight.getComponent(i,k);
+    clearStrength&&=!body.meshes[0].userData.clothStrength[i]&&!body.meshes[0].userData.attachmentComponent?.[i];
+  }
+  check(allBoots&&clearStrength,'全部真实护腿保留源权重且不被布料或挂件排除地面支撑');
+  const other=createMocapBody(source);protectBerserkerLimbs(other,'berserker');
+  check(other.meshes[0].userData.clothProtectedLimbMask===mask&&other.meshes[0].skeleton!==body.meshes[0].skeleton,'多实例共享只读保护mask，骨架各自独立');
+  check(protectBerserkerLimbs(body,'berserker')===result,'已动画或已修复实例重复调用保持幂等');
+  const untargeted=createMocapBody(source);check(protectBerserkerLimbs(untargeted,'skeleton')===null,'非狂剑士不采用专用认证');
+  const invalid=createMocapBody(source);invalid.meshes[0].geometry=g.clone();
+  const wrongWeights=new Float32Array(g.attributes.position.count*4);for(let i=0;i<wrongWeights.length;i+=4)wrongWeights[i]=1;
+  invalid.meshes[0].geometry.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(new Uint16Array(wrongWeights.length),4));invalid.meshes[0].geometry.setAttribute('skinWeight',new THREE.Float32BufferAttribute(wrongWeights,4));
+  check(protectBerserkerLimbs(invalid,'berserker').protectedLimbVertices===0&&!invalid.meshes[0].userData.clothProtectedLimbMask,'同尺寸组件的绑定若不再是同侧真实腿骨则退出认证');
+  const shifted=createMocapBody(source);shifted.meshes[0].geometry=g.clone();shifted.model.position.x=2;shifted.model.updateMatrixWorld(true);
+  check(protectBerserkerLimbs(shifted,'berserker').protectedLimbVertices===0&&!shifted.meshes[0].userData.clothProtectedLimbMask,'新几何或绑定坐标改变时不凭相似点数猜测护腿');
+  check(same(g.attributes.skinIndex.array,rawIndices)&&same(g.attributes.skinWeight.array,rawWeights),'源GLB蒙皮逐字节不变');
+  source.userData.gloryClass='berserker';const production=createMocapBody(source),live=production.meshes[0].geometry;
+  check(production.berserkerLimbs?.protectedLimbVertices===1134&&same(live.attributes.skinIndex.array,want.attributes.skinIndex.array)&&same(live.attributes.skinWeight.array,want.attributes.skinWeight.array),'真实createMocapBody入口与独立候选全顶点一致');
+  __metrics.push({protected:result.protectedLimbVertices,sourceVertices:g.attributes.position.count});
+  for(const instance of [raw,body,independent,other,untargeted,invalid,shifted,production])disposeRig({root:instance.model},{sharedRoots:[source]});
+} catch(error) { __errors.push(String(error.stack||error)); }
+document.querySelector('#result').textContent=JSON.stringify({results:__results,errors:__errors,metrics:__metrics},null,2);window.__ready=true;
+</script></body></html>

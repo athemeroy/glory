@@ -1,6 +1,6 @@
 // 修复已审计角色的披风/裙摆错绑：保留人体关节，仅重绑远离肢体的布面。
 import * as THREE from 'three';
-import { markSharedResource } from './model.js';
+import { markSharedResource } from '../../src/game/model.js';
 
 const profiles = {
   berserker: { rear: [0.02, -0.08], front: [0.28, 0.40] },
@@ -40,8 +40,6 @@ function prepare(mesh, body, profile) {
   mesh.skeleton.update();
   for (let i = 0; i < si.count; i++) {
     for (let k = 0; k < 4; k++) { indices[i * 4 + k] = si.getComponent(i, k); weights[i * 4 + k] = sw.getComponent(i, k); }
-    // 狂剑士宽护腿虽离骨段超过13cm，原完整拓扑与同侧腿骨权重已认证是真硬甲。
-    if (mesh.userData.clothProtectedLimbMask?.[i]) { protectedLimbVertices++; continue; }
     mesh.getVertexPosition(i, point).applyMatrix4(mesh.matrixWorld);
     let protectedHand = false;
     for (const hand of hands) {

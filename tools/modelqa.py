@@ -22,6 +22,7 @@ parser.add_argument('--output',default='qa')
 parser.add_argument('--version',default='',help='Source checkpoint and isolated candidate label recorded with every result')
 parser.add_argument('--classes',default='unspecialized,swordmaster,battlemage,striker,sharpshooter,launcher,warlock,cleric,witch,berserker,assassin,thug,frostcaster,boss,skeleton')
 parser.add_argument('--poses',default='stance,attack,overhead')
+parser.add_argument('--rear-view',action='store_true',help='Use a full rear model view in place of the hand closeup')
 parser.add_argument('--forms',default='')
 parser.add_argument('--samples',default='',help='Comma-separated class:animation:normalized-time samples')
 parser.add_argument('--probes',default='',help='Comma-separated class:vertex-a:vertex-b:pose marked closeups')
@@ -70,7 +71,7 @@ with sync_playwright() as pw:
     page.on('pageerror',lambda error: errors.append(str(error)))
     try:
         initial='/tools/anim-regression.html' if args.cpu_benchmark else '/tools/model-audit.html'
-        trial_query='&'.join(flag+'=1' for flag,enabled in [('robeTrial',args.robe_trial),('skirtTrial',args.skirt_trial)] if enabled)
+        trial_query='&'.join(flag+'=1' for flag,enabled in [('robeTrial',args.robe_trial),('skirtTrial',args.skirt_trial),('rearView',args.rear_view)] if enabled)
         page.goto(args.url.rstrip('/')+initial+('?'+trial_query if trial_query else ''),wait_until='networkidle',timeout=90000)
         page.wait_for_function('window.__ready',timeout=90000,polling=100)
         if args.cpu_benchmark:
