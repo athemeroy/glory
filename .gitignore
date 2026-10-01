@@ -14,3 +14,7 @@ tools/promo/remotion/node_modules/
 tools/promo/remotion/public/rec/
 tools/promo/remotion/public/img/
 tools/promo/remotion/out/
+
+# Vercel 部署目录（tools/vercel/build.sh 生成）
+dist/
+.vercel/

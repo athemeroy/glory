@@ -8,7 +8,8 @@
 
 ## 怎么启动
 
-- **推荐（含联机）**：双击 `start.command`（macOS）/ `start.bat`（Windows），或在本目录运行 `node server/server.mjs`。需要 Node 18 以上，不用装依赖。浏览器打开 `http://localhost:8780/`。终端里还会打印局域网地址，同一局域网的朋友用那个地址就能联机。
+- **推荐**：双击 `start.command`（macOS）/ `start.bat`（Windows），或在本目录运行 `node server/server.mjs`。需要 Node 18 以上，不用装依赖。浏览器打开 `http://localhost:8780/`。
+- **在线**：部署到 Vercel 后（见下文“联机”），任何人打开网址即可玩、即可联机。
 - **只玩单机**：本目录运行 `python3 -m http.server 8780`，打开 `http://localhost:8780/`。
 - 需要键盘和鼠标，推荐 Chrome / Edge。点一下画面锁定鼠标，`Esc` 暂停。
 - 演示视频：`media/glory-demo.mp4`（44 秒，越肩 / 第一人称 / 第三人称对战、镜子换装、Boss、团队赛）。
@@ -22,7 +23,7 @@
 | 擂台赛 | 3v3 车轮战，胜者留场并保留生命。 |
 | 团队赛 | 3v3 同场混战，你和两名 AI 队友对三名 AI。 |
 | 副本 | 寒铁遗庭：三波骸骨卫兵与冰晶术士 → 开门 → 两阶段 Boss「寒铁守卫」。可带两名 AI 队友。 |
-| 联机对战 | 局域网 1v1。一人创建房间，另一人在列表里加入。主机权威判定。 |
+| 联机对战 | 1v1，浏览器直连（WebRTC）。一人创建房间（可设密码），另一人输入 6 位房间号加入；也可以不经任何服务器，互相复制连接码。主机权威判定。 |
 
 12 张账号卡：君莫笑（散人·千机伞）、一叶之秋（战斗法师）、夜雨声烦（剑客）、大漠孤烟（拳法家）、一枪穿云（神枪手）、沐雨橙风（枪炮师）、索克萨尔（术士）、小手冰凉（牧师）、王不留行（魔道学者）、包子入侵（流氓），以及原创账号裂天（狂剑士）、影刃（刺客）。
 
@@ -55,6 +56,14 @@
 - `src/ui/`：HUD 与菜单。`src/engine/`：输入、合成音效、语音、联机。
 - `server/server.mjs`：零依赖静态文件 + WebSocket 房间服务器。
 - `tools/`：自动化测试（`pwrun.py` 单局、`fpseq.py` 逐帧、`balance.py` 平衡矩阵、`tour.py` 画面巡检、`nettest.py` 联机冒烟测试）。详见 `ARCHITECTURE.md`。
+
+## 联机
+
+游戏数据走浏览器直连（`src/engine/p2p.js`，WebRTC 数据通道），不经过服务器。连接前双方要交换一次连接信息：
+- 房间号：`POST /api/sig`（`server/sig-core.mjs`；本地由 `server/server.mjs` 提供，线上由 Vercel 函数 `api/sig.js` 提供，配置 Upstash Redis 后跨实例可靠）。
+- 连接码：约 300 字符，房主发给对方、对方回复一段，不需要任何服务器；房间号服务不可用时自动改用。
+- 双方都在运营商大内网（对称 NAT）时可能打不通；没有配置 TURN 中转。
+- 部署：`tools/vercel/build.sh && vercel deploy dist --prod`。`vercel.app` 在国内被 DNS 污染，国内访问需绑定自己的域名。
 
 ## 宣传片
 

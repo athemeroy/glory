@@ -174,11 +174,23 @@ export class Menu {
     s.innerHTML = `<div class="bg dim2" style="background-image:url(assets/img/loading-duel.jpg)"></div>
       <div class="setup-head"><button class="btn ghost" id="back">← 返回</button><div class="setup-title"><span>ONLINE</span>联机对战</div><div class="net-rtt"></div></div>
       <div class="setup-body"><div class="setup-col"><h3>你的账号卡</h3><div class="acc-grid"></div><div class="class-detail"></div></div>
-      <div class="setup-col net-col"><h3>房间</h3>
+      <div class="setup-col net-col"><h3>联机（浏览器直连）</h3>
         <div class="set-row"><label>昵称</label><div class="ctl"><input class="name-in" maxlength="12"></div></div>
         <div class="net-room"></div>
-        <div class="net-actions"><button class="btn primary" id="create">创建房间</button><input class="code-in" placeholder="房间号" maxlength="4"><button class="btn" id="join">加入</button></div>
-        <h3>等待中的房间</h3><div class="room-list">正在获取…</div></div></div>`;
+        <div class="net-block"><b>创建房间</b>
+          <div class="net-actions"><input class="pw-new" placeholder="密码（可不填）" maxlength="16"><button class="btn primary" id="create">创建房间</button></div></div>
+        <div class="net-block"><b>加入房间</b>
+          <div class="net-actions"><input class="code-in" placeholder="6 位房间号" maxlength="6" inputmode="numeric"><input class="pw-join" placeholder="密码" maxlength="16"><button class="btn" id="join">加入</button></div></div>
+        <details class="net-manual"><summary>没有房间号也能连：复制连接码</summary>
+          <p class="muted">不经过任何服务器：房主把连接码发给对方，对方粘贴后得到回复码，再发回给房主。</p>
+          <div class="net-actions"><button class="btn" id="mk-offer">我是房主：生成连接码</button></div>
+          <textarea class="code-out" readonly placeholder="连接码 / 回复码会显示在这里"></textarea>
+          <div class="net-actions"><button class="btn chip" id="copy-out">复制</button></div>
+          <textarea class="code-paste" placeholder="粘贴对方发来的连接码或回复码"></textarea>
+          <div class="net-actions"><button class="btn" id="use-code">使用粘贴的码</button></div>
+        </details>
+        <p class="muted net-tip">游戏数据在两台电脑之间直连，不经过服务器。双方都在运营商大内网（比如都用手机流量）时可能打不通，换一方用家里宽带或热点即可。</p>
+      </div></div>`;
     const nameIn = s.querySelector('.name-in');
     nameIn.value = store.get('netName', '玩家' + Math.floor(Math.random() * 900 + 100));
     nameIn.onchange = () => store.set('netName', nameIn.value);
@@ -186,45 +198,84 @@ export class Menu {
     const renderAcc = () => { grid.innerHTML = ''; for (const a of ACCOUNTS) this.accountCard(a, grid, a.id === sel.account, (x) => { sel.account = x.id; store.set('lastSel', sel); renderAcc(); }); this.classDetail(byId(sel.account), s.querySelector('.class-detail')); };
     renderAcc();
     const roomBox = s.querySelector('.net-room');
-    const list = s.querySelector('.room-list');
+    const out = s.querySelector('.code-out'), paste = s.querySelector('.code-paste');
+    const card = (html, cls = '') => { roomBox.innerHTML = `<div class="room-card ${cls}">${html}</div>`; };
+    const me = () => ({ name: nameIn.value || '玩家', info: { acc: sel.account } });
+    const copy = async (text) => {
+      try { await navigator.clipboard.writeText(text); return true; } catch { /* 非 https 时退回旧接口 */ }
+      const t = el('textarea', '', document.body); t.value = text; t.select();
+      const ok = document.execCommand('copy'); t.remove(); return ok;
+    };
+    const busy = (b) => { for (const x of s.querySelectorAll('#create,#join,#mk-offer,#use-code')) x.disabled = b; };
     const offs = [];
     const cleanup = () => { clearInterval(this._netListT); for (const o of offs) o(); };
-    offs.push(net.on('rooms', (m) => {
-      list.innerHTML = m.rooms.length ? '' : '<p class="muted">暂无房间。创建一个，或让朋友创建后刷新。</p>';
-      for (const r of m.rooms) {
-        const row = el('div', 'room-row', list, `<b>${r.room}</b><span>${r.name}</span><span class="muted">${r.info && r.info.acc ? byId(r.info.acc).name : ''}</span>`);
-        click(el('button', 'btn chip', row, '加入'), () => doJoin(r.room));
-      }
-    }));
-    const refresh = () => net.send({ t: 'list' });
-    refresh(); this._netListT = setInterval(() => { refresh(); const rt = s.querySelector('.net-rtt'); if (rt) rt.textContent = `已连接 · ${Math.round(net.rtt)}ms`; }, 1500);
-    const doJoin = (room) => {
-      if (!room) return;
-      net.send({ t: 'join', room, name: nameIn.value, info: { acc: sel.account } });
+    this._netListT = setInterval(() => { const rt = s.querySelector('.net-rtt'); if (rt) rt.textContent = net.connected ? `已直连 · ${Math.round(net.rtt)}ms` : ''; }, 1000);
+
+    // 房主：先试房间号服务，失败则退回连接码
+    const create = async (useServer) => {
+      busy(true); card('正在准备连接信息…（约 3 秒）');
+      const pw = s.querySelector('.pw-new').value.trim();
+      try {
+        const r = await net.host({ ...me(), password: pw, useServer });
+        if (r.room) {
+          const invite = `【荣耀】来联机：打开 ${location.origin}${location.pathname} → 联机对战 → 加入房间，房间号 ${r.room}${pw ? `，密码 ${pw}` : ''}`;
+          card(`房间号 <b class="big-code">${r.room}</b>${pw ? ` · 密码 <b>${pw}</b>` : ''}<div class="muted">等待对手加入…（15 分钟内有效）</div>
+            <div class="net-actions"><button class="btn chip" id="copy-inv">复制邀请</button></div>`);
+          click(roomBox.querySelector('#copy-inv'), async () => { const ok = await copy(invite); roomBox.querySelector('#copy-inv').textContent = ok ? '已复制' : '复制失败，请手动抄房间号'; });
+        } else {
+          s.querySelector('.net-manual').open = true;
+          out.value = r.code;
+          card(`${r.sigError ? '这个网址没有房间号服务，改用连接码：' : '连接码已生成：'}复制下方连接码发给对方，再把对方的回复码粘贴到下面，点“使用粘贴的码”。`);
+        }
+      } catch (e) { card(e.message, 'err'); }
+      busy(false);
     };
-    offs.push(net.on('created', (m) => {
-      net.role = 'host'; net.room = m.room;
-      roomBox.innerHTML = `<div class="room-card">房间号 <b>${m.room}</b><div class="muted">等待对手加入…把房间号告诉朋友。</div></div>`;
-    }));
+    const joinRoom = async () => {
+      const room = s.querySelector('.code-in').value.trim();
+      if (!/^\d{6}$/.test(room)) { card('请输入 6 位房间号', 'err'); return; }
+      busy(true); card('正在连接房主…');
+      try { await net.join({ ...me(), password: s.querySelector('.pw-join').value.trim(), room }); card('已找到房间，正在打通直连…'); }
+      catch (e) { card(e.message, 'err'); }
+      busy(false);
+    };
+    const useCode = async () => {
+      const code = paste.value.trim();
+      if (!code) return;
+      busy(true);
+      try {
+        if (net.role === 'host' && net.pc && !net.connected) { await net.acceptAnswer(code); card('已收到回复码，正在打通直连…'); }
+        else {
+          card('正在生成回复码…（约 3 秒）');
+          const r = await net.join({ ...me(), password: s.querySelector('.pw-join').value.trim(), code });
+          out.value = r.answer;
+          card('回复码已生成：复制上方回复码发回给房主，等房主粘贴后自动连上。');
+        }
+      } catch (e) { card(e.message, 'err'); }
+      busy(false);
+    };
+
     offs.push(net.on('peer', (m) => {
       const opp = byId(m.info && m.info.acc);
-      roomBox.innerHTML = `<div class="room-card">房间 <b>${net.room}</b> · 对手 <b>${m.name}</b>（${opp.name} · ${opp.title}）
+      card(`已直连 · 对手 <b>${m.name}</b>（${opp.name} · ${opp.title}）
         <div class="diff"><span>地图</span><button class="btn chip on" data-l="courtyard">断桥庭院</button><button class="btn chip" data-l="arena">联赛赛场</button></div>
-        <button class="btn primary big" id="start">开始对局</button></div>`;
+        <button class="btn primary big" id="start">开始对局</button>`);
       let level = 'courtyard';
       for (const b of roomBox.querySelectorAll('[data-l]')) click(b, () => { level = b.dataset.l; for (const x of roomBox.querySelectorAll('[data-l]')) x.classList.toggle('on', x === b); });
       click(roomBox.querySelector('#start'), () => { cleanup(); this.app.startMode('nethost', { net, account: byId(sel.account), enemy: opp, level, diff: 'normal' }); });
     }));
     offs.push(net.on('joined', (m) => {
-      net.role = 'guest'; net.room = m.room;
       this.app.armGuest();
-      roomBox.innerHTML = `<div class="room-card">已加入房间 <b>${m.room}</b>（主机 ${m.host}）<div class="muted">等待主机开始对局…</div></div>`;
+      const opp = byId(m.info && m.info.acc);
+      card(`已直连房主 <b>${m.host}</b>（${opp.name}）<div class="muted">等待房主开始对局…</div>`);
     }));
-    offs.push(net.on('error', (m) => { roomBox.innerHTML = `<div class="room-card err">${m.msg}</div>`; }));
-    offs.push(net.on('left', () => { roomBox.innerHTML = '<div class="room-card err">对方离开了房间。</div>'; }));
+    offs.push(net.on('error', (m) => card(m.msg, 'err')));
+    offs.push(net.on('left', () => card('对方离开了房间。', 'err')));
     offs.push(net.on('relay', (d) => { if (d.k === 'go') cleanup(); }));
-    click(s.querySelector('#create'), () => net.send({ t: 'create', name: nameIn.value, info: { acc: sel.account } }));
-    click(s.querySelector('#join'), () => doJoin(s.querySelector('.code-in').value.trim()));
+    click(s.querySelector('#create'), () => create(true));
+    click(s.querySelector('#join'), joinRoom);
+    click(s.querySelector('#mk-offer'), () => create(false));
+    click(s.querySelector('#use-code'), useCode);
+    click(s.querySelector('#copy-out'), async () => { if (out.value) s.querySelector('#copy-out').textContent = (await copy(out.value)) ? '已复制' : '复制失败'; });
     click(s.querySelector('#back'), () => { cleanup(); this.app.leaveNet(); this.main(); });
   }
   netWaiting(text) {

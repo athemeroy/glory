@@ -68,8 +68,11 @@ EffectComposer：主画面 RenderPass → 第一人称手臂层 OverlayPass（�
 `assets/models/<clsId>.glb` 为概念图经 Hunyuan3D 图生 3D 的带贴图网格（Y 上、面朝 +Z、身高 1.76、A 字姿势）。`assets/models/manifest.json` 列出可用模型（`tools/make-manifest.sh` 生成）。
 启动时预加载；`skinToRig` 直接用 rig 的骨骼节点作骨架，按 A 字角度绑定，按到骨段距离算权重（结果按模型+体型缓存），并按主导骨骼拆成 head / arms / body 三个 SkinnedMesh：head 进 `rig.headParts`（第一人称隐藏）、arms 进 `rig.armParts`（第一人称隐藏，由手臂层替代）。第一人称手臂层同样蒙皮同一模型，只显示 arms。换装面板可切回程序化“自定义配色”（`look.proc = true`）。
 
-## 联机（server/server.mjs、src/engine/net.js、src/game/netmodes.js）
-零依赖 WebSocket 房间服务器，同时提供静态文件。主机权威：`NetHostDuel` 接收客机输入（移动、视线、按键事件），每 33ms 发快照（角色状态、动作片段、投射物）与表现层事件（录制 onFighterEvent/onHit/onFire/vfx/audio/voice/hud 的最外层调用）；`NetGuestDuel` 插值显示并重放事件（胜负相关文案与语音自动翻转）。
+## 联机（src/engine/p2p.js、src/game/netmodes.js、server/sig-core.mjs）
+浏览器直连：`net`（net.js 导出的 P2PNet 单例）用一条可靠有序的 WebRTC 数据通道收发 JSON，接口与旧 WebSocket 版相同（on/emit、relay、leave，事件 peer/joined/left/close/relay/error，字段 rtt/connected/peerGone）。
+牵线不用 trickle ICE：候选地址收集完（最多 3.5 秒）才出码。连接码只保留 ice-ufrag/pwd、DTLS 指纹、setup 与最多 6 个 host/srflx 候选，JSON 后 base64url，前缀 `G1`，约 300 字符；对方按固定模板还原 SDP。STUN 用国内可达的 B 站、hitv，以及 Cloudflare、Google。
+房间号：`POST /api/sig`（op=new/get/answer/poll），只保存连接码 15 分钟。密码在客户端做哈希（不用 crypto.subtle，http 局域网下不可用），房主连上后再核对一次。
+主机权威：`NetHostDuel` 接收客机输入，每 33ms 发快照与表现层事件；`NetGuestDuel` 插值显示并重放事件（胜负相关文案与语音自动翻转）。
 
 ## 语音（src/engine/voice.js）
 `assets/voice/*.mp3`：Mini 上 macOS 神经语音（婷婷/Reed）合成的解说与大招喊招。
