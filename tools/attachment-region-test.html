@@ -1,15 +1,16 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Skeleton reaction cloth trial</title>
+<!doctype html><html><head><meta charset="utf-8"><title>Skeleton certified strap attachment trial</title>
 <script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
-<body><pre id="result">独立验证骸骨卫兵长手指与整片破裙候选…</pre><script type="module">
+<body><pre id="result">独立验证已认证左肩皮带两枚错绑端点…</pre><script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
 import { MOBS } from '../src/data/enemies.js';
+import { repairClothWeights } from '../src/game/cloth.js';
+import { repairAttachmentWeights as frozenAttachment } from './fixtures/attachment-before-fp-regions.js';
+import { disposeRig } from '../src/game/model.js';
 import { trialSkeletonArmAttachment } from './skeleton-attachment-trial.js';
-import { trialSkeletonWeights } from './skeleton-reaction-trial.js';
-import { repairClothWeights as repairOldClothWeights } from './fixtures/skeleton-cloth-before-reactions.js';
-import { repairAttachmentWeights as repairOldAttachmentWeights } from './fixtures/skeleton-attachment-before-reactions.js';
 window.__errors=[];window.__results=[];window.__metrics=[];
+const productionMode=new URLSearchParams(location.search).has('production');
 const check=(ok,label)=>(ok?__results:__errors).push(label);
 const point=new THREE.Vector3(),normal=new THREE.Vector3(),part=new THREE.Vector3();
 function samples(body){
@@ -39,28 +40,30 @@ function faceValue(sample,tri){
 try{
   await loadClipLibrary('../assets/anim/anims.glb');const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/skeleton.glb')).scene;
   const original=createMocapBody(source),sourceGeometry=original.meshes[0].geometry,sourceIndices=sourceGeometry.attributes.skinIndex.array.slice(),sourceWeights=sourceGeometry.attributes.skinWeight.array.slice(),bind=samples(original);
-  const current=createMocapBody(source);repairOldClothWeights(current,'skeleton');repairOldAttachmentWeights(current,'skeleton');
-  const referenceGeometry=current.meshes[0].geometry,oldIndices=referenceGeometry.attributes.skinIndex.array.slice(),oldWeights=referenceGeometry.attributes.skinWeight.array.slice();
-  // 独立候选只生成预期权重，随后还原旧参考网格。真正动画比较使用raw/旧场/新生产三实例。
-  current.model.userData.gloryClass='skeleton';const trial=trialSkeletonWeights(original,current,bind),strip=trialSkeletonArmAttachment(current),expected=current.meshes[0].geometry;
-  check(strip?.targets.length===2,'仅叠加已认证154片中独立两端点修复，不扩长手指/裙片范围');
-  const expectedTargets=trial.target.slice();for(const i of strip.targets)expectedTargets[i]=3;
-  current.meshes[0].geometry=referenceGeometry;delete current.meshes[0].userData.reactionTrial;
-  source.userData.gloryClass='skeleton';const candidate=createMocapBody(source),fixed=candidate.meshes[0].geometry;
-  check(trial.hands.length===1832,'源Hand>=98%且距腕22cm内的1832长手指点恢复原绑定');
-  check(trial.skirt.length===1860,'仅已认证1860顶点独立破裙片统一随Hips');
-  let untouched=true,handExact=true,productionExact=true,bindError=0;const candidateBind=samples(candidate);
+  // 两路独立参考始终从未标职业的原GLB出发，重放冻结b2权重；
+  // 生产或隔离QA已接入两端点时，不会再把生产结果二次送进候选。
+  const reference=()=>{const body=createMocapBody(source);repairClothWeights(body,'skeleton');frozenAttachment(body,'skeleton');return body};
+  const current=reference(),referenceGeometry=current.meshes[0].geometry;
+  const oldIndices=referenceGeometry.attributes.skinIndex.array.slice(),oldWeights=referenceGeometry.attributes.skinWeight.array.slice();
+  const candidate=reference();candidate.model.userData.gloryClass='skeleton';
+  const trial=trialSkeletonArmAttachment(candidate),fixed=candidate.meshes[0].geometry;
+  let production=null,shared=null;
+  if(productionMode){source.userData.gloryClass='skeleton';production=createMocapBody(source);shared=createMocapBody(source)}
+  check(trial?.componentVertices===154&&trial.targets.length===2,'仅认证154点肩甲皮带中2枚前臂错绑端点归LeftArm');
+  let untouched=true,bindError=0;const candidateBind=samples(candidate),currentBind=samples(current);
   for(let i=0;i<trial.target.length;i++){
-    bindError=Math.max(bindError,Math.hypot(bind.points[i*3]-candidateBind.points[i*3],bind.points[i*3+1]-candidateBind.points[i*3+1],bind.points[i*3+2]-candidateBind.points[i*3+2]));
-    for(let k=0;k<4;k++){
-      const at=i*4+k;if(!expectedTargets[i]&&(fixed.attributes.skinIndex.array[at]!==oldIndices[at]||fixed.attributes.skinWeight.array[at]!==oldWeights[at]))untouched=false;
-      if(fixed.attributes.skinIndex.getComponent(i,k)!==expected.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==expected.attributes.skinWeight.getComponent(i,k))productionExact=false;
-      // GLB 原属性是 stride52 的交错缓冲；按 getComponent 读取语义值，不能用原 array[i*4+k]。
-      if(trial.target[i]===1&&(fixed.attributes.skinIndex.getComponent(i,k)!==sourceGeometry.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==sourceGeometry.attributes.skinWeight.getComponent(i,k)))handExact=false;
-    }
+    bindError=Math.max(bindError,Math.hypot(currentBind.points[i*3]-candidateBind.points[i*3],currentBind.points[i*3+1]-candidateBind.points[i*3+1],currentBind.points[i*3+2]-candidateBind.points[i*3+2]));
+    if(!trial.target[i])for(let k=0;k<4;k++){const at=i*4+k;if(fixed.attributes.skinIndex.array[at]!==oldIndices[at]||fixed.attributes.skinWeight.array[at]!==oldWeights[at])untouched=false}
   }
-  check(untouched&&productionExact,'新生产逐分量等于独立手指/破裙/两端点候选，其他身体/披风/头饰保持旧场参考值');check(handExact,'目标真实手指权重逐分量等于原GLB');check(bindError<1e-5,'全顶点绑定形状误差小于0.01mm');
-  check(fixed.index===sourceGeometry.index&&fixed.attributes.position===sourceGeometry.attributes.position&&fixed.attributes.normal===sourceGeometry.attributes.normal,'原三角索引/位置/法线保持共享原数据');
+  check(untouched,'其余27413点及154片中152个原Arm点逐分量不变');check(bindError<1e-5,'全顶点原绑定形状误差小于0.01mm');
+  check(fixed.index===referenceGeometry.index&&fixed.attributes.position===referenceGeometry.attributes.position&&fixed.attributes.normal===referenceGeometry.attributes.normal,'原三角索引/位置/法线保持共享原数据');
+  if(production){
+    const live=production.meshes[0].geometry;
+    check(live.attributes.skinIndex.array.every((v,i)=>v===fixed.attributes.skinIndex.array[i])&&live.attributes.skinWeight.array.every((v,i)=>v===fixed.attributes.skinWeight.array[i]),'正式全顶点权重逐分量等于独立两端点候选');
+    check(live.index===sourceGeometry.index&&live.attributes.position===sourceGeometry.attributes.position&&live.attributes.normal===sourceGeometry.attributes.normal,'正式完整世界三角/位置/法线与原源保持共享');
+    check(live===shared.meshes[0].geometry&&production.meshes[0].skeleton!==shared.meshes[0].skeleton,'正式实例共享只读修正缓存且骨架独立');
+    check(production.meshes[0].userData.firstPersonHeadMask===shared.meshes[0].userData.firstPersonHeadMask,'既有4176点FP头颈语义mask仍共享');
+  }
   const index=sourceGeometry.index,edges=[],triangles=[],seen=new Set();
   for(let i=0;i<index.count;i+=3){
     const a=index.getX(i),b=index.getX(i+1),c=index.getX(i+2);
@@ -68,8 +71,8 @@ try{
     const area=face(bind.points,a,b,c).length();if(area<1e-8)continue;
     const tri={a,b,c,area,sign:1};const value=faceValue(bind,tri);tri.sign=value.dot<0?-1:1;tri.orientationReliable=Math.abs(value.dot)>.05;triangles.push(tri);
   }
-  const pairs=[original,current,candidate].map(body=>({body,anim:new MocapAnimator(body)})),C=MOBS.skeleton,state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0};
-  const known=[[2025,1997],[13850,604],[44,34],[13648,13650]];
+  const pairs=[original,current,candidate,...(production?[production]:[])].map(body=>({body,anim:new MocapAnimator(body)})),C=MOBS.skeleton,state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0};
+  const known=[[20533,20534],[20532,20534],[2025,1997],[13648,13650]];
   function compare(pose){
     const raw=samples(original),before=samples(current),after=samples(candidate),newSpikes=[],newFolds=[],newCollapsed=[],counts={beforeFolded:0,afterFolded:0};
     let maxBefore=1,maxAfter=1;
@@ -80,17 +83,26 @@ try{
       if(tri.orientationReliable&&next.dot<-.1&&next.ratio>=.05&&old.dot>=-.1)newFolds.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
       if(next.ratio<.05&&old.ratio>=.05)newCollapsed.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
     }
-    const metric={pose,edges:edges.length,faces:triangles.length,maxBefore,maxAfter,newSpikes:newSpikes.length,newFolds:newFolds.length,newCollapsed:newCollapsed.length,counts,known:known.map(([a,b])=>({a,b,rest:distance(bind.points,a,b),source:distance(raw.points,a,b),before:distance(before.points,a,b),after:distance(after.points,a,b)})),worstNew:newSpikes.slice(0,10),worstFold:newFolds.slice(0,10),worstCollapsed:newCollapsed.slice(0,10)};__metrics.push(metric);
+    let productionVertexError=0;
+    if(production){const live=samples(production);for(let i=0;i<live.points.length;i++)productionVertexError=Math.max(productionVertexError,Math.abs(live.points[i]-after.points[i]));check(productionVertexError<1e-8,pose+': 实际生产每帧蒙皮等于独立候选')}
+    const metric={pose,productionVertexError,edges:edges.length,faces:triangles.length,maxBefore,maxAfter,newSpikes:newSpikes.length,newFolds:newFolds.length,newCollapsed:newCollapsed.length,counts,known:known.map(([a,b])=>({a,b,rest:distance(bind.points,a,b),source:distance(raw.points,a,b),before:distance(before.points,a,b),after:distance(after.points,a,b)})),worstNew:newSpikes.slice(0,10),worstFold:newFolds.slice(0,10),worstCollapsed:newCollapsed.slice(0,10)};__metrics.push(metric);
     check(!newSpikes.length,pose+': 全网格无新增>10cm拉伸边');check(!newFolds.length&&!newCollapsed.length,pose+': 相同原三角集合无新增折返/压扁');
   }
   for(let i=0;i<60;i++)for(const pair of pairs)pair.anim.update(1/60,state);
   compare('stance');
-  for(const[phase,frames,duration]of[['down',39,.65],['getup',27,.45]])for(let frame=1;frame<=frames;frame++){
+  if(!new URLSearchParams(location.search).has('quick'))for(const[phase,frames,duration]of[['down',39,.65],['getup',27,.45]])for(let frame=1;frame<=frames;frame++){
     const st={...state,react:{type:phase,t:(frame-1)/60,dur:duration}};for(const pair of pairs)pair.anim.update(1/60,st);
     compare(phase+'-'+frame);
   }
-  for(const[pose,st]of[['run',{...state,speed:5.6}],['attack',{...state,action:{clip:C.chain[0].anim,stage:'active',t:.65,key:'trial'}}],['overhead',{...state,action:{clip:'jumpslam',stage:'wind',t:1,key:'trial'}}],['down-held',{...state,react:{type:'down',t:.8,dur:1}}]]){for(let i=0;i<60;i++)for(const pair of pairs)pair.anim.update(1/60,st);compare(pose)}
+  if(!new URLSearchParams(location.search).has('quick'))for(const[pose,st]of[['run',{...state,speed:5.6}],['attack',{...state,action:{clip:C.chain[0].anim,stage:'active',t:.65,key:'trial'}}],['overhead',{...state,action:{clip:'jumpslam',stage:'wind',t:1,key:'trial'}}],['down-held',{...state,react:{type:'down',t:.8,dur:1}}]]){for(let i=0;i<60;i++)for(const pair of pairs)pair.anim.update(1/60,st);compare(pose)}
   check(sourceGeometry.attributes.skinIndex.array.every((v,i)=>v===sourceIndices[i])&&sourceGeometry.attributes.skinWeight.array.every((v,i)=>v===sourceWeights[i]),'原GLB蒙皮数据与所有缓存实例未被试验覆盖');
+  if(production){
+    const geometry=production.meshes[0].geometry,skinWeight=geometry.attributes.skinWeight;let cachedDisposed=0;geometry.addEventListener('dispose',()=>cachedDisposed++);
+    for(const pair of pairs)pair.anim.mixer.stopAllAction();
+    disposeRig({root:production.model},{sharedRoots:[source]});
+    check(cachedDisposed===0&&shared.meshes[0].geometry===geometry&&geometry.attributes.skinWeight===skinWeight,'销毁实例保留共享修正geometry/蒙皮缓存');
+  }
+  for(const body of [original,current,candidate,shared].filter(Boolean))disposeRig({root:body.model},{sharedRoots:[source]});
   document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
 }catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
 window.__ready=true;

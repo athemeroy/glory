@@ -349,7 +349,7 @@ window.__regionProbe=async(clsId,field,pose='bind')=>{
     const camera=new THREE.PerspectiveCamera(40,1,0.002,50);camera.position.copy(center).addScaledVector(axis,distance);camera.lookAt(center);draw(scene,camera,i*width,height,width,height);
   }
   metric.region={field,vertices,triangles,restBounds:{min:restBox.min.toArray(),max:restBox.max.toArray()},posedBounds:{min:posedBox.min.toArray(),max:posedBox.max.toArray()}};
-  document.querySelector('#label').textContent=`${qaVersion}${clsId} · ${pose} · repair region ${field}\n${vertices} modified vertices / ${triangles} touching triangles · cyan translucent highlight\nFront / Side / Rear — First person retains production weights`;
+  document.querySelector('#label').textContent=`${qaVersion}${clsId} · ${pose} · highlighted region ${field}\n${vertices} selected vertices / ${triangles} touching triangles · cyan translucent highlight\nFront / Side / Rear — First person retains production weights`;
   return metric;
 };
 await __audit(new URLSearchParams(location.search).get('cls')||'swordmaster');

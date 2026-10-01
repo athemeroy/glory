@@ -1,0 +1,66 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Berserker shoulder cape FP scope proof</title><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body><pre id="result">验证肩披条只改变衣料FP分类，真实手臂与握持保留…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, splitForFirstPerson } from '../src/game/mocap.js';
+import { repairClothWeights as oldCloth } from './fixtures/cloth-before-berserker-limbs.js';
+import { repairAttachmentWeights as oldAttachment } from './fixtures/attachment-before-fp-regions.js';
+import { trialBerserkerWeights } from './berserker-body-trial.js';
+import { referenceFirstPersonArms } from './fixtures/first-person-arms-before-regions.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+import { FPView } from '../src/game/fpview.js';
+import { CLASSES } from '../src/data/classes.js';
+window.__results=[];window.__errors=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label),same=(a,b)=>a.length===b.length&&a.every((v,i)=>v===b[i]);
+const p=new THREE.Vector3(),q=new THREE.Vector3(),quat=new THREE.Quaternion(),otherQuat=new THREE.Quaternion();
+const native=(fp,position)=>{const meshes=[];fp.root.traverse(mesh=>{if(mesh.isSkinnedMesh&&mesh.geometry.attributes.position===position)meshes.push(mesh)});return meshes};
+const faces=index=>{const out=[];for(let at=0;at<index.length;at+=3)out.push(index[at]+':'+index[at+1]+':'+index[at+2]);return out};
+try{
+  const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/berserker.glb')).scene,raw=createMocapBody(source),rawGeometry=raw.meshes[0].geometry;
+  const rawSI=rawGeometry.attributes.skinIndex.array.slice(),rawSW=rawGeometry.attributes.skinWeight.array.slice(),rawIndex=rawGeometry.index.array.slice();
+  const oldBody=()=>{const body=createMocapBody(source);oldCloth(body,'berserker');oldAttachment(body,'berserker');body.model.userData.gloryClass='berserker';return body};
+  const beforeBody=oldBody();trialBerserkerWeights(raw,beforeBody);
+  const expectedBody=oldBody(),trial=trialBerserkerWeights(raw,expectedBody,'LeftShoulder');
+  check(trial.boots.length===1134&&trial.cape.length===1285,'独立原源认证1134真护腿与1285完整后披条');
+  source.userData.gloryClass='berserker';const productionBody=createMocapBody(source),g=productionBody.meshes[0].geometry,want=expectedBody.meshes[0].geometry;
+  check(same(g.attributes.skinIndex.array,want.attributes.skinIndex.array)&&same(g.attributes.skinWeight.array,want.attributes.skinWeight.array),'正式世界全权重等于冻结旧附件加独立护腿/肩披条候选');
+  const C=CLASSES.berserker,rig=buildCharacter(C.look),anim=new Animator(rig);anim.breath=0;
+  const before=new FPView(C.look,C.weapon,C.weaponOpts,source),candidate=new FPView(C.look,C.weapon,C.weaponOpts,source),production=new FPView(C.look,C.weapon,C.weaponOpts,source);
+  const oldMeshes=native(before,rawGeometry.attributes.position),candidateMeshes=native(candidate,rawGeometry.attributes.position),liveMeshes=native(production,rawGeometry.attributes.position);
+  // 从完整原index重放旧FP分类，不能从新Shoulder裁面后的FP倒推原衣料面。
+  const install=(meshes,geometry)=>{for(const mesh of meshes){mesh.geometry.setAttribute('skinIndex',geometry.attributes.skinIndex);mesh.geometry.setAttribute('skinWeight',geometry.attributes.skinWeight);mesh.geometry.setIndex(referenceFirstPersonArms(mesh,rawGeometry.index))}};
+  install(oldMeshes,beforeBody.meshes[0].geometry);install(candidateMeshes,want);
+  check(oldMeshes.length===1&&candidateMeshes.length===1&&liveMeshes.length===1,'三个FP均含同一原精模手臂分区');
+  const oldIndex=oldMeshes[0].geometry.index.array,nextIndex=candidateMeshes[0].geometry.index.array,liveIndex=liveMeshes[0].geometry.index.array,oldFaces=faces(oldIndex),nextFaces=faces(nextIndex),nextSet=new Set(nextFaces),oldSet=new Set(oldFaces);
+  const removed=oldFaces.filter(face=>!nextSet.has(face)),added=nextFaces.filter(face=>!oldSet.has(face));
+  check(removed.length>0&&!added.length&&removed.every(face=>face.split(':').every(i=>trial.target[Number(i)]===2)),'FP仅移除认证1285披条内的衣料面，未新增或误删其他面');
+  const preserved=oldFaces.filter(face=>!face.split(':').every(i=>trial.target[Number(i)]===2));
+  check(same(nextFaces,preserved),'所有非披条真实手臂/前臂/手腕面逐索引保留');
+  check(same(nextIndex,liveIndex),'正式FP直接与独立完整源重分类结果逐索引相同');
+  let untouched=true;const old=beforeBody.meshes[0].geometry;
+  for(let i=0;i<trial.target.length;i++)if(trial.target[i]!==2)for(let k=0;k<4;k++)if(g.attributes.skinIndex.getComponent(i,k)!==old.attributes.skinIndex.getComponent(i,k)||g.attributes.skinWeight.getComponent(i,k)!==old.attributes.skinWeight.getComponent(i,k))untouched=false;
+  check(untouched,'世界除1285衣料外所有顶点逐分量等于第9独立参考');
+  const state={onGround:true,speed:0,fwd:1,stance:C.stance,pitch:0};
+  for(const pose of ['stance','run','attack']){
+    const st={...state,speed:pose==='run'?5.6:0,action:pose==='attack'?{clip:C.chain[0].anim,stage:'active',t:.65,key:'cape-proof'}:null};
+    for(let frame=0;frame<60;frame++){anim.update(1/60,st);for(const fp of [before,candidate,production]){fp.sync(rig,1/60,0);fp.update(1/60)}}
+    for(const mesh of [oldMeshes[0],candidateMeshes[0],liveMeshes[0]]){mesh.updateWorldMatrix(true,false);mesh.skeleton.update()}
+    let retainedVertexError=0,productionVertexError=0,bonePositionError=0,boneAngleError=0;
+    for(const i of new Set(nextIndex)){oldMeshes[0].getVertexPosition(i,p).applyMatrix4(oldMeshes[0].matrixWorld);candidateMeshes[0].getVertexPosition(i,q).applyMatrix4(candidateMeshes[0].matrixWorld);retainedVertexError=Math.max(retainedVertexError,p.distanceTo(q));liveMeshes[0].getVertexPosition(i,p).applyMatrix4(liveMeshes[0].matrixWorld);productionVertexError=Math.max(productionVertexError,p.distanceTo(q))}
+    for(const name of ['LeftArm','LeftForeArm','LeftHand','RightArm','RightForeArm','RightHand']){
+      const a=before.mc.B[name],b=production.mc.B[name];a.getWorldPosition(p);b.getWorldPosition(q);bonePositionError=Math.max(bonePositionError,p.distanceTo(q));a.getWorldQuaternion(quat);b.getWorldQuaternion(otherQuat);boneAngleError=Math.max(boneAngleError,quat.normalize().angleTo(otherQuat.normalize()));
+    }
+    check(retainedVertexError<1e-8&&productionVertexError<1e-8&&bonePositionError<1e-8&&boneAngleError<1e-6,pose+': 保留蒙皮及双臂/手腕骨长姿态完全一致');
+    const support=fp=>{const target=fp.weapon.obj.localToWorld(p.copy(fp.weapon.offhandGrip));const palm=fp.mc.B.LeftHand.localToWorld(q.copy(fp.mc.palms.Left));return target.distanceTo(palm)};
+    const beforeContact=support(before),productionContact=support(production);
+    check(Math.abs(beforeContact-productionContact)<1e-8&&productionContact<.02,pose+': 实际左掌副手握持误差保留且小于2cm');
+    __metrics.push({pose,beforeFaces:oldIndex.length/3,afterFaces:liveIndex.length/3,removed:removed.length,added:added.length,retainedVertexError,productionVertexError,bonePositionError,boneAngleError,beforeContact,productionContact});
+  }
+  const originalFaces=faces(g.index.array),split=splitForFirstPerson(productionBody),union=new Map();
+  for(const face of originalFaces)union.set(face,(union.get(face)||0)+1);for(const mesh of [...split.head,...split.arms,...split.body])for(const face of faces(mesh.geometry.index.array))union.set(face,(union.get(face)||0)-1);
+  check([...union.values()].every(value=>value===0),'完整世界原三角仍由head/arms/body union逐面保留');
+  check(same(rawGeometry.index.array,rawIndex)&&same(rawGeometry.attributes.skinIndex.array,rawSI)&&same(rawGeometry.attributes.skinWeight.array,rawSW),'原GLB索引/蒙皮逐字节不变');
+  before.dispose();candidate.dispose();production.dispose();disposeRig(rig);for(const body of [raw,beforeBody,expectedBody,productionBody])disposeRig({root:body.model},{sharedRoots:[source]});
+}catch(error){__errors.push(String(error.stack||error))}
+document.querySelector('#result').textContent=JSON.stringify({results:__results,errors:__errors,metrics:__metrics},null,2);window.__ready=true;
+</script></body></html>

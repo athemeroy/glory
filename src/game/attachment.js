@@ -21,6 +21,7 @@ function prepare(mesh, body, classId) {
   const source = mesh.geometry, si = source.attributes.skinIndex, sw = source.attributes.skinWeight;
   if (!si || !sw || !source.index) return null;
   const names = mesh.skeleton.bones.map(bone => bone.name), headIndex = names.indexOf('Head'), hipIndex = names.indexOf('Hips'), spineIndex = names.indexOf('Spine02') >= 0 ? names.indexOf('Spine02') : names.indexOf('Spine'), rightLegIndex = names.indexOf('RightLeg'), rightUpLegIndex = names.indexOf('RightUpLeg');
+  const leftShoulderIndex = names.indexOf('LeftShoulder'), leftArmIndex = names.indexOf('LeftArm'), leftForeArmIndex = names.indexOf('LeftForeArm');
   if (headIndex < 0 || hipIndex < 0 || spineIndex < 0 || !body.bones.neck || !body.bones.Head || !body.bones.Hips) return null;
   const head = body.bones.Head.getWorldPosition(new THREE.Vector3()), neck = body.bones.neck.getWorldPosition(new THREE.Vector3());
   const hips = body.bones.Hips.getWorldPosition(new THREE.Vector3());
@@ -45,22 +46,25 @@ function prepare(mesh, body, classId) {
   const components = new Map();
   for (let i = 0; i < si.count; i++) {
     const id = root(welded[i]); let component = components.get(id);
-    if (!component) { component = {count: 0, headWeight: 0, lowHeadVertices: 0, rightLegWeight: 0, rightUpLegWeight: 0, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity}; components.set(id, component); }
+    if (!component) { component = {count: 0, headWeight: 0, lowHeadVertices: 0, rightLegWeight: 0, rightUpLegWeight: 0, leftArmWeight: 0, leftForeArmWeight: 0, leftForeArmVertices: 0, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity}; components.set(id, component); }
     component.count++;
-    let headWeight = 0;
+    let headWeight = 0, leftForeArmWeight = 0;
     for (let k = 0; k < 4; k++) {
       const index = si.getComponent(i, k), weight = sw.getComponent(i, k);
       if (index === headIndex) headWeight += weight;
+      if (classId === 'skeleton' && index === leftArmIndex) component.leftArmWeight += weight;
+      if (classId === 'skeleton' && index === leftForeArmIndex) { component.leftForeArmWeight += weight; leftForeArmWeight += weight; }
       if (classId === 'thug' && index === rightLegIndex) component.rightLegWeight += weight;
       if (classId === 'thug' && index === rightUpLegIndex) component.rightUpLegWeight += weight;
     }
     component.headWeight += headWeight;
+    if (leftForeArmWeight > .99999) component.leftForeArmVertices++;
     if (headWeight > .05 && points[i * 3 + 1] < neck.y - .50) component.lowHeadVertices++;
     component.minX = Math.min(component.minX, points[i * 3]); component.maxX = Math.max(component.maxX, points[i * 3]);
     component.minY = Math.min(component.minY, points[i * 3 + 1]); component.maxY = Math.max(component.maxY, points[i * 3 + 1]);
     component.minZ = Math.min(component.minZ, points[i * 3 + 2]); component.maxZ = Math.max(component.maxZ, points[i * 3 + 2]);
   }
-  const selectedComponents = new Set(), skirtComponents = new Set(), firstPersonHeadComponents = new Set();
+  const selectedComponents = new Set(), skirtComponents = new Set(), firstPersonHeadComponents = new Set(), shoulderCapeComponents = new Set(), armStripComponents = new Set();
   for (const [id, component] of components) {
     // 骸骨头盔/颈部下缘混有Shoulder影响，主导骨多数分类会漏出47个FP碎面。
     // 原bind完整头颈片已逐面认证；只提供FP分类语义，不改变世界权重或可见面。
@@ -78,6 +82,20 @@ function prepare(mesh, body, classId) {
         Math.abs(component.minZ - .0774960) < .003 && Math.abs(component.maxZ - .4976900) < .003) {
       selectedComponents.add(id); skirtComponents.add(id);
     }
+    // 骸骨左肩甲下的154点皮带只有两枚端点错绑前臂；152个纯上臂点保持原值。
+    if (classId === 'skeleton' && si.count === 27415 && leftArmIndex >= 0 && leftForeArmIndex >= 0 && component.count === 154 &&
+        Math.abs(component.leftArmWeight - 152) < 1e-5 && Math.abs(component.leftForeArmWeight - 2) < 1e-5 && component.leftForeArmVertices === 2 &&
+        Math.abs(component.minX - .2772601) < .003 && Math.abs(component.maxX - .3668101) < .003 &&
+        Math.abs(component.minY - 1.2261444) < .003 && Math.abs(component.maxY - 1.3225829) < .003 &&
+        Math.abs(component.minZ - .3323677) < .003 && Math.abs(component.maxZ - .3668100) < .003) armStripComponents.add(id);
+    // 狂剑士1285点红色后披条为完整独立衣料片，真实护腿/手臂在其他片。
+    // 原上下点分别随手臂和大腿，倒地/起身会拉成尖面；挂点实际贴左肩。
+    if (classId === 'berserker' && si.count === 27036 && leftShoulderIndex >= 0 && component.count === 1285 &&
+        Math.abs(component.minX - .1188258) < .0035 && Math.abs(component.maxX - .4391389) < .0035 &&
+        Math.abs(component.minY - .7542857) < .0035 && Math.abs(component.maxY - 1.5326807) < .0035 &&
+        Math.abs(component.minZ + .3530328) < .0035 && Math.abs(component.maxZ - .0912720) < .0035) {
+      selectedComponents.add(id); shoulderCapeComponents.add(id);
+    }
     // 狂战士前腰白色挂布是独立 294 顶点片；不可能的低处 Head 权重与腰带边界共同确认它。
     if (classId === 'berserker' && component.count > 200 && component.count < 400 && component.lowHeadVertices > 10 && component.minY > hips.y - .60 && component.minY < hips.y - .35 && component.maxY > hips.y && component.maxY < hips.y + .12 && component.minZ > hips.z + .06 && component.maxZ < hips.z + .25 && component.minX < hips.x && component.maxX > hips.x && component.maxX - component.minX < .40) selectedComponents.add(id);
     // 术士腰带挂下的独立 855 顶点中央袍片跨两腿，真实腿脚位于其他连通片。
@@ -94,8 +112,18 @@ function prepare(mesh, body, classId) {
   let changed = 0, targetVertices = 0;
   for (let i = 0; i < si.count; i++) {
     for (let k = 0; k < 4; k++) { indices[i * 4 + k] = si.getComponent(i, k); weights[i * 4 + k] = sw.getComponent(i, k); }
-    if (firstPersonHeadMask && firstPersonHeadComponents.has(root(welded[i]))) firstPersonHeadMask[i] = 1;
-    if (!selectedComponents.has(root(welded[i]))) continue;
+    const componentId = root(welded[i]);
+    if (firstPersonHeadMask && firstPersonHeadComponents.has(componentId)) firstPersonHeadMask[i] = 1;
+    if (armStripComponents.has(componentId)) {
+      let foreWeight = 0;
+      for (let k = 0; k < 4; k++) if (indices[i * 4 + k] === leftForeArmIndex) foreWeight += weights[i * 4 + k];
+      if (foreWeight > .99999) {
+        indices.set([leftArmIndex, 0, 0, 0], i * 4); weights.set([1, 0, 0, 0], i * 4);
+        componentMask[i] = 1; strength[i] = 1; targetVertices++; changed++;
+      }
+      continue;
+    }
+    if (!selectedComponents.has(componentId)) continue;
     let amount = 1;
     if (classId === 'frostcaster') {
       point.fromArray(points, i * 3); let distance = Infinity;
@@ -108,7 +136,11 @@ function prepare(mesh, body, classId) {
       if (amount <= 1e-6) continue;
     }
     componentMask[i] = 1; targetVertices++;
-    if (skirtComponents.has(root(welded[i]))) {
+    if (shoulderCapeComponents.has(componentId)) {
+      indices.set([leftShoulderIndex, 0, 0, 0], i * 4); weights.set([1, 0, 0, 0], i * 4);
+      strength[i] = 1; changed++; continue;
+    }
+    if (skirtComponents.has(componentId)) {
       indices.set([hipIndex, 0, 0, 0], i * 4); weights.set([1, 0, 0, 0], i * 4);
       strength[i] = 1; changed++; continue;
     }

@@ -7,10 +7,11 @@ import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/moc
 import { CLASSES } from '../src/data/classes.js';
 import { trialBerserkerWeights } from './berserker-body-trial.js';
 import { repairClothWeights as oldCloth } from './fixtures/cloth-before-berserker-limbs.js';
-import { repairAttachmentWeights } from '../src/game/attachment.js';
+import { repairAttachmentWeights as frozenAttachment } from './fixtures/attachment-before-fp-regions.js';
 import { buildCharacter, disposeRig } from '../src/game/model.js';
 import { Animator } from '../src/game/anim.js';
 window.__errors=[];window.__results=[];window.__metrics=[];
+const params=new URLSearchParams(location.search),productionMode=params.has('production');
 const check=(ok,label)=>(ok?__results:__errors).push(label);
 const point=new THREE.Vector3(),normal=new THREE.Vector3(),part=new THREE.Vector3();
 function samples(body){
@@ -44,8 +45,10 @@ try{
   // The baseline is created before the class tag, so future production hooks cannot repair both sides.
   const original=createMocapBody(source),sourceGeometry=original.meshes[0].geometry,sourceIndices=sourceGeometry.attributes.skinIndex.array.slice(),sourceWeights=sourceGeometry.attributes.skinWeight.array.slice(),bind=samples(original);
   // 独立重放9cfba2e的旧衣摆场，生产新增护腿保护不能同时修掉参考侧。
-  const reference=createMocapBody(source);oldCloth(reference,cls);repairAttachmentWeights(reference,cls);reference.model.userData.gloryClass=cls;
-  source.userData.gloryClass=cls;const candidate=createMocapBody(source);const capeBone=new URLSearchParams(location.search).get('capeBone');const trial=trialBerserkerWeights(original,candidate,capeBone,bind);
+  const reference=createMocapBody(source);oldCloth(reference,cls);frozenAttachment(reference,cls);reference.model.userData.gloryClass=cls;
+  const candidate=createMocapBody(source);oldCloth(candidate,cls);frozenAttachment(candidate,cls);candidate.model.userData.gloryClass=cls;
+  const capeBone=params.get('capeBone'),trial=trialBerserkerWeights(original,candidate,capeBone,bind);
+  source.userData.gloryClass=cls;const production=productionMode?createMocapBody(source):null,shared=production?createMocapBody(source):null;
   const fixed=candidate.meshes[0].geometry,candidateBind=samples(candidate);let bindError=0;
   check(trial.boots.length===1134&&trial.cape.length===(capeBone?1285:0),cls+': 仅严格认证1134护腿点/1285独立后披条');
   const referenceGeometry=reference.meshes[0].geometry;let unchanged=true,bootExact=true;
@@ -57,6 +60,12 @@ try{
   for(let i=0;i<sourceGeometry.attributes.position.count;i++)bindError=Math.max(bindError,Math.hypot(bind.points[i*3]-candidateBind.points[i*3],bind.points[i*3+1]-candidateBind.points[i*3+1],bind.points[i*3+2]-candidateBind.points[i*3+2]));
   check(bindError<1e-5,cls+': 全顶点绑定外形误差小于0.01mm');
   check(fixed.index===sourceGeometry.index&&fixed.attributes.position===sourceGeometry.attributes.position&&fixed.attributes.normal===sourceGeometry.attributes.normal,cls+': 原完整索引/位置/法线保持共享原数据');
+  if(production){
+    const live=production.meshes[0].geometry;
+    check(capeBone==='LeftShoulder'&&live.attributes.skinIndex.array.every((value,i)=>value===fixed.attributes.skinIndex.array[i])&&live.attributes.skinWeight.array.every((value,i)=>value===fixed.attributes.skinWeight.array[i]),cls+': 正式全顶点权重等于独立1134护腿与1285肩披条候选');
+    check(live===shared.meshes[0].geometry&&production.meshes[0].skeleton!==shared.meshes[0].skeleton,cls+': 共享只读附件缓存且骨架独立');
+    check(live.index===sourceGeometry.index&&live.attributes.position===sourceGeometry.attributes.position&&live.attributes.normal===sourceGeometry.attributes.normal,cls+': 正式完整世界索引/非蒙皮属性原样');
+  }
   const index=sourceGeometry.index,edges=[],triangles=[],seen=new Set();
   for(let i=0;i<index.count;i+=3){
     const a=index.getX(i),b=index.getX(i+1),c=index.getX(i+2);
@@ -64,7 +73,7 @@ try{
     const area=face(bind.points,a,b,c).length();if(area<1e-8)continue;
     const tri={a,b,c,area,sign:1};const value=faceValue(bind,tri);tri.sign=value.dot<0?-1:1;tri.orientationReliable=Math.abs(value.dot)>.05;triangles.push(tri);
   }
-  const C=CLASSES[cls],pairs=[reference,candidate].map(body=>{const rig=buildCharacter(C.look),proc=new Animator(rig);proc.breath=0;return {body,rig,proc,anim:new MocapAnimator(body,rig)}}),state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0};
+  const C=CLASSES[cls],pairs=[reference,candidate,...(production?[production]:[])].map(body=>{const rig=buildCharacter(C.look),proc=new Animator(rig);proc.breath=0;return {body,rig,proc,anim:new MocapAnimator(body,rig)}}),state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0};
   const known=[[1191,1196],[26328,26314],[4793,12215]];
   function compare(pose){
     const before=samples(reference),after=samples(candidate),newSpikes=[],newFolds=[],newCollapsed=[],counts={beforeFolded:0,afterFolded:0};
@@ -76,18 +85,22 @@ try{
       if(tri.orientationReliable&&next.dot<-.1&&next.ratio>=.05&&old.dot>=-.1)newFolds.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
       if(next.ratio<.05&&old.ratio>=.05)newCollapsed.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
     }
-    const metric={cls,capeBone,pose,edges:edges.length,faces:triangles.length,maxBefore,maxAfter,newSpikes:newSpikes.length,newFolds:newFolds.length,newCollapsed:newCollapsed.length,counts,known:known.map(([a,b])=>({a,b,rest:distance(bind.points,a,b),before:distance(before.points,a,b),after:distance(after.points,a,b)})),worstNew:newSpikes.slice(0,10),worstFold:newFolds.slice(0,10),worstCollapsed:newCollapsed.slice(0,10)};__metrics.push(metric);
+    let productionVertexError=0;if(production){const live=samples(production);for(let i=0;i<live.points.length;i++)productionVertexError=Math.max(productionVertexError,Math.abs(live.points[i]-after.points[i]));check(productionVertexError<1e-8,cls+' '+pose+': 正式每帧蒙皮等于独立候选')}
+    const metric={cls,capeBone,pose,productionVertexError,edges:edges.length,faces:triangles.length,maxBefore,maxAfter,newSpikes:newSpikes.length,newFolds:newFolds.length,newCollapsed:newCollapsed.length,counts,known:known.map(([a,b])=>({a,b,rest:distance(bind.points,a,b),before:distance(before.points,a,b),after:distance(after.points,a,b)})),worstNew:newSpikes.slice(0,10),worstFold:newFolds.slice(0,10),worstCollapsed:newCollapsed.slice(0,10)};__metrics.push(metric);
     check(!newSpikes.length,cls+' '+pose+': 全网格无新增>10cm拉伸边');check(!newFolds.length&&!newCollapsed.length,cls+' '+pose+': 相同原三角集合无新增折返/压扁');
   }
   for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,state);pair.anim.update(1/60,state)}
   compare('stance');
-  for(const[phase,frames,duration]of[['down',39,.65],['getup',27,.45]])for(let frame=1;frame<=frames;frame++){
+  if(!params.has('quick'))for(const[phase,frames,duration]of[['down',39,.65],['getup',27,.45]])for(let frame=1;frame<=frames;frame++){
     const st={...state,react:{type:phase,t:(frame-1)/60,dur:duration}};for(const pair of pairs){pair.proc.update(1/60,st);pair.anim.update(1/60,st)}
     compare(phase+'-'+frame);
   }
-  for(const[pose,st]of[['run',{...state,speed:5.6}],['attack',{...state,action:{clip:C.chain[0].anim,stage:'active',t:.65,key:'trial'}}],['overhead',{...state,action:{clip:'jumpslam',stage:'wind',t:1,key:'trial'}}],['down-held',{...state,react:{type:'down',t:.8,dur:1}}]]){for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,st);pair.anim.update(1/60,st)}compare(pose)}
+  if(!params.has('quick'))for(const[pose,st]of[['run',{...state,speed:5.6}],['attack',{...state,action:{clip:C.chain[0].anim,stage:'active',t:.65,key:'trial'}}],['overhead',{...state,action:{clip:'jumpslam',stage:'wind',t:1,key:'trial'}}],['down-held',{...state,react:{type:'down',t:.8,dur:1}}]]){for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,st);pair.anim.update(1/60,st)}compare(pose)}
   check(sourceGeometry.attributes.skinIndex.array.every((v,i)=>v===sourceIndices[i])&&sourceGeometry.attributes.skinWeight.array.every((v,i)=>v===sourceWeights[i]),cls+': 原GLB蒙皮数据未被修复实例覆盖');
+  let cachedDisposed=0;if(production)production.meshes[0].geometry.addEventListener('dispose',()=>cachedDisposed++);
   for(const pair of pairs){pair.anim.mixer.stopAllAction();disposeRig({root:pair.body.model},{sharedRoots:[source]});disposeRig(pair.rig)}
+  if(shared){check(!cachedDisposed&&shared.meshes[0].geometry.attributes.skinWeight===production.meshes[0].geometry.attributes.skinWeight,cls+': 释放实例保留共享附件geometry/蒙皮缓存');disposeRig({root:shared.model},{sharedRoots:[source]})}
+  disposeRig({root:original.model},{sharedRoots:[source]});
   }
   document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
 }catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
