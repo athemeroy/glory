@@ -223,8 +223,8 @@ const EndCard = ({ s }) => (
       <Logo delay={8} size={180} />
       <GoldLine delay={28} />
       <EnWord from={30} />
-      <Fade from={50} style={{ marginTop: 40, fontSize: 38, letterSpacing: '0.24em', color: '#f3e3bb' }}>双击 start.command 即玩</Fade>
-      <Fade from={64} style={{ marginTop: 18, fontSize: 24, letterSpacing: '0.3em', color: '#cdbb90' }}>单机 · 局域网联机 · Chrome / Edge</Fade>
+      <Fade from={50} style={{ marginTop: 40, fontSize: 38, letterSpacing: '0.24em', color: '#f3e3bb' }}>打开网页即可开打</Fade>
+      <Fade from={64} style={{ marginTop: 18, fontSize: 24, letterSpacing: '0.3em', color: '#cdbb90' }}>单机 · 浏览器直连联机 · Chrome / Edge</Fade>
       <Fade from={78} style={{ marginTop: 14, fontSize: 20, letterSpacing: '0.3em', color: '#a99b78' }}>《全职高手》同人 · 非商业作品</Fade>
     </div>
   </Card>

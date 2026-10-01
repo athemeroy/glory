@@ -6,47 +6,32 @@ export const FPS = 30;
 export const W = 1920;
 export const H = 1080;
 
-export const VO = {
-  vo01: { text: '第十区，开服了。', sec: 2.88 },
-  vo02: { text: '《全职高手》里的那款网游，现在，就在你的浏览器里。', sec: 5.24 },
-  vo03: { text: '十二张账号卡，每一张，都有自己的打法。', sec: 5.36 },
-  vo04: { text: '第一人称——原著的视角。', sec: 3.40 },
-  vo05: { text: '也可以，切到越肩和第三人称。', sec: 3.64 },
-  vo06: { text: '挑空，追击，受身。', sec: 3.00 },
-  vo07: { text: '蓄力，霸体。看准时机——振刀！', sec: 4.60 },
-  vo08: { text: '在镜廊里，看清自己。', sec: 3.44 },
-  vo09: { text: '寒铁遗庭，守卫已经苏醒。', sec: 4.80 },
-  vo10: { text: '三对三团队赛，局域网联机。', sec: 3.40 },
-  vo11: { text: '荣耀。现在，开打。', sec: 3.52 },
-};
+// 旁白已取消（2026-10-01：用户觉得 TTS 旁白难听，只保留游戏原声）；保留结构，便于以后加回
+export const VO = {};
 
 export const SHOTS = [
-  { type: 'title', dur: 150, out: ['fade', 18], vo: [['vo01', 24]] },
-  { type: 'clip', name: 'establish', dur: 205, out: ['wipe', 12], bars: true, zoom: [1.06, 1.0],
-    cap: ['断桥庭院', '个人赛 · 三局两胜'], vo: [['vo02', 10]] },
-  { type: 'clip', name: 'lineupA', dur: 118, out: ['slide', 10], bars: true, zoom: [1.0, 1.03],
-    cap: ['十二张账号卡', '君莫笑　一叶之秋　夜雨声烦　大漠孤烟　一枪穿云　沐雨橙风'], vo: [['vo03', 22]] },
-  { type: 'clip', name: 'lineupB', dur: 118, out: ['flash', 10], bars: true, zoom: [1.0, 1.03],
-    cap: ['精模 · 动作捕捉', '索克萨尔　小手冰凉　王不留行　包子入侵　裂天　影刃'] },
-  { type: 'clip', name: 'fp', dur: 148, out: ['fade', 10], hud: true, zoom: [1.0, 1.0],
-    cap: ['第一人称', '原著视角'], vo: [['vo04', 12]] },
-  { type: 'clip', name: 'ots', dur: 148, out: ['flash', 10], hud: true, zoom: [1.0, 1.0],
-    cap: ['越肩 · 第三人称', 'F5 一键切换'], vo: [['vo05', 10]] },
-  { type: 'clip', name: 'juggle', dur: 148, out: ['wipe', 12], bars: true, zoom: [1.02, 1.08],
-    cap: ['浮空 · 追击 · 受身', '一叶之秋 · 天击'], vo: [['vo06', 10]] },
-  { type: 'clip', name: 'charge', dur: 180, out: ['flash', 8], bars: true, zoom: [1.0, 1.1],
-    cap: ['蓄力 · 振刀', '裂天　对　夜雨声烦'], vo: [['vo07', 2]] },
-  { type: 'clip', name: 'ult1', dur: 130, out: ['flash', 8], bars: true, zoom: [1.08, 1.0], punch: 18,
+  { type: 'title', dur: 135, out: ['fade', 16] },
+  { type: 'clip', name: 'duel', dur: 160, out: ['flash', 10], hud: true, zoom: [1.0, 1.0],
+    cap: ['第一人称', '君莫笑 对 夜雨声烦 · 断桥庭院'] },
+  { type: 'clip', name: 'mirror', dur: 145, out: ['fade', 12], hud: true, zoom: [1.0, 1.0],
+    cap: ['镜廊训练室', '对镜换装 · 千机伞四种形态'] },
+  { type: 'clip', name: 'charge', dur: 175, out: ['flash', 8], hud: true, zoom: [1.0, 1.0], punch: 72,
+    cap: ['蓄力 · 振刀', '裂天的蓄力重击，被夜雨声烦振开'] },
+  { type: 'clip', name: 'juggle', dur: 160, out: ['wipe', 12], hud: true, zoom: [1.0, 1.0],
+    cap: ['浮空 · 追击', '一叶之秋 · 天击'] },
+  { type: 'clip', name: 'ult1', dur: 145, out: ['flash', 8], hud: true, zoom: [1.0, 1.0], punch: 14,
     cap: ['银光·千刃', '夜雨声烦 · 大招'] },
-  { type: 'clip', name: 'ult2', dur: 132, out: ['fade', 16], bars: true, zoom: [1.0, 1.08], punch: 18,
+  { type: 'clip', name: 'ult2', dur: 145, out: ['flash', 10], hud: true, zoom: [1.0, 1.0], punch: 14,
     cap: ['伏龙翔天', '一叶之秋 · 大招'] },
-  { type: 'clip', name: 'mirror', dur: 150, out: ['dip', 16], bars: true, zoom: [1.0, 1.05],
-    cap: ['镜廊训练室', '照镜 · 换装'], vo: [['vo08', 14]] },
-  { type: 'clip', name: 'boss', dur: 180, sfx: 0.45, out: ['flash', 10], bars: true, zoom: [1.05, 1.0], punch: 40,
-    cap: ['副本 · 寒铁遗庭', '两阶段 Boss「寒铁守卫」'], vo: [['vo09', 16]] },
-  { type: 'clip', name: 'team', dur: 165, sfx: 0.6, out: ['fade', 20], bars: true, zoom: [1.0, 1.06],
-    cap: ['3v3 团队赛', '擂台车轮战 · 局域网联机'], vo: [['vo10', 10]] },
-  { type: 'end', dur: 190, vo: [['vo11', 26]] },
+  { type: 'clip', name: 'gunner', dur: 145, out: ['slide', 10], hud: true, zoom: [1.0, 1.0],
+    cap: ['枪林弹雨', '一枪穿云 · 双枪'] },
+  { type: 'clip', name: 'mobs', dur: 160, out: ['dip', 14], hud: true, zoom: [1.0, 1.0], sfx: 0.7,
+    cap: ['副本 · 寒铁遗庭', '大漠孤烟 · 骸骨卫兵'] },
+  { type: 'clip', name: 'boss', dur: 175, out: ['flash', 10], hud: true, zoom: [1.0, 1.0], sfx: 0.6,
+    cap: ['寒铁守卫', '两阶段 Boss'] },
+  { type: 'clip', name: 'team', dur: 160, out: ['fade', 20], hud: true, zoom: [1.0, 1.0], sfx: 0.7,
+    cap: ['3v3 团队赛', '联赛赛场'] },
+  { type: 'end', dur: 180 },
 ];
 
 // 每段在总时间线上的起始帧（转场重叠会把后一段提前）
@@ -58,6 +43,6 @@ export const starts = (() => {
 export const TOTAL = starts[starts.length - 1] + SHOTS[SHOTS.length - 1].dur;
 
 // 旁白的绝对时间（帧）
-export const voTrack = SHOTS.flatMap((s, i) => (s.vo || []).map(([id, off]) => ({
+export const voTrack = SHOTS.flatMap((s, i) => (s.vo || []).filter(([id]) => VO[id]).map(([id, off]) => ({
   id, from: starts[i] + off, len: Math.ceil(VO[id].sec * FPS), text: VO[id].text,
 })));

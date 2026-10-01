@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 rm -rf dist && mkdir -p dist/play dist/media dist/api dist/server
-rsync -a site/img site/fonts site/voices site/voices.html dist/
+rsync -a site/img site/fonts dist/
 # 首页：去掉 1080p 下载按钮（大文件不放 Vercel）
 sed -e '/glory-promo-1080p\.mp4/d' site/index.html > dist/index.html
 cp media/glory-promo-small.mp4 dist/media/glory-promo.mp4

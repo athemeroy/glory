@@ -22,64 +22,29 @@ const S = window._cs || (window._cs = {});
 const sm = (k, v, a) => { if (S[k] === undefined) S[k] = v; S[k] += (v - S[k]) * a; return S[k]; };
 """
 SHOTS = [
-    dict(kind='game', name='establish', sec=6.5, step=1 / 30, hud=False, bars=True, fov=34,
-         qs='auto=duel&acc=yysf&enemy=dmgy&bot=1&botdiff=god&diff=hard&view=tp', rwait=5200, warm=1.2,
-         cam=CAM_SMOOTH + """
-const mx = sm('mx', (P.pos.x + E.pos.x) / 2, 0.06), mz = sm('mz', (P.pos.z + E.pos.z) / 2, 0.06);
-const a = 0.5 + t * 0.14, R = 8.2 - t * 0.45;
-cam.position.set(mx + Math.sin(a) * R, 2.7 - t * 0.2, mz + Math.cos(a) * R); cam.lookAt(mx, 1.05, mz);"""),
-    dict(kind='game', name='lineupA', sec=3.5, step=1 / 30, hud=False, bars=True, fov=30,
-         qs='auto=team&ta=jmx,yyzq,yysf&tb=dmgy,yqcy,myc&diff=hard&view=tp', rwait=5200, warm=0.2,
-         lineup=['jmx', 'yyzq', 'yysf', 'dmgy', 'yqcy', 'myc'],
-         cam="cam.position.set(-0.9 + t * 0.5, 1.55, 11.2 - t * 0.5); cam.lookAt(-0.3 + t * 0.2, 1.05, 0);"),
-    dict(kind='game', name='lineupB', sec=3.5, step=1 / 30, hud=False, bars=True, fov=30,
-         qs='auto=team&ta=skse,xsbl,wblx&tb=bzrq,lt,yr&diff=hard&view=tp', rwait=5200, warm=0.2,
-         lineup=['skse', 'xsbl', 'wblx', 'bzrq', 'lt', 'yr'],
-         cam="cam.position.set(0.9 - t * 0.5, 1.55, 11.2 - t * 0.5); cam.lookAt(0.3 - t * 0.2, 1.05, 0);"),
-    dict(kind='game', name='fp', sec=4.5, step=1 / 30, hud=True, bars=False,
-         qs='auto=duel&acc=jmx&enemy=yysf&bot=1&botdiff=god&diff=hard', rwait=5200, warm=0.2,
-         place=True),
-    dict(kind='game', name='ots', sec=4.5, step=1 / 30, hud=True, bars=False,
-         qs='auto=duel&acc=yysf&enemy=dmgy&bot=1&botdiff=god&diff=hard&view=ots', rwait=5200, warm=0.2,
-         place=True),
-    dict(kind='game', name='juggle', sec=4.5, step=1 / 60, hud=False, bars=True, fov=36,
-         qs='auto=duel&acc=yyzq&enemy=lt&diff=hard&view=tp', rwait=5200, warm=0.2, freezeEnemy=True,
-         script=[(4, 's1'), (38, 'atk'), (54, 'atk'), (70, 'atk'), (88, 's5'), (112, 'atk'), (128, 'atk')],
-         cam=CAM_SMOOTH + """
-const ly = sm('ly', 1.25 + Math.max(0, E.pos.y) * 0.55, 0.12), lz = sm('lz', (P.pos.z + E.pos.z) / 2, 0.1);
-cam.position.set(4.6 - t * 0.25, 1.1 + ly * 0.2, lz - 0.6 + t * 0.2); cam.lookAt(0, ly, lz);"""),
-    dict(kind='game', name='charge', sec=5.5, step=1 / 60, hud=False, bars=True, fov=36,
-         qs='auto=duel&acc=lt&enemy=yysf&diff=hard&view=tp', rwait=5200, warm=0.2, freezeEnemy=True, zhendao=True,
-         cam=CAM_SMOOTH + """
-const mx = sm('mx', (P.pos.x + E.pos.x) / 2, 0.1), mz = sm('mz', (P.pos.z + E.pos.z) / 2, 0.1);
-const a = -2.25 + t * 0.12; cam.position.set(mx + Math.sin(a) * 4.8, 0.85 + t * 0.05, mz + Math.cos(a) * 4.8); cam.lookAt(mx, 1.25, mz);"""),
-    dict(kind='game', name='ult1', sec=4.0, step=1 / 60, hud=False, bars=True, fov=38,
-         qs='auto=duel&acc=yysf&enemy=dmgy&diff=hard&view=tp', rwait=5200, warm=0.2, freezeEnemy=True, ult=True,
-         cam=CAM_SMOOTH + """
-const mx = sm('mx', (P.pos.x + E.pos.x) / 2, 0.08), mz = sm('mz', (P.pos.z + E.pos.z) / 2, 0.08);
-const a = 1.1 + t * 0.22; cam.position.set(mx + Math.sin(a) * 5.4, 0.9 + t * 0.12, mz + Math.cos(a) * 5.4); cam.lookAt(mx, 1.2, mz);"""),
-    dict(kind='game', name='ult2', sec=4.0, step=1 / 60, hud=False, bars=True, fov=38,
-         qs='auto=duel&acc=yyzq&enemy=lt&diff=hard&view=tp', rwait=5200, warm=0.2, freezeEnemy=True, ult=True,
-         cam=CAM_SMOOTH + """
-const mx = sm('mx', (P.pos.x + E.pos.x) / 2, 0.08), mz = sm('mz', (P.pos.z + E.pos.z) / 2, 0.08);
-const a = -1.2 - t * 0.2; cam.position.set(mx + Math.sin(a) * 5.8, 1.0 + t * 0.2, mz + Math.cos(a) * 5.8); cam.lookAt(mx, 1.5, mz);"""),
-    dict(kind='game', name='mirror', sec=4.5, step=1 / 30, hud=False, bars=True, fov=40,
-         qs='auto=training&acc=jmx&view=tp', rwait=1800, warm=0.5, mirror=True,
-         script=[(18, 'form:spear'), (34, 'atk'), (52, 'form:gun'), (78, 'form:shield'), (104, 'form:sword'), (116, 'atk')],
-         cam="cam.position.set(-0.5 - t * 0.25, 1.72, 1.35 - t * 0.12); cam.lookAt(-5.2, 1.25, -0.25);"),
-    dict(kind='game', name='boss', sec=5.5, step=1 / 30, hud=False, bars=True, fov=42,
-         qs='auto=dungeon&acc=yysf&bot=1&botdiff=god&view=tp', rwait=2500, warm=3.0, boss=True,
-         cam=CAM_SMOOTH + """
-const B = window.__glory.mode.boss || E;
-const bx = sm('bx', B.pos.x, 0.08), bz = sm('bz', B.pos.z, 0.08), px = sm('px', P.pos.x, 0.08), pz = sm('pz', P.pos.z, 0.08);
-let dx = px - bx, dz = pz - bz; const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
-cam.position.set(px + dx * 3.4 - dz * 1.4, 0.55 + t * 0.06, pz + dz * 3.4 + dx * 1.4); cam.lookAt(bx, 2.1, bz);"""),
-    dict(kind='game', name='team', sec=5.0, step=1 / 30, hud=False, bars=True, fov=42,
-         qs='auto=team&bot=1&diff=hard&botdiff=god&view=tp&ta=myc,yyzq,xsbl&tb=yqcy,skse,lt', rwait=5200, warm=3.2,
-         cam=CAM_SMOOTH + """
-const fs = window.__glory.game.fighters.filter((x) => !x.dead && x.pos.distanceTo(P.pos) < 12); let cx = 0, cz = 0; for (const x of fs) { cx += x.pos.x; cz += x.pos.z; } cx /= fs.length || 1; cz /= fs.length || 1;
-cx = sm('cx', cx, 0.05); cz = sm('cz', cz, 0.05);
-const a = 0.35 + t * 0.1; cam.position.set(cx + Math.sin(a) * 8.5, 5.0 - t * 0.4, cz + Math.cos(a) * 8.5); cam.lookAt(cx, 0.9, cz);"""),
+    # 全部第一人称（2026-10-01 用户要求：直接放第一人称各场景，不要旁白）
+    dict(kind='game', name='duel', sec=5.0, step=1 / 30, hud=True,
+         qs='auto=duel&acc=jmx&enemy=yysf&bot=1&botdiff=god&diff=hard&view=fp', rwait=5200, warm=0.3, place=True),
+    dict(kind='game', name='mirror', sec=4.5, step=1 / 30, hud=True,
+         qs='auto=training&acc=jmx&view=fp', rwait=1800, warm=0.5, mirror=True,
+         script=[(14, 'form:spear'), (30, 'atk'), (50, 'form:gun'), (74, 'form:shield'), (98, 'form:sword'), (112, 'atk')]),
+    dict(kind='game', name='charge', sec=5.5, step=1 / 60, hud=True, aim=True,
+         qs='auto=duel&acc=lt&enemy=yysf&diff=hard&view=fp', rwait=5200, warm=0.2, freezeEnemy=True, zhendao=True),
+    dict(kind='game', name='juggle', sec=5.0, step=1 / 60, hud=True, aim=True,
+         qs='auto=duel&acc=yyzq&enemy=lt&diff=hard&view=fp', rwait=5200, warm=0.2, freezeEnemy=True,
+         script=[(4, 's1'), (38, 'atk'), (54, 'atk'), (70, 'atk'), (88, 's5'), (112, 'atk'), (128, 'atk')]),
+    dict(kind='game', name='ult1', sec=4.5, step=1 / 60, hud=True, aim=True,
+         qs='auto=duel&acc=yysf&enemy=dmgy&diff=hard&view=fp', rwait=5200, warm=0.2, freezeEnemy=True, ult=True),
+    dict(kind='game', name='ult2', sec=4.5, step=1 / 60, hud=True, aim=True,
+         qs='auto=duel&acc=yyzq&enemy=lt&diff=hard&view=fp', rwait=5200, warm=0.2, freezeEnemy=True, ult=True),
+    dict(kind='game', name='gunner', sec=4.5, step=1 / 30, hud=True,
+         qs='auto=duel&acc=yqcy&enemy=lt&bot=1&botdiff=god&diff=hard&view=fp', rwait=5200, warm=0.3, place=True),
+    dict(kind='game', name='mobs', sec=5.0, step=1 / 30, hud=True,
+         qs='auto=dungeon&acc=dmgy&bot=1&botdiff=god&view=fp', rwait=2500, warm=3.0),
+    dict(kind='game', name='boss', sec=5.5, step=1 / 30, hud=True,
+         qs='auto=dungeon&acc=yysf&bot=1&botdiff=god&view=fp', rwait=2500, warm=3.0, boss=True),
+    dict(kind='game', name='team', sec=5.0, step=1 / 30, hud=True,
+         qs='auto=team&bot=1&diff=hard&botdiff=god&view=fp&ta=yyzq,myc,xsbl&tb=yqcy,skse,lt', rwait=5200, warm=3.2),
 ]
 
 # ---------------------------------------------------------------- 页面注入
@@ -150,6 +115,11 @@ def frame_js(s):
         acts.append("window._hold={attack: f>=6 && f<100}; if(f===6) P.startCharge(); const a=P.action; if(E && a && a.slot==='charge' && a.stage==='wind' && a.t > (a.def.wind||900) - 170) E.wantGuard=true; if(f>120 && E) E.wantGuard=false;")
     if s.get('boss'):
         acts.append("const B=window.__glory.mode.boss; if(B && f===24) B.tryUse('s1');")
+    if s.get('mirror'):
+        acts.append("if(P.pos.x<-3.0) P.pos.x=-3.0; g.viewYaw=-Math.PI/2+Math.sin(f/40)*0.08; g.viewPitch=-0.06;")
+    if s.get('aim'):
+        acts.append("if(E){ const dx=E.pos.x-P.pos.x, dz=E.pos.z-P.pos.z, d=Math.hypot(dx,dz)||1; let dy=Math.atan2(E.pos.x-P.pos.x, E.pos.z-P.pos.z)-g.viewYaw; dy=Math.atan2(Math.sin(dy),Math.cos(dy)); g.viewYaw+=dy*0.3;"
+                    " const ey=E.pos.y+1.15*(E.scale||1)-(P.pos.y+1.62); g.viewPitch+=(Math.max(-0.45,Math.min(1.0,Math.atan2(ey,d)))-g.viewPitch)*0.25; }")
     if not acts:
         return None
     return "(()=>{const f=window._pf|0, g=window.__glory.game, m=window.__glory.mode, P=g.player, E=m.enemy||m.boss||(g.fighters.find(x=>x!==P));" + "".join(acts) + "return 1})()"
