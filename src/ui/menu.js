@@ -151,9 +151,9 @@ export class Menu {
     const vbox = box.querySelector('.viewer');
     try {
       if (!this.viewer) this.viewer = new CharViewer(vbox, this.app.game.models, this.app.game.rigged);
-      else { this.viewer.el = vbox; vbox.appendChild(this.viewer.r.domElement); }
+      else this.viewer.attach(vbox);
       this.viewer.show(acc.cls);
-    } catch (e) { vbox.remove(); }
+    } catch (e) { this.dropViewer(); vbox.remove(); }
   }
 
   // ---------- 联机大厅 ----------
@@ -439,17 +439,23 @@ export class Menu {
     const look = JSON.parse(JSON.stringify(player.rig.look));
     const orig = JSON.parse(JSON.stringify(look));
     const s = el('div', 'wardrobe', this.root, '<h2>镜前 · 换装</h2><p class="wd-note">镜中是你的实时模型；试穿不改变属性，确认后保存。</p>');
+    let modeButtons = null;
+    const preview = () => {
+      for (const b of modeButtons?.querySelectorAll('button') || []) b.classList.toggle('on', b.dataset.v === (look.proc ? 'proc' : 'model'));
+      onChange(look);
+    };
     const row = (label, html) => { const r = el('div', 'set-row', s, `<label>${label}</label><div class="ctl">${html}</div>`); return r.querySelector('.ctl'); };
     const color = (label, get, set) => {
       const c = row(label, `<input type="color" value="${get()}">`);
-      c.querySelector('input').oninput = (e) => { set(e.target.value); look.proc = true; onChange(look); };
+      c.querySelector('input').oninput = (e) => { set(e.target.value); look.proc = true; preview(); };
     };
     const choice = (label, opts, get, set) => {
       const c = row(label, opts.map(([v, n]) => `<button class="btn chip ${get() === v ? 'on' : ''}" data-v="${v}">${n}</button>`).join(''));
-      for (const b of c.querySelectorAll('button')) click(b, () => { set(b.dataset.v); if (label !== '造型') look.proc = true; for (const x of c.querySelectorAll('button')) x.classList.toggle('on', x === b); onChange(look); });
+      for (const b of c.querySelectorAll('button')) click(b, () => { set(b.dataset.v); if (label !== '造型') look.proc = true; for (const x of c.querySelectorAll('button')) x.classList.toggle('on', x === b); preview(); });
+      return c;
     };
-    if (this.app.game.models && this.app.game.models.has(player.modelKey)) {
-      choice('造型', [['model', '原画精模'], ['proc', '自定义配色']], () => (look.proc ? 'proc' : 'model'), (v) => (look.proc = v === 'proc'));
+    if (this.app.game.models?.has(player.modelKey) || this.app.game.rigged?.has(player.modelKey)) {
+      modeButtons = choice('造型', [['model', '原画精模'], ['proc', '自定义配色']], () => (look.proc ? 'proc' : 'model'), (v) => (look.proc = v === 'proc'));
       el('p', 'wd-note', s, '原画精模由概念图生成 3D，颜色固定；选“自定义配色”后下方各项生效。');
     }
     choice('体型', [['m', '男'], ['f', '女']], () => look.sex, (v) => (look.sex = v));

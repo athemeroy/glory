@@ -1,0 +1,54 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, loadClipLibrary, MocapAnimator, mountMocapWeapon, handSocket, weaponTilt } from '../src/game/mocap.js';
+import { installGripHands, fitWorldGripHands } from '../src/game/grip.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+import { buildWeapon } from '../src/game/weapons.js';
+import { FPView } from '../src/game/fpview.js';
+import { CLASSES } from '../src/data/classes.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,message)=>{if(!ok)throw Error(message);__results.push(message)};
+const gap=(hands,weapon)=>hands[1].root.localToWorld(hands[1].grip.clone()).distanceTo(weapon.obj.localToWorld(weapon.offhandGrip.clone()));
+const sameRotation=(a,b)=>a.toArray().every((value,i)=>Math.abs(value-b.toArray()[i])<1e-6);
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');const loader=new GLTFLoader();
+  for(const name of ['berserker','battlemage','launcher']) {
+    const source=(await loader.loadAsync(`../assets/models/rigged/${name}.glb`)).scene;source.userData.gloryClass=name;
+    const C=CLASSES[name],proc=buildCharacter(C.look),pa=new Animator(proc),body=createMocapBody(source),W=buildWeapon(C.weapon);
+    mountMocapWeapon(body,'Right',W.obj,weaponTilt(C.weapon));
+    const hands=installGripHands(body,{Right:handSocket(body,'Right'),Left:handSocket(body,'Left')},C.weapon);
+    const ma=new MocapAnimator(body,proc),fp=new FPView(C.look,C.weapon,{},source);
+    const lengths=['LeftForeArm','LeftHand'].map(n=>body.bones[n].position.length());
+    for(const pose of ['stance','attack','run']) {
+      const state={onGround:true,speed:pose==='run'?5.6:0,fwd:1,stance:C.stance,
+        action:pose==='attack'?{clip:C.chain[0].anim,stage:'active',t:.65,key:pose}:null};
+      let originalArm,originalFore;
+      for(let i=0;i<60;i++){pa.update(1/60,state);ma.update(1/60,state);originalArm=body.bones.LeftArm.quaternion.clone();originalFore=body.bones.LeftForeArm.quaternion.clone();fitWorldGripHands(body,hands,W);fp.sync(proc,1/60);}
+      body.model.updateMatrixWorld(true);fp.root.updateMatrixWorld(true);
+      const worldGap=gap(hands,W),fpGap=gap(fp.gripHands,fp.weapon);
+      const shoulder=body.bones.LeftArm.getWorldPosition(new THREE.Vector3()),elbow=body.bones.LeftForeArm.getWorldPosition(new THREE.Vector3()),wrist=body.bones.LeftHand.getWorldPosition(new THREE.Vector3());
+      const target=W.obj.localToWorld(W.offhandGrip.clone()),offset=body.bones.LeftHand.localToWorld(hands[1].socket.clone()).sub(wrist);
+      const reach=shoulder.distanceTo(target.clone().sub(offset)),maxReach=shoulder.distanceTo(elbow)+elbow.distanceTo(wrist);
+      const released=pose==='attack'&&reach>maxReach+.02&&sameRotation(body.bones.LeftArm.quaternion,originalArm)&&sameRotation(body.bones.LeftForeArm.quaternion,originalFore);
+      __metrics.push({name,pose,worldGap,fpGap,reach,maxReach,released});
+      check(worldGap<.02||released,name+': '+pose+' 世界副手可达时握持，攻击不可达时保留动作');
+      check(fpGap<.02,name+': '+pose+' 第一人称副手准确握持');
+      check(['LeftForeArm','LeftHand'].every((n,i)=>Math.abs(body.bones[n].position.length()-lengths[i])<1e-6),name+': '+pose+' 骨长保持');
+      const leftAxis=new THREE.Vector3(0,0,1).applyQuaternion(hands[1].root.getWorldQuaternion(new THREE.Quaternion()));
+      const handleAxis=new THREE.Vector3(0,1,0).applyQuaternion(W.obj.getWorldQuaternion(new THREE.Quaternion()));
+      check(released||leftAxis.angleTo(handleAxis)<.001,name+': '+pose+' 握持时副手指列与握柄对齐');
+    }
+    const before=[body.bones.LeftArm.quaternion.clone(),body.bones.LeftForeArm.quaternion.clone()];
+    W.offhandGrip.set(10,0,0);fitWorldGripHands(body,hands,W);
+    check([body.bones.LeftArm,body.bones.LeftForeArm].every((bone,i)=>sameRotation(bone.quaternion,before[i])),name+': 不可达目标保留原动画');
+    check(hands.every(hand=>hand.root.quaternion.toArray().every(Number.isFinite)),name+': 不可达目标保持有效姿态');
+    ma.mixer.stopAllAction();fp.dispose();disposeRig({root:body.model},{sharedRoots:[source,...hands.map(h=>h.root)]});
+    for(const hand of hands)hand.dispose();disposeRig(proc);
+  }
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(e){__errors.push(String(e.stack||e));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

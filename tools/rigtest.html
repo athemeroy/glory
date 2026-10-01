@@ -4,6 +4,7 @@ import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { loadClipLibrary, createMocapBody, retargetClip, MocapAnimator, handSocket, mountMocapWeapon, splitForFirstPerson } from '../src/game/mocap.js';
 import { FPView } from '../src/game/fpview.js';
 import { buildCharacter } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
 window.__errors = [];
 try {
   await loadClipLibrary('../assets/anim/anims.glb');
@@ -32,6 +33,13 @@ try {
     }
     const fp = new FPView({}, 'sword', {}, gltf.scene);
     if (!fp.mc) throw Error(name + ': 第一人称手臂未启用');
+    if (fp.gripHands?.length !== 2 || fp.gripHands.some(hand => hand.joints.length !== 14)) throw Error(name + ': 缺少指节骨');
+    for (const hand of fp.gripHands) {
+      for (const amount of [0, 0.5, 1]) {
+        hand.setGrip(amount);
+        if (hand.joints.some(({bone})=>!bone.quaternion.toArray().every(Number.isFinite))) throw Error(name + ': 指节姿态异常');
+      }
+    }
     const procedural = buildCharacter({});
     for (const twist of [-1, 0, 1]) {
       procedural.bones.haR.rotation.y = twist;
@@ -41,6 +49,17 @@ try {
       const actual = fp.mc.B.RightHand.getWorldQuaternion(new THREE.Quaternion());
       if (expected.angleTo(actual)>0.001) throw Error(name + ': 手腕扭转丢失');
       if (!fp.weapon.obj.getWorldPosition(new THREE.Vector3()).toArray().every(Number.isFinite)) throw Error(name + ': 第一人称武器坐标异常');
+      for (const [i, side] of ['Right', 'Left'].entries()) {
+        const hand = fp.gripHands[i];
+        const gripPosition = hand.root.localToWorld(hand.grip.clone());
+        const palmPosition = fp.mc.B[side + 'Hand'].localToWorld(fp.mc.palms[side].clone());
+        if (gripPosition.distanceTo(palmPosition)>1e-5) throw Error(name + ': 手型与握持中心分离');
+        if (i === 0) {
+          const fingers = new THREE.Vector3(0,0,1).applyQuaternion(hand.root.getWorldQuaternion(new THREE.Quaternion()));
+          const handle = new THREE.Vector3(0,1,0).applyQuaternion(fp.weapon.obj.getWorldQuaternion(new THREE.Quaternion()));
+          if (fingers.angleTo(handle)>0.001) throw Error(name + ': 指列没有对齐握柄');
+        }
+      }
     }
     const rest = new Map(Object.entries(body.bones).map(([n,b]) => [n, {q:b.quaternion.clone(), p:b.position.clone()}]));
     const mixer = new THREE.AnimationMixer(body.model);
@@ -75,10 +94,24 @@ try {
     for (let i=0;i<30;i++) animator.update(1/60, {...idle, guard:true});
     const original = [...body.meshes];
     const vertexCount = original.reduce((n,m)=>n+(m.geometry.index?.count || m.geometry.attributes.position.count),0);
-    const split = splitForFirstPerson(body);
+    splitForFirstPerson(body);
     if (body.meshes.reduce((n,m)=>n+m.geometry.index.count,0)!==vertexCount) throw Error(name + ': 拆分丢失三角形');
     if (body.meshes.some(m=>!original.some(o=>o.geometry.attributes.position===m.geometry.attributes.position))) throw Error(name + ': 拆分复制了顶点');
     results.push(name + ': 动作、握持点、手腕扭转、网格拆分通过');
+    fp.dispose();
+    if (name === 'sharpshooter') {
+      const guns = new FPView({}, 'pistol', {}, gltf.scene);
+      const pose = buildCharacter({}), animator = new Animator(pose);
+      for (let i=0;i<60;i++) animator.update(1/60, {stance:'pistol',onGround:true,speed:0});
+      guns.sync(pose,1/60); guns.root.updateMatrixWorld(true);
+      const right = guns.weapon.obj.getWorldPosition(new THREE.Vector3()), left = guns.left.getWorldPosition(new THREE.Vector3());
+      if (Math.abs(right.x-left.x)<0.15) throw Error('双枪挤在画面中心');
+      for (const gun of [guns.weapon.obj, guns.left]) {
+        const barrel = new THREE.Vector3(0,1,0).applyQuaternion(gun.getWorldQuaternion(new THREE.Quaternion()));
+        if (Math.abs(barrel.x)>0.001 || barrel.z>0) throw Error('双枪枪管偏离视线');
+      }
+      guns.dispose();
+    }
     gltf.scene.traverse(o=>{if(o.isMesh){o.geometry.dispose();for(const m of [].concat(o.material)){m.map?.dispose();m.dispose();}}});
   }
   if (JSON.stringify(bindClip.toJSON()) !== before) throw Error('重定向污染源动作');

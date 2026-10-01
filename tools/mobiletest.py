@@ -52,7 +52,8 @@ class Fingers:
     def move(self, key, xy):
         self.points[key] = xy
         self.send('touchMove')
-        self.page.wait_for_timeout(50)  # 浏览器按帧合并 pointermove，等它派发。
+        # 虚拟时钟已暂停；推进动画帧，才能派发浏览器合并的 pointermove。
+        self.page.clock.run_for(50)
 
     def up(self, key):
         xy = self.points.pop(key)

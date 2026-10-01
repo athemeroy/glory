@@ -1,0 +1,216 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Glory model audit</title>
+<style>html,body{margin:0;background:#20252d;color:#fff;font:13px system-ui;overflow:hidden}#label{position:absolute;top:10px;left:14px;pointer-events:none;white-space:pre}</style>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><div id="label">Loading real rigged models…</div><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator, mountMocapWeapon, weaponTilt, analyzeImpacts } from '../src/game/mocap.js';
+import { buildWeapon } from '../src/game/weapons.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+import { FPView, FP_LAYER } from '../src/game/fpview.js';
+import { CLASSES } from '../src/data/classes.js';
+import { MOBS, BOSS } from '../src/data/enemies.js';
+import { installGripHands, fitWorldGripHands } from '../src/game/grip.js';
+import { handSocket } from '../src/game/mocap.js';
+
+window.__errors=[];
+window.addEventListener('error',e=>__errors.push(e.message));
+window.addEventListener('unhandledrejection',e=>__errors.push(String(e.reason)));
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+renderer.setPixelRatio(1); renderer.setSize(innerWidth,innerHeight);
+renderer.outputColorSpace=THREE.SRGBColorSpace; renderer.toneMapping=THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+await loadClipLibrary('../assets/anim/anims.glb');
+const loader=new GLTFLoader(), cache=new Map();
+let current=[];
+const disposeCurrent=()=>{
+  for(const entry of current){
+    entry.anim?.mixer.stopAllAction();
+    entry.fp?.dispose();
+    for(const hand of entry.worldHands||[])hand.dispose();
+    for(const root of entry.roots||[])disposeRig({root},{sharedRoots:[...cache.values()]});
+  }
+  current=[];
+};
+function lightScene(){
+  const scene=new THREE.Scene(); scene.background=new THREE.Color('#647385');
+  const hemi=new THREE.HemisphereLight('#e8f2ff','#5a4431',1.8); scene.add(hemi);
+  const key=new THREE.DirectionalLight('#fff1d7',2.6); key.position.set(3,5,4); scene.add(key);
+  const rim=new THREE.DirectionalLight('#b9d4ff',1.7); rim.position.set(-3,3,-4); scene.add(rim);
+  for(const l of [hemi,key,rim]){l.layers.enable(1);l.layers.enable(FP_LAYER);}
+  const floor=new THREE.Mesh(new THREE.PlaneGeometry(12,12),new THREE.MeshStandardMaterial({color:'#5c626a',roughness:0.9}));
+  floor.rotation.x=-Math.PI/2; scene.add(floor); return scene;
+}
+function bounds(body){
+  body.model.updateMatrixWorld(true);
+  const box=new THREE.Box3(),v=new THREE.Vector3();
+  for(const m of body.meshes){m.skeleton.update(); const p=m.geometry.attributes.position;
+    for(let i=0;i<p.count;i++){m.getVertexPosition(i,v).applyMatrix4(m.matrixWorld);box.expandByPoint(v);}}
+  return {min:box.min.toArray(),max:box.max.toArray(),size:box.getSize(v).toArray()};
+}
+function bindMetrics(body){
+  const vertex=new THREE.Vector3(),restPositions=new Map();
+  let vertices=0,invalidWeights=0,rigidVertices=0,triangles=0;
+  for(const mesh of body.meshes){
+    mesh.skeleton.update();const {position,skinIndex:si,skinWeight:sw}=mesh.geometry.attributes;
+    const rest=new Float32Array(position.count*3);
+    for(let i=0;i<position.count;i++){
+      mesh.getVertexPosition(i,vertex).applyMatrix4(mesh.matrixWorld);vertex.toArray(rest,i*3);
+      let sum=0,max=0,invalid=false;
+      for(let k=0;k<4;k++){const w=sw.getComponent(i,k);sum+=w;max=Math.max(max,w);if(!Number.isFinite(w)||w<0||si.getComponent(i,k)>=mesh.skeleton.bones.length)invalid=true;}
+      if(invalid||Math.abs(sum-1)>0.01)invalidWeights++;
+      if(max>0.98)rigidVertices++;
+    }
+    restPositions.set(mesh,rest);vertices+=position.count;triangles+=(mesh.geometry.index?.count||position.count)/3;
+  }
+  return {restPositions,vertices,invalidWeights,rigidVertices,triangles};
+}
+function edgeMetrics(body,bind){
+  const vertex=new THREE.Vector3();let edges=0,stretched=0,collapsed=0,maxStretch=1,worst=null;
+  for(const mesh of body.meshes){
+    mesh.skeleton.update();const p=mesh.geometry.attributes.position,index=mesh.geometry.index;
+    const posed=new Float32Array(p.count*3),rest=bind.restPositions.get(mesh);
+    for(let i=0;i<p.count;i++){mesh.getVertexPosition(i,vertex).applyMatrix4(mesh.matrixWorld);vertex.toArray(posed,i*3);}
+    const n=index?.count||p.count,at=i=>index?index.getX(i):i;
+    const distance=(array,a,b)=>Math.hypot(array[a*3]-array[b*3],array[a*3+1]-array[b*3+1],array[a*3+2]-array[b*3+2]);
+    for(let i=0;i<n;i+=3)for(const [a,b] of [[at(i),at(i+1)],[at(i+1),at(i+2)],[at(i+2),at(i)]]){
+      const length=distance(rest,a,b);if(length<0.005)continue;
+      const ratio=distance(posed,a,b)/length;edges++;
+      if(ratio>maxStretch){
+        maxStretch=ratio;
+        const influence=i=>Array.from({length:4},(_,k)=>({bone:mesh.skeleton.bones[mesh.geometry.attributes.skinIndex.getComponent(i,k)]?.name,weight:mesh.geometry.attributes.skinWeight.getComponent(i,k)})).filter(v=>v.weight>0.01);
+        worst={mesh:mesh.name,vertexA:a,vertexB:b,length,posedLength:ratio*length,restA:Array.from(rest.slice(a*3,a*3+3)),restB:Array.from(rest.slice(b*3,b*3+3)),posedA:Array.from(posed.slice(a*3,a*3+3)),posedB:Array.from(posed.slice(b*3,b*3+3)),weightsA:influence(a),weightsB:influence(b)};
+      }
+      if(ratio>1.8)stretched++;if(ratio<0.4)collapsed++;
+    }
+  }
+  return {edges,stretched,collapsed,maxStretch,worst};
+}
+function handMotion(grip){
+  const mesh=grip.mesh;if(!mesh?.isSkinnedMesh)return {skinned:false};
+  const point=new THREE.Vector3(),position=mesh.geometry.attributes.position,open=new Float32Array(position.count*3);
+  grip.setGrip(0);grip.root.updateMatrixWorld(true);mesh.skeleton.update();
+  for(let i=0;i<position.count;i++)mesh.getVertexPosition(i,point).toArray(open,i*3);
+  grip.setGrip(1);grip.root.updateMatrixWorld(true);mesh.skeleton.update();
+  let maxMotion=0;
+  for(let i=0;i<position.count;i++){mesh.getVertexPosition(i,point);maxMotion=Math.max(maxMotion,point.distanceTo(new THREE.Vector3().fromArray(open,i*3)));}
+  return {skinned:true,bones:mesh.skeleton.bones.length,vertices:position.count,groups:mesh.geometry.groups.length,maxMotion};
+}
+function footSample(anim){
+  if(!anim.groundFeet)return null;
+  anim.body.model.updateMatrixWorld(true);
+  let minY=Infinity;const point=new THREE.Vector3(),updated=new Set();
+  for(const {mesh,index} of anim.groundFeet.probes){
+    if(!updated.has(mesh)){mesh.updateWorldMatrix(true,false);mesh.skeleton.update();updated.add(mesh);}
+    mesh.getVertexPosition(index,point).applyMatrix4(mesh.matrixWorld);minY=Math.min(minY,point.y);
+  }
+  const offset=anim.groundFeet.offset;
+  return {probes:anim.groundFeet.probes.length,offset,minY:Number.isFinite(minY)?minY:null,rawSupport:Number.isFinite(minY)?minY-offset:null,hipY:anim.body.bones.Hips.getWorldPosition(point).y};
+}
+function draw(scene,cam,x,y,w,h){renderer.setViewport(x,y,w,h);renderer.setScissor(x,y,w,h);cam.aspect=w/h;cam.updateProjectionMatrix();renderer.render(scene,cam);}
+window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
+  disposeCurrent();
+  let source=cache.get(clsId); if(!source){source=(await loader.loadAsync(`../assets/models/rigged/${clsId}.glb`)).scene;source.userData.gloryClass=clsId;cache.set(clsId,source);}
+  const C=CLASSES[clsId]||MOBS[clsId]||(clsId==='boss'?BOSS:null);
+  if(!C)throw Error('Missing audit character '+clsId);
+  const scene=lightScene(),body=createMocapBody(source); scene.add(body.model); analyzeImpacts(source);
+  const bind=bindMetrics(body);
+  const W=buildWeapon(C.weapon,C.weaponOpts||{});mountMocapWeapon(body,'Right',W.obj,weaponTilt(W.type));
+  const left=W.makeLeft?.()||null;
+  if(left)mountMocapWeapon(body,'Left',left,-weaponTilt(W.type));
+  const worldHands=installGripHands(body,{Right:handSocket(body,'Right'),Left:handSocket(body,'Left')},W.type);
+  fitWorldGripHands(body,worldHands);
+  if(form&&W.setForm)W.setForm(form,true);
+  const proc=buildCharacter(C.look||{}),procAnim=new Animator(proc),anim=new MocapAnimator(body,proc);
+  const action=pose==='attack'?{clip:C.chain?.[0]?.anim||'slash1',stage:'active',t:0.65,key:'qa'}:pose==='overhead'?{clip:'jumpslam',stage:'wind',t:1,key:'qa'}:null;
+  const state={speed:pose==='run'?5.6:0,fwd:1,side:0,onGround:true,vy:0,stance:form?C.forms?.[form]?.stance||C.stance:C.stance,pitch:0,action,guard:pose==='guard',calm:pose==='idle',react:pose==='down'?{type:'down',t:0.8,dur:1}:null};
+  const fp=new FPView(C.look||{},C.weapon,C.weaponOpts||{},source,clsId);
+  if(form)fp.setForm(form);
+  procAnim.breath=0;
+  const groundSamples=[];
+  for(let i=0;i<60;i++){procAnim.update(1/60,state);if(pose!=='bind')anim.update(1/60,state);fitWorldGripHands(body,worldHands,pose==='bind'?null:W,left);fp.sync(proc,1/60,0);W.update?.(1/60);fp.update(1/60);const ground=footSample(anim);if(ground)groundSamples.push({frame:i,...ground});}
+  if(sample){
+    anim.mixer.stopAllAction();anim.curName='';
+    const a=anim.play(sample.clip,{fade:0,manual:true,loop:false});
+    if(!a)throw Error('Missing audit clip '+sample.clip);
+    a.time=a.getClip().duration*sample.t;anim.updateBlend?.(0);anim.mixer.update(0);
+    fitWorldGripHands(body,worldHands,W,left);
+  }
+  body.model.updateMatrixWorld(true);
+  const {restPositions,...skin}=bind;
+  const metric={cls:clsId,pose,form,sample,weapon:C.weapon,bones:Object.keys(body.bones).length,bounds:bounds(body),skin,deformation:edgeMetrics(body,bind),cloth:body.cloth||null,attachment:body.attachment||null,clip:anim.curName,handSocket:body.sockets.get('Right')?.toArray()};
+  if(W.offhandGrip&&!left){
+    const grip=worldHands.find(hand=>hand.side==='Left'),B=body.bones;
+    const palm=grip.root.localToWorld(grip.grip.clone()),target=W.obj.localToWorld(W.offhandGrip.clone());
+    const upper=B.LeftArm.getWorldPosition(new THREE.Vector3()),lower=B.LeftForeArm.getWorldPosition(new THREE.Vector3()),wrist=B.LeftHand.getWorldPosition(new THREE.Vector3());
+    const offset=B.LeftHand.localToWorld(grip.socket.clone()).sub(wrist),reach=upper.distanceTo(target.clone().sub(offset));
+    const upperLength=upper.distanceTo(lower),lowerLength=lower.distanceTo(wrist);
+    metric.worldSupportDistance=palm.distanceTo(target);metric.worldReachable=reach<=upperLength+lowerLength+0.02&&reach>=Math.abs(upperLength-lowerLength)-0.02;
+    metric.worldSupport={reach,minReach:Math.abs(upperLength-lowerLength),maxReach:upperLength+lowerLength};
+  }
+  if(anim.groundFeet){
+    metric.ground=footSample(anim);
+    const valid=groundSamples.filter(s=>s.rawSupport!==null),steady=valid.filter(s=>s.frame>=15);
+    const moving=state.onGround&&state.speed>0.6&&!state.guard&&!state.action&&!state.react;
+    const limit=moving?(anim.groundFeet.moveLimit||0.15):0.15;
+    metric.ground.samples=groundSamples.map(sample=>({...sample,limit}));
+    const deltas=valid.slice(1).map((sample,i)=>({frame:sample.frame,delta:Math.abs(sample.hipY-valid[i].hipY)}));
+    metric.ground.range={limit,maxRaw:valid.length?valid.reduce((a,b)=>Math.abs(a.rawSupport)>Math.abs(b.rawSupport)?a:b):null,maxError:steady.length?steady.reduce((a,b)=>Math.abs(a.minY)>Math.abs(b.minY)?a:b):null,maxHipDelta:deltas.length?deltas.reduce((a,b)=>a.delta>b.delta?a:b):null,maxSteadyHipDelta:deltas.filter(s=>s.frame>=15).reduce((a,b)=>a.delta>b.delta?a:b,{frame:-1,delta:0}),saturatedFrames:valid.filter(s=>Math.abs(s.rawSupport)>limit).map(s=>s.frame)};
+  }
+  const front=new THREE.PerspectiveCamera(35,1,0.02,50);front.position.set(-0.25,1.2,3.9);front.lookAt(0,0.98,0);
+  const side=new THREE.PerspectiveCamera(35,1,0.02,50);side.position.set(3.8,1.2,0.45);side.lookAt(0,0.98,0);
+  const hand=new THREE.PerspectiveCamera(37,1,0.015,50);
+  const handPos=body.bones.RightHand.getWorldPosition(new THREE.Vector3());hand.position.copy(handPos).add(new THREE.Vector3(-0.38,0.15,0.5));hand.lookAt(handPos);
+  renderer.setScissorTest(true);renderer.autoClear=true;
+  const w=innerWidth,h=innerHeight;
+  draw(scene,front,0,h/2,w/3,h/2);draw(scene,side,w/3,h/2,w/3,h/2);draw(scene,hand,2*w/3,h/2,w/3,h/2);
+  const fpScene=lightScene(); fpScene.background=new THREE.Color('#4c5969');
+  const target=new THREE.Mesh(new THREE.BoxGeometry(0.45,1.7,0.45),new THREE.MeshStandardMaterial({color:'#dbc99c'}));target.position.set(0,0.85,-3);fpScene.add(target);
+  const fpCam=new THREE.PerspectiveCamera(60,1,0.02,20);fpCam.position.set(0,1.62,0);fpCam.layers.set(0);
+  const overlay=new THREE.PerspectiveCamera(60,1,0.02,20);overlay.layers.set(FP_LAYER);fpCam.add(overlay);fpCam.add(fp.root);fpScene.add(fpCam);fpCam.updateMatrixWorld(true);
+  draw(fpScene,fpCam,0,0,w,h/2);renderer.autoClear=false;renderer.clearDepth();const bg=fpScene.background;fpScene.background=null;draw(fpScene,overlay,0,0,w,h/2);fpScene.background=bg;renderer.autoClear=true;
+  metric.fp={meshy:!!fp.mc,gripBones:(fp.gripHands||[]).reduce((n,hand)=>n+hand.joints.length,0),drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles,weaponTip:fp.weapon.tip?.getWorldPosition(new THREE.Vector3()).toArray(),visibleMeshes:0};
+  metric.fp.hands=(fp.gripHands||[]).map(handMotion);
+  if(fp.weapon.offhandGrip&&fp.gripHands?.[1]){
+    const grip=fp.gripHands[1],palm=grip.root.localToWorld(grip.grip.clone());
+    const target=fp.weapon.obj.localToWorld(fp.weapon.offhandGrip.clone()),bones=fp.mc.B;
+    const upper=bones.LeftArm.getWorldPosition(new THREE.Vector3()),lower=bones.LeftForeArm.getWorldPosition(new THREE.Vector3()),wrist=bones.LeftHand.getWorldPosition(new THREE.Vector3());
+    const palmOffset=bones.LeftHand.localToWorld(fp.mc.palms.Left.clone()).sub(wrist);
+    const upperLength=upper.distanceTo(lower),lowerLength=lower.distanceTo(wrist),reach=upper.distanceTo(target.clone().sub(palmOffset));
+    metric.fp.supportDistance=palm.distanceTo(target);
+    metric.fp.support={target:target.toArray(),palm:palm.toArray(),reach,minReach:Math.abs(upperLength-lowerLength),maxReach:upperLength+lowerLength,reachable:reach<=upperLength+lowerLength+0.02&&reach>=Math.abs(upperLength-lowerLength)-0.02};
+  }
+  fp.root.traverse(o=>{if(o.isMesh&&o.visible)metric.fp.visibleMeshes++;});
+  current.push({anim,fp,body,bind,scene,worldHands,roots:[scene,fpScene,proc.root]});
+  document.querySelector('#label').textContent=`${clsId} · ${pose}${form?' · '+form:''}${sample?' · t='+sample.t:''}\nFront / Side / Hand closeup — First person below\nReal rigged body · ${anim.curName} · ${metric.bones} bones${sample?' · FPS keeps procedural stance':''}`;
+  window.__lastMetric=metric;return metric;
+};
+window.__probe=async(clsId,a,b,pose='bind')=>{
+  const metric=await __audit(clsId,pose),{body,bind,scene}=current[0],mesh=body.meshes[0];
+  const point=new THREE.Vector3(),rest=bind.restPositions.get(mesh),originA=new THREE.Vector3().fromArray(rest,a*3),originB=new THREE.Vector3().fromArray(rest,b*3),positions=[];
+  mesh.skeleton.update();
+  for(let i=0;i<mesh.geometry.attributes.position.count;i++){
+    point.fromArray(rest,i*3);if(Math.min(point.distanceTo(originA),point.distanceTo(originB))>0.015)continue;
+    mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld);positions.push(...point.toArray());
+  }
+  const geometry=new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  scene.add(new THREE.Points(geometry,new THREE.PointsMaterial({color:'#ffe266',size:0.003,depthTest:false,sizeAttenuation:true})));
+  const points=[a,b].map((i,k)=>{
+    const p=mesh.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(mesh.matrixWorld);
+    const marker=new THREE.Mesh(new THREE.SphereGeometry(0.0028,12,8),new THREE.MeshBasicMaterial({color:k?'#30ff70':'#ff355c',depthTest:false}));marker.position.copy(p);marker.renderOrder=10;scene.add(marker);return p;
+  });
+  const center=points[0].clone().add(points[1]).multiplyScalar(0.5),width=innerWidth/3,height=innerHeight/2;
+  renderer.autoClear=true;
+  for(const [i,offset]of [[0,new THREE.Vector3(0,0,0.55)],[1,new THREE.Vector3(0.55,0,0)],[2,new THREE.Vector3(-0.2,0.03,-0.5)]]){
+    const camera=new THREE.PerspectiveCamera(40,1,0.002,50);camera.position.copy(center).add(offset);camera.lookAt(center);draw(scene,camera,i*width,height,width,height);
+  }
+  const influences=i=>Array.from({length:4},(_,k)=>({bone:mesh.skeleton.bones[mesh.geometry.attributes.skinIndex.getComponent(i,k)]?.name,weight:mesh.geometry.attributes.skinWeight.getComponent(i,k)})).filter(v=>v.weight>0.01);
+  metric.probe={a,b,restA:originA.toArray(),restB:originB.toArray(),posedA:points[0].toArray(),posedB:points[1].toArray(),weightsA:influences(a),weightsB:influences(b),neighborhoodVertices:positions.length/3};
+  document.querySelector('#label').textContent=`${clsId} · ${pose} · precise bind-weight probe\nA ${a} red / B ${b} green / 15 mm neighborhood yellow\nFront / Side / Rear closeups — First person below`;
+  return metric;
+};
+await __audit(new URLSearchParams(location.search).get('cls')||'swordmaster');
+window.__ready=true;
+</script></body></html>

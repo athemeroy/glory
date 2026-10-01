@@ -1,0 +1,35 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { Fighter } from '../src/game/fighter.js';
+import { CLASSES } from '../src/data/classes.js';
+import { loadClipLibrary } from '../src/game/mocap.js';
+window.__errors=[];
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');
+  const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/swordmaster.glb')).scene;
+  const game={scene:new THREE.Scene(), models:new Map(), rigged:new Map([['swordmaster',source]])};
+  let sourceDisposes=0;
+  source.traverse(o=>{o.geometry?.addEventListener('dispose',()=>sourceDisposes++);o.material?.addEventListener('dispose',()=>sourceDisposes++);});
+  const fighter=new Fighter(game,{cls:CLASSES.swordmaster,clsId:'swordmaster'});
+  const geometry=fighter.weapon.obj.children.find(o=>o.isMesh).geometry;
+  const material=fighter.weapon.obj.children.find(o=>o.isMesh).material;
+  let geometryDisposes=0, materialDisposes=0, bodyDisposes=0;
+  geometry.addEventListener('dispose',()=>geometryDisposes++);
+  material.addEventListener('dispose',()=>materialDisposes++);
+  fighter.rig.parts[0].geometry.addEventListener('dispose',()=>bodyDisposes++);
+  for(let i=0;i<10;i++) {
+    fighter.rebuildLook({...CLASSES.swordmaster.look,proc:i%2===0});
+    if(game.scene.children.length!==1) throw Error('换装留下旧身体');
+    if(fighter.weapon.obj.children.find(o=>o.isMesh).material!==material) throw Error('换装重复克隆武器材质');
+    if(geometryDisposes || materialDisposes || sourceDisposes) throw Error('换装损坏共享模型或武器');
+    if(!fighter.mocap && fighter.mocapBody) throw Error('程序模型仍持有旧骨架');
+  }
+  if(bodyDisposes!==1) throw Error('旧精模分区未释放');
+  fighter.dispose();
+  if(game.scene.children.length || geometryDisposes!==1 || materialDisposes!==1 || sourceDisposes) throw Error('角色移除释放异常');
+  document.querySelector('#result').textContent='PASS 10 次程序/精模换装，武器保留、旧身体释放、预加载资产未损坏';
+  window.__results=['fighter lifecycle'];
+} catch(e) {window.__errors.push(String(e));document.querySelector('#result').textContent=String(e);}
+window.__ready=true;
+</script></body></html>

@@ -1,0 +1,129 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+<style>body{margin:0;background:#111;color:#eee;font:14px sans-serif}.preview{position:relative;width:280px;height:340px;margin:10px}.viewer-canvas{width:100%;height:100%;touch-action:pan-y}pre{white-space:pre-wrap}</style>
+</head><body><div class="preview"></div><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { CharViewer } from '../src/ui/viewer.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { loadClipLibrary } from '../src/game/mocap.js';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { store } from '../src/engine/util.js';
+import { Menu } from '../src/ui/menu.js';
+
+window.__errors = []; window.__results = [];
+const check = (ok, label) => { if (!ok) throw Error(label); window.__results.push(label); };
+const disposed = (resource) => { const state = { count: 0 }; resource.addEventListener('dispose', () => state.count++); return state; };
+// 每次只手动渲染一帧，避免生命周期检查同时在后台跑满 GPU。
+window.requestAnimationFrame = () => 0;
+const frame = (viewer) => { viewer.visible = true; viewer.last = performance.now() - 40; viewer.frame(); };
+let viewer;
+try {
+  const first = buildCharacter({}), second = buildCharacter({});
+  const geo2 = new Set(), mat2 = new Set();
+  second.root.traverse(o => { if(o.geometry) geo2.add(o.geometry); if(o.material) mat2.add(o.material); });
+  const sharedChecks = [], ownChecks = [];
+  first.root.traverse(o => {
+    if(o.geometry) (geo2.has(o.geometry) ? sharedChecks : ownChecks).push(disposed(o.geometry));
+    if(o.material && mat2.has(o.material)) sharedChecks.push(disposed(o.material));
+  });
+  const mesh = first.parts[0];
+  mesh.material = mesh.material.clone(); const cloneState = disposed(mesh.material);
+  const texture = new THREE.DataTexture(new Uint8Array([255,255,255,255]),1,1), textureState = disposed(texture);
+  mesh.material.map = texture;
+  disposeRig(first);
+  check(sharedChecks.every(s => s.count === 0), '角色缓存几何与材质保持共享');
+  check(ownChecks.every(s => s.count === 1), '角色独占几何释放一次');
+  check(cloneState.count === 1, '共享材质的实例克隆正常释放');
+  check(textureState.count === 0, '材质释放保留外部纹理');
+  disposeRig(second); texture.dispose();
+  const sourceGeo = new THREE.BoxGeometry(), splitGeo = new THREE.BufferGeometry();
+  for(const [name, attribute] of Object.entries(sourceGeo.attributes)) splitGeo.setAttribute(name,attribute);
+  const morph = new THREE.Float32BufferAttribute([0,0,0],3);
+  sourceGeo.morphAttributes.position=[morph]; splitGeo.morphAttributes.position=[morph]; splitGeo.setIndex([0,1,2]);
+  const sourceRoot = new THREE.Mesh(sourceGeo,new THREE.MeshStandardMaterial());
+  const splitRoot = new THREE.Mesh(splitGeo,sourceRoot.material);
+  let keptAttributes=false;
+  splitGeo.addEventListener('dispose',()=>{keptAttributes=!Object.keys(splitGeo.attributes).length && !splitGeo.morphAttributes.position.length && !!splitGeo.index;});
+  disposeRig({root:splitRoot},{sharedRoots:[sourceRoot]});
+  check(keptAttributes && splitGeo.attributes.position===sourceGeo.attributes.position && splitGeo.morphAttributes.position[0]===morph, '独占分区索引释放时保留源模型共享顶点与形变缓冲');
+  sourceGeo.dispose(); sourceRoot.material.dispose();
+
+  const loader = new GLTFLoader(), models = new Map(), rigged = new Map();
+  viewer = new CharViewer(document.querySelector('.preview'), models, rigged);
+  viewer.show('swordmaster'); frame(viewer);
+  const procedural = viewer.rig;
+  check(!viewer.mocap, '精模未到达时显示程序模型');
+  const sword = (await loader.loadAsync('../assets/models/rigged/swordmaster.glb')).scene;
+  const sourceChecks = [];
+  sword.traverse(o => { if(o.geometry) sourceChecks.push(disposed(o.geometry)); for(const m of [].concat(o.material || [])) { sourceChecks.push(disposed(m)); if(m.map) sourceChecks.push(disposed(m.map)); } });
+  rigged.set('swordmaster', sword); frame(viewer);
+  check(viewer.rig !== procedural, '同职业资源到达触发预览更新');
+  await loadClipLibrary('../assets/anim/anims.glb'); frame(viewer);
+  check(!!viewer.mocap, '动作库到达后自动启用完整绑定模型');
+  const original = viewer.rig; viewer.show('swordmaster');
+  check(viewer.rig === original, '同职业相同造型保持原实例');
+  const oldLook = localStorage.getItem('glory.look.swordmaster');
+  try {
+    store.set('look.swordmaster', {proc:true}); viewer.show('swordmaster');
+    check(viewer.rig !== original && !viewer.mocap, '同职业换装能刷新程序造型');
+  } finally { if(oldLook === null) localStorage.removeItem('glory.look.swordmaster'); else localStorage.setItem('glory.look.swordmaster',oldLook); }
+  viewer.show('swordmaster'); frame(viewer);
+  check(!!viewer.mocap, '返回精模造型正常恢复');
+  const menuRoot = document.createElement('div'); document.body.appendChild(menuRoot);
+  const menu = new Menu(menuRoot, {game:{models,rigged}}); let changedLook;
+  menu.wardrobe({modelKey:'swordmaster',rig:viewer.rig},look=>{changedLook=look},()=>{});
+  const modeModel = menuRoot.querySelector('button[data-v="model"]'), modeProc = menuRoot.querySelector('button[data-v="proc"]');
+  check(!!modeModel && !!modeProc, '绑定精模支持切回原画造型');
+  menuRoot.querySelector('input[type="color"]').dispatchEvent(new Event('input'));
+  check(changedLook.proc === true && modeProc.classList.contains('on') && !modeModel.classList.contains('on'), '改色时造型按钮同步选中自定义配色');
+  modeModel.click();
+  check(changedLook.proc === false && modeModel.classList.contains('on'), '自定义配色后可以恢复绑定精模');
+  menu.clear(); menuRoot.remove();
+
+  const count = () => ({...viewer.r.info.memory});
+  const baseline = count();
+  for(let i=0;i<6;i++) {
+    viewer.show('assassin'); frame(viewer);
+    viewer.show('swordmaster'); frame(viewer);
+  }
+  const after = count();
+  check(after.geometries <= baseline.geometries + 10 && after.textures <= baseline.textures + 1, '反复切换角色 GPU 资源不随次数增长');
+  check(sourceChecks.every(s => s.count === 0), '切换角色保留预加载模型与纹理');
+  const held = viewer.rig; const holder = document.createElement('div'); holder.className='preview'; document.body.appendChild(holder); viewer.attach(holder); frame(viewer);
+  check(viewer.el === holder && viewer.rig === held && viewer.r.domElement.parentNode === holder, '预览移入新容器保留实例并重设画布');
+  const canvas = viewer.r.domElement;
+  canvas.dispatchEvent(new PointerEvent('pointerdown',{pointerId:3,isPrimary:true,button:0,clientX:30}));
+  canvas.dispatchEvent(new PointerEvent('pointerdown',{pointerId:4,isPrimary:false,button:0,clientX:80}));
+  check(viewer.dragPointer === 3, '额外手指不会抢走预览旋转');
+  window.dispatchEvent(new PointerEvent('pointercancel',{pointerId:3}));
+  check(viewer.drag === null, '页面滚动取消触摸后停止拖拽');
+  canvas.dispatchEvent(new PointerEvent('pointerdown',{pointerId:5,isPrimary:true,button:0,clientX:30}));
+  window.dispatchEvent(new Event('blur')); check(viewer.drag === null, '切到后台释放预览拖拽');
+  const calls = viewer.r.info.render.frame; viewer.visible = false; viewer.frame();
+  check(viewer.r.info.render.frame === calls, '离屏预览停止 GPU 渲染');
+  frame(viewer);
+  if(viewer.coarse) {
+    check(viewer.r.getPixelRatio() <= 1.25, '手机预览限制像素密度');
+    const sun = viewer.scene.children.find(o => o.isDirectionalLight && o.castShadow);
+    check(sun.shadow.mapSize.x === 512, '手机预览阴影使用较小渲染目标');
+    const frameId = viewer.r.info.render.frame; viewer.last = performance.now(); viewer.frame();
+    check(viewer.r.info.render.frame === frameId, '手机预览按 30fps 节流');
+  }
+  window.__viewer = viewer;
+  // 保存最后一帧供视觉检查；runner 截图后调用 __finish 清理并核对资源。
+  window.__finish = () => {
+    viewer.dispose(); const final = count();
+    check(final.geometries < after.geometries && final.textures < after.textures, '关闭预览释放角色几何、阴影与骨纹理');
+    check(sourceChecks.every(s => s.count === 0), '关闭预览保留预加载资产');
+    viewer.dispose(); check(!viewer.r.domElement.isConnected, '重复关闭预览保持安全');
+    const reused = new CharViewer(holder,models,rigged); reused.show('swordmaster'); frame(reused);
+    check(reused.r.info.render.triangles > 0 && !!reused.mocap, '释放预览后共享精模可再次正常渲染');
+    reused.dispose();
+    document.querySelector('#result').textContent=window.__results.join('\n');
+    return {results:window.__results,before:baseline,after,final};
+  };
+  document.querySelector('#result').textContent=window.__results.join('\n');
+} catch(e) { window.__errors.push(String(e.stack || e)); viewer?.dispose(); document.querySelector('#result').textContent=window.__errors.join('\n'); }
+window.__ready = true;
+</script></body></html>

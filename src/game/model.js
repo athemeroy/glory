@@ -2,6 +2,9 @@
 import * as THREE from 'three';
 
 const matCache = new Map();
+// 共享缓存按对象记录；material.clone() 不会继承所有权，实例材质可以正常释放。
+const sharedResources = new WeakSet();
+export function markSharedResource(resource) { sharedResources.add(resource); return resource; }
 export function mat(color, opts = {}) {
   const key = color + JSON.stringify(opts);
   let m = matCache.get(key);
@@ -18,6 +21,7 @@ export function mat(color, opts = {}) {
       flatShading: !!opts.flat,
     });
     matCache.set(key, m);
+    sharedResources.add(m);
   }
   return m;
 }
@@ -39,6 +43,7 @@ export function taper(len, rTop, rBot, radial = 10) {
   }
   const g = new THREE.LatheGeometry(pts, radial);
   geoCache.set(key, g);
+  sharedResources.add(g);
   return g;
 }
 
@@ -283,6 +288,7 @@ function roundBox(w, h, d) {
   }
   g.computeVertexNormals();
   geoCache.set(key, g);
+  sharedResources.add(g);
   return g;
 }
 
@@ -338,6 +344,38 @@ export function setFirstPersonHidden(rig, hidden) {
   }
 }
 
-export function disposeRig(rig) {
+export function disposeRig(rig, { sharedRoots = [] } = {}) {
+  if (!rig?.root) return;
+  const keep = new Set(), sharedAttributes = new Set();
+  const materials = (o) => Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+  for (const root of sharedRoots) root?.traverse((o) => {
+    if (o.geometry) {
+      keep.add(o.geometry);
+      for (const attribute of Object.values(o.geometry.attributes)) sharedAttributes.add(attribute);
+      for (const attributes of Object.values(o.geometry.morphAttributes)) for (const attribute of attributes) sharedAttributes.add(attribute);
+      if (o.geometry.index) sharedAttributes.add(o.geometry.index);
+    }
+    for (const material of materials(o)) keep.add(material);
+  });
+  // 静态精模蒙皮分区按造型缓存，跨角色实例共享几何。
+  if (rig.skinned) for (const mesh of Object.values(rig.skinned)) if (mesh?.geometry) keep.add(mesh.geometry);
+  const geometries = new Set(), ownMaterials = new Set(), skeletons = new Set();
+  rig.root.traverse((o) => {
+    if (o.geometry && !keep.has(o.geometry) && !sharedResources.has(o.geometry)) geometries.add(o.geometry);
+    for (const material of materials(o)) if (!keep.has(material) && !sharedResources.has(material)) ownMaterials.add(material);
+    if (o.skeleton) skeletons.add(o.skeleton);
+  });
+  for (const geometry of geometries) {
+    // 第一人称分区只拥有索引；dispose 时不能删除仍供源模型使用的属性 GPU 缓冲。
+    const attributes = geometry.attributes, morphAttributes = geometry.morphAttributes, index = geometry.index;
+    geometry.attributes = Object.fromEntries(Object.entries(attributes).filter(([, attribute]) => !sharedAttributes.has(attribute) && !sharedResources.has(attribute)));
+    geometry.morphAttributes = Object.fromEntries(Object.entries(morphAttributes).map(([name, values]) => [name, values.filter((attribute) => !sharedAttributes.has(attribute) && !sharedResources.has(attribute))]));
+    if (sharedAttributes.has(index) || sharedResources.has(index)) geometry.setIndex(null);
+    try { geometry.dispose(); }
+    finally { geometry.attributes = attributes; geometry.morphAttributes = morphAttributes; geometry.setIndex(index); }
+  }
+  for (const material of ownMaterials) material.dispose();
+  for (const skeleton of skeletons) skeleton.dispose();
+  // 材质贴图由预加载缓存持有；释放材质不会销毁贴图。
   rig.root.removeFromParent();
 }

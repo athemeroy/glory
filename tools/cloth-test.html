@@ -1,0 +1,67 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator, splitForFirstPerson } from '../src/game/mocap.js';
+import { repairClothWeights } from '../src/game/cloth.js';
+import { disposeRig } from '../src/game/model.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,label)=>{if(!ok)throw Error(label);__results.push(label)};
+const weights=(mesh)=>{const si=mesh.geometry.attributes.skinIndex,sw=mesh.geometry.attributes.skinWeight;return Array.from({length:si.count*4},(_,i)=>[si.getComponent(Math.floor(i/4),i%4),sw.getComponent(Math.floor(i/4),i%4)])};
+const point=(mesh,i)=>mesh.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(mesh.matrixWorld);
+const update=(body,anim,state)=>{for(let i=0;i<60;i++)anim.update(1/60,state);body.model.updateMatrixWorld(true);for(const mesh of body.meshes)mesh.skeleton.update()};
+try {
+  await loadClipLibrary('../assets/anim/anims.glb'); const loader=new GLTFLoader();
+  for(const cls of ['berserker','skeleton']) {
+    const source=(await loader.loadAsync(`../assets/models/rigged/${cls}.glb`)).scene;
+    const baseline=createMocapBody(source), mesh=baseline.meshes[0], original=JSON.stringify(weights(mesh));
+    const baselineGeometry=mesh.geometry, baselineSI=mesh.geometry.attributes.skinIndex, baselineSW=mesh.geometry.attributes.skinWeight;
+    // 直接调用布面 helper，隔离其他已审计头饰修复的独立权重变化。
+    const fixed=createMocapBody(source);repairClothWeights(fixed,cls);
+    const corrected=fixed.meshes[0], fixedSI=corrected.geometry.attributes.skinIndex,fixedSW=corrected.geometry.attributes.skinWeight;
+    check(!!fixed.cloth?.changed,cls+': 已识别披风/裙摆布面');
+    check(mesh.geometry===baselineGeometry && JSON.stringify(weights(mesh))===original,cls+': 原始 GLB 权重不变');
+    let protectedVertices=0,invalid=0;
+    for(let i=0;i<fixedSI.count;i++) {
+      let sum=0;
+      for(let k=0;k<4;k++){const w=fixedSW.getComponent(i,k);sum+=w;if(!Number.isFinite(w)||w<0||fixedSI.getComponent(i,k)>=corrected.skeleton.bones.length)invalid++;}
+      if(Math.abs(sum-1)>1e-5)invalid++;
+      if(corrected.userData.clothStrength[i]===0){protectedVertices++;for(let k=0;k<4;k++)if(fixedSI.getComponent(i,k)!==baselineSI.getComponent(i,k)||fixedSW.getComponent(i,k)!==baselineSW.getComponent(i,k))throw Error(cls+': 非布面顶点意外改变 '+i);}
+    }
+    check(protectedVertices>0,cls+': 人体关节与非布面权重逐项完全保持原样');
+    check(invalid===0,cls+': 修复权重非负、归一化且骨索引有效');
+    check(protectedVertices>fixedSI.count*.7,cls+': 至少七成人体与非布面顶点完全保持原绑定');
+    let bindError=0;
+    mesh.skeleton.update();corrected.skeleton.update();
+    for(let i=0;i<fixedSI.count;i++)bindError=Math.max(bindError,point(mesh,i).distanceTo(point(corrected,i)));
+    check(bindError<1e-5,cls+': 绑定姿态网格形状不变');
+    const shared=createMocapBody(source);repairClothWeights(shared,cls);
+    check(shared.meshes[0].geometry===corrected.geometry,cls+': 实例复用只读修复缓存');
+    source.userData.gloryClass=cls;
+    const integrated=createMocapBody(source);
+    check(integrated.cloth?.changed===fixed.cloth.changed,cls+': 真实 createMocapBody 入口覆盖布面修复');
+    for(let i=0;i<fixedSI.count;i++)if(corrected.userData.clothStrength[i]>0)for(let k=0;k<4;k++) {
+      if(integrated.meshes[0].geometry.attributes.skinIndex.getComponent(i,k)!==fixedSI.getComponent(i,k)||integrated.meshes[0].geometry.attributes.skinWeight.getComponent(i,k)!==fixedSW.getComponent(i,k))throw Error(cls+': 其他修复影响布面绑定 '+i);
+    }
+    const ba=new MocapAnimator(baseline),fa=new MocapAnimator(fixed);
+    const edges=cls==='berserker'?[[26918,26915],[11871,11854]]:[[26717,13456],[613,595],[2018,2019]];
+    for(const pose of ['stance','run','attack','overhead']) {
+      const state={speed:pose==='run'?5.6:0,fwd:1,onGround:true,stance:'greatsword',pitch:0,
+        action:pose==='attack'?{clip:'slash1',stage:'active',t:.65,key:'proof'}:pose==='overhead'?{clip:'jumpslam',stage:'wind',t:1,key:'proof'}:null};
+      update(baseline,ba,state);update(fixed,fa,state);
+      for(const [a,b]of edges){const before=point(mesh,a).distanceTo(point(mesh,b)),after=point(corrected,a).distanceTo(point(corrected,b));__metrics.push({cls,pose,a,b,before,after,improvement:before/after});check(after<.045&&after<before*.35,cls+': '+pose+' 已证实错绑边收敛');}
+    }
+    ba.mixer.stopAllAction();fa.mixer.stopAllAction();
+    const geo=corrected.geometry;let disposed=0;geo.addEventListener('dispose',()=>disposed++);
+    const split=splitForFirstPerson(fixed);const splitGeo=fixed.meshes.find(m=>m.geometry.attributes.skinWeight===fixedSW).geometry;
+    let retained=false;splitGeo.addEventListener('dispose',()=>{retained=!Object.values(splitGeo.attributes).includes(fixedSW)});
+    disposeRig({root:fixed.model},{sharedRoots:[source]});
+    check(disposed===0&&retained&&splitGeo.attributes.skinWeight===fixedSW,cls+': 释放实例保留修复缓存及共享蒙皮 GPU 缓冲');
+    disposeRig({root:baseline.model},{sharedRoots:[source]});disposeRig({root:shared.model},{sharedRoots:[source]});disposeRig({root:integrated.model},{sharedRoots:[source]});
+  }
+  const untouched=(await loader.loadAsync('../assets/models/rigged/swordmaster.glb')).scene;untouched.userData.gloryClass='swordmaster';
+  const body=createMocapBody(untouched);check(!body.cloth,'无专用profile的角色保持原绑定');disposeRig({root:body.model},{sharedRoots:[untouched]});
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(e){__errors.push(String(e.stack||e));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

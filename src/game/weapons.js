@@ -68,6 +68,7 @@ export function buildWeapon(type, opts = {}) {
       m(bladeGeo(1.25, 0.16, 0.025, 0.22), mat('#b8bec6', { rough: 0.35, metal: 0.85 }), root, 0, 0.2, 0);
       m(new THREE.BoxGeometry(0.03, 0.9, 0.035), mat('#7a2630', { rough: 0.5 }), root, 0, 0.7, 0);
       W.base = marker(root, 0, 0.3, 0); W.tip = marker(root, 0, 1.43, 0); W.twoHanded = true;
+      W.offhandGrip = new THREE.Vector3(0, -0.11, 0);
       break;
     }
     case 'spear': { // 却邪：战矛
@@ -82,6 +83,7 @@ export function buildWeapon(type, opts = {}) {
       // 缨
       m(new THREE.ConeGeometry(0.05, 0.16, 8, 1, true), mat('#b13a3a', { rough: 0.9, side: THREE.DoubleSide }), root, 0, 1.27, 0).rotation.x = Math.PI;
       W.base = marker(root, 0, 1.2, 0); W.tip = marker(root, 0, 1.76, 0); W.twoHanded = true;
+      W.offhandGrip = new THREE.Vector3(0, -0.18, 0);
       break;
     }
     case 'gauntlet': { // 拳套：右手，左手另建
@@ -173,26 +175,36 @@ export function buildWeapon(type, opts = {}) {
     case 'pistol': { // 荒火 / 碎霜 双枪
       const make = (parent, c) => {
         const g = new THREE.Group(); parent.add(g);
-        m(new THREE.BoxGeometry(0.035, 0.12, 0.05), mat('#2b2b2f', { rough: 0.5 }), g, 0, -0.02, 0).rotation.x = -0.25;
-        const body = m(new THREE.BoxGeometry(0.04, 0.26, 0.06), mat(c, { rough: 0.35, metal: 0.7 }), g, 0, 0.12, 0.035);
+        // 枪管保持武器约定的 +Y；握把沿 +Z 垂下，与枪管成直角。
+        m(new THREE.BoxGeometry(0.037, 0.052, 0.115), mat('#2b2b2f', { rough: 0.5 }), g, 0, -0.015, 0.012).rotation.x = 0.18;
+        const body = m(new THREE.BoxGeometry(0.045, 0.255, 0.047), mat(c, { rough: 0.35, metal: 0.7 }), g, 0, 0.12, -0.055);
         body.name = 'slide';
-        m(new THREE.CylinderGeometry(0.012, 0.012, 0.08, 8), dark, g, 0, 0.27, 0.045);
-        const mz = marker(g, 0, 0.3, 0.045);
+        m(new THREE.CylinderGeometry(0.012, 0.012, 0.06, 10), dark, g, 0, 0.255, -0.055);
+        // 护圈、准星和扳机，让近景轮廓可读。
+        const guard = m(new THREE.TorusGeometry(0.027, 0.004, 5, 12), dark, g, 0, 0.055, -0.012); guard.rotation.y = Math.PI / 2;
+        m(new THREE.BoxGeometry(0.006, 0.014, 0.009), dark, g, 0, 0.055, -0.019).rotation.x = 0.35;
+        m(new THREE.BoxGeometry(0.011, 0.014, 0.009), dark, g, 0, 0.223, -0.082);
+        const mz = marker(g, 0, 0.285, -0.055);
         return { g, mz };
       };
       const a = make(root, opts.color || '#8b3a2a');
-      W.muzzle = a.mz; W.tip = a.mz; W.base = marker(root, 0, 0.1, 0.03);
+      W.muzzle = a.mz; W.tip = a.mz; W.base = marker(root, 0, 0.1, -0.055);
       W.makeLeft = () => { const holder = new THREE.Group(); const b = make(holder, opts.colorL || '#5e7f9a'); holder.userData.muzzle = b.mz; return holder; };
       break;
     }
     case 'cannon': {
-      const tube = m(new THREE.CylinderGeometry(0.09, 0.11, 1.05, 14), mat('#39414b', { rough: 0.35, metal: 0.8 }), root, 0, 0.25, 0);
+      // 炮管高于握点，双手握下方横柄，避免手掌被粗炮管吞进内部。
+      const barrelZ = -0.14;
+      const tube = m(new THREE.CylinderGeometry(0.09, 0.11, 1.05, 14), mat('#39414b', { rough: 0.35, metal: 0.8 }), root, 0, 0.25, barrelZ);
       tube.name = 'tube';
-      m(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 14), gold, root, 0, 0.72, 0);
-      m(new THREE.CylinderGeometry(0.115, 0.1, 0.12, 14), mat('#6a2d2d', { rough: 0.5, metal: 0.4 }), root, 0, -0.25, 0);
-      m(new THREE.BoxGeometry(0.05, 0.14, 0.08), dark, root, 0, 0.0, 0.1);
-      m(new THREE.TorusGeometry(0.07, 0.012, 6, 14), glow('#ffb35a', 0.9), root, 0, 0.6, 0).rotation.x = Math.PI / 2;
-      W.muzzle = marker(root, 0, 0.8, 0); W.tip = W.muzzle; W.base = marker(root, 0, 0.3, 0); W.twoHanded = true;
+      m(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 14), gold, root, 0, 0.72, barrelZ);
+      m(new THREE.CylinderGeometry(0.115, 0.1, 0.12, 14), mat('#6a2d2d', { rough: 0.5, metal: 0.4 }), root, 0, -0.25, barrelZ);
+      const handle = m(new THREE.CylinderGeometry(0.018, 0.018, 0.46, 10), dark, root, 0, -0.06, 0);
+      handle.name = 'supportHandle';
+      for (const y of [-0.28, 0.16]) m(new THREE.BoxGeometry(0.035, 0.035, 0.13), dark, root, 0, y, -0.065);
+      m(new THREE.TorusGeometry(0.07, 0.012, 6, 14), glow('#ffb35a', 0.9), root, 0, 0.6, barrelZ).rotation.x = Math.PI / 2;
+      W.muzzle = marker(root, 0, 0.8, barrelZ); W.tip = W.muzzle; W.base = marker(root, 0, 0.3, barrelZ); W.twoHanded = true;
+      W.offhandGrip = new THREE.Vector3(0, -0.18, 0);
       break;
     }
     case 'staff': {

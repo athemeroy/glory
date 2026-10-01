@@ -1,0 +1,189 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Animation regression</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+</head><body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator, analyzeImpacts, retargetClip, mountMocapWeapon, weaponTilt } from '../src/game/mocap.js';
+import { buildCharacter } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+window.__errors = [];
+window.__results = [];
+const check = (condition, message) => {
+  (condition ? window.__results : window.__errors).push(message);
+};
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');
+  // 动作库只有骨骼；无需 WebGL、纹理或角色网格即可复现混合错误。
+  const sourceGLTF = await new GLTFLoader().loadAsync('../assets/anim/anims.glb');
+  const parsed = sourceGLTF.scene;
+  // 无蒙皮引用的 glTF 节点被 Loader 解析为普通 Object3D；重建同样的骨骼树。
+  const boneTree = o => {
+    const node = o.parent && o.name && o.name !== 'Armature' ? new THREE.Bone() : new THREE.Group();
+    node.name = o.name; node.position.copy(o.position); node.quaternion.copy(o.quaternion); node.scale.copy(o.scale);
+    for (const child of o.children) node.add(boneTree(child));
+    return node;
+  };
+  const source = boneTree(parsed);
+  const first = new MocapAnimator(createMocapBody(source)), second = new MocapAnimator(createMocapBody(source));
+  const firstIdle = first.action('Idle'), secondIdle = second.action('Idle');
+  check(firstIdle.getClip() === secondIdle.getClip(), '同模板角色共享重定向动作数据');
+  firstIdle.play(); secondIdle.play(); first.mixer.update(0.25); second.mixer.update(0.5);
+  check(Math.abs(firstIdle.time - 0.25) < 1e-5 && Math.abs(secondIdle.time - 0.5) < 1e-5, '共享片段保持独立播放时间');
+  source.rotation.y = 0.25;
+  const rotated = new MocapAnimator(createMocapBody(source));
+  check(rotated.action('Idle').getClip() !== firstIdle.getClip(), '模板绑定坐标轴改变时缓存失效');
+  source.rotation.y = 0;
+  first.play('Combat_Stance', { fade: 0, manual: true, loop: false });
+  check(first.cur.getEffectiveWeight() === 1 && !firstIdle.isScheduled(), 'play fade=0 立即切换动作');
+  first.play('Run_02', { fade: 0.1, manual: true, loop: false });
+  first.mixer.update(0.05);
+  check(Math.abs(first.cur.getEffectiveWeight() - 0.5) < 1e-5, '工具直接推进 mixer 也更新淡入权重');
+  const body = createMocapBody(source), animator = new MocapAnimator(body);
+  const idle = { onGround: true, speed: 0, calm: true };
+  animator.update(0.3, idle);
+  animator.update(0.05, { ...idle, guard: true });
+  const pose = new Map(Object.entries(body.bones).map(([n, b]) => [n, b.quaternion.clone()]));
+  const hipY = body.bones.Hips.position.y;
+  animator.update(0, { ...idle, react: { type: 'hit', t: 0, dur: 0.3 } });
+  const weight = [...animator.actions.values()].reduce((sum, a) => sum + (a.enabled ? a.getEffectiveWeight() : 0), 0);
+  const rotationJump = Math.max(...Object.entries(body.bones).map(([n,b]) => b.quaternion.angleTo(pose.get(n))));
+  check(Math.abs(weight - 1) < 1e-5, `打断淡入时总权重保持 1（实际 ${weight.toFixed(4)}）`);
+  check(Math.abs(body.bones.Hips.position.y - hipY) < 1e-4, `零时间打断不跳变髋部（实际 ${(body.bones.Hips.position.y - hipY).toFixed(4)}）`);
+  check(rotationJump < 0.001, `零时间打断不跳变骨骼（实际 ${rotationJump.toFixed(4)} rad）`);
+  // 连续快速切换，包括在旧动作尚未淡出时重新进入它。
+  for (let i = 0; i < 90; i++) {
+    const st = i % 3 === 0 ? idle : i % 3 === 1 ? { ...idle, guard: true } : { ...idle, speed: 4 };
+    animator.update(1 / 120, st);
+    const total = [...animator.actions.values()].reduce((sum, a) => sum + (a.enabled ? a.getEffectiveWeight() : 0), 0);
+    if (Math.abs(total - 1) > 1e-5) { check(false, `快速切换 ${i} 帧总权重异常 ${total}`); break; }
+    if (i === 89) check(true, '快速切换 90 帧权重稳定');
+  }
+  for (let i = 0; i < 60; i++) animator.update(1 / 60, idle);
+  check([...animator.actions.values()].filter(a => a.isScheduled()).length === 1, '淡出结束后停止旧动作');
+  const roll = new MocapAnimator(createMocapBody(source));
+  const ys = [];
+  for (let i = 0; i <= 24; i++) {
+    roll.update(0.1, { ...idle, react: { type: 'tech', t: i / 24, dur: 1 } });
+    roll.body.model.updateMatrixWorld(true);
+    ys.push(roll.hips.getWorldPosition(new THREE.Vector3()).y);
+  }
+  const drop = Math.max(...ys) - Math.min(...ys);
+  check(drop > 0.6, `翻滚保留下蹲髋高（高度差 ${drop.toFixed(4)} m）`);
+  // 左拳的命中时刻应来自左手的速度峰值，不能取防守中的右手。
+  const impactBody = createMocapBody(source);
+  const leftJab = sourceGLTF.animations.find(c => c.name === 'Left_Jab_from_Guard');
+  const probeClip = new THREE.AnimationClip(leftJab.name, leftJab.duration, leftJab.tracks.filter(t => t.name.endsWith('.quaternion')));
+  const mixer = new THREE.AnimationMixer(impactBody.model);
+  const probeAction = mixer.clipAction(retargetClip(probeClip, impactBody.rest)).play();
+  probeAction.paused = true;
+  const peak = bone => {
+    const prev = new THREE.Vector3(), now = new THREE.Vector3();
+    let best = 0, maxSpeed = -1;
+    for (let i = 0; i <= 48; i++) {
+      probeAction.time = i / 48 * leftJab.duration; mixer.update(0); impactBody.model.updateMatrixWorld(true);
+      bone.getWorldPosition(now);
+      if (i > 0 && i / 48 > 0.12 && i / 48 < 0.85) {
+        const speed = prev.distanceTo(now);
+        if (speed > maxSpeed) { maxSpeed = speed; best = i / 48; }
+      }
+      prev.copy(now);
+    }
+    return best;
+  };
+  const leftImpact = peak(impactBody.bones.LeftHand), rightImpact = peak(impactBody.bones.RightHand);
+  analyzeImpacts(source);
+  const punch = new MocapAnimator(createMocapBody(source));
+  punch.update(0, { ...idle, action: { clip: 'punchL', stage: 'active', t: 0, key: 'left-jab' } });
+  const selectedImpact = punch.cur.time / punch.cur.getClip().duration / 0.85;
+  check(Math.abs(selectedImpact - leftImpact) < 1e-5, `左拳命中峰值来自左手（选中 ${selectedImpact.toFixed(4)}，左 ${leftImpact.toFixed(4)}，右 ${rightImpact.toFixed(4)}）`);
+  const groundedBody = createMocapBody(source), footBones = Object.values(groundedBody.bones);
+  const skeleton = new THREE.Skeleton(footBones);
+  for (const side of ['Left', 'Right']) {
+    const foot = groundedBody.bones[side + 'Foot'], p = foot.getWorldPosition(new THREE.Vector3());
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+      p.x - 0.05, 0, p.z - 0.08, p.x + 0.05, 0, p.z - 0.08,
+      p.x - 0.05, 0, p.z + 0.12, p.x + 0.05, 0, p.z + 0.12,
+    ], 3));
+    geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(Array.from({ length: 4 }, () => [footBones.indexOf(foot), 0, 0, 0]).flat(), 4));
+    geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(Array.from({ length: 4 }, () => [1, 0, 0, 0]).flat(), 4));
+    geometry.setIndex([0, 1, 2, 2, 1, 3]);
+    const mesh = new THREE.SkinnedMesh(geometry, new THREE.MeshBasicMaterial());
+    groundedBody.model.add(mesh); groundedBody.model.updateMatrixWorld(true); mesh.bind(skeleton);
+    groundedBody.meshes.push(mesh);
+  }
+  groundedBody.model.position.set(3, 2, -4); groundedBody.model.rotation.y = 0.7; groundedBody.model.scale.setScalar(1.2);
+  groundedBody.model.updateMatrixWorld(true);
+  const grounded = new MocapAnimator(groundedBody);
+  for (let i = 0; i < 60; i++) grounded.update(1 / 60, idle);
+  groundedBody.model.updateMatrixWorld(true); skeleton.update();
+  let floor = Infinity;
+  for (const mesh of groundedBody.meshes) for (let i = 0; i < mesh.geometry.attributes.position.count; i++)
+    floor = Math.min(floor, groundedBody.model.worldToLocal(mesh.getVertexPosition(i, new THREE.Vector3()).applyMatrix4(mesh.matrixWorld)).y);
+  check(Math.abs(floor) < 0.005, `缩放/旋转后的真实脚底蒙皮接地（偏差 ${floor.toFixed(4)} m）`);
+  let runError = 0;
+  for (let frame = 0; frame < 60; frame++) {
+    grounded.update(1 / 60, { ...idle, speed: 4, fwd: 1 });
+    groundedBody.model.updateMatrixWorld(true); skeleton.update();
+    let support = Infinity;
+    for (const mesh of groundedBody.meshes) for (let i = 0; i < mesh.geometry.attributes.position.count; i++)
+      support = Math.min(support, groundedBody.model.worldToLocal(mesh.getVertexPosition(i, new THREE.Vector3()).applyMatrix4(mesh.matrixWorld)).y);
+    if (frame > 10) runError = Math.max(runError, Math.abs(support));
+  }
+  check(runError < 0.03, `跑步连续60帧跟踪脚底（最大偏差 ${runError.toFixed(4)} m）`);
+  for (let i = 0; i < 30; i++) grounded.update(1 / 60, { ...idle, onGround: false, vy: 4 });
+  check(grounded.groundFeet.offset === 0, '离地后脚底补偿归零，不修改跳跃物理');
+  for (const stance of ['pistol', 'holy', 'fist', 'greatsword', 'spear']) {
+    const rig = buildCharacter({}), hybridBody = createMocapBody(source);
+    rig.root.position.set(3, 1, -2); rig.root.rotation.y = 0.8; rig.root.scale.setScalar(1.17);
+    rig.root.add(hybridBody.model); rig.root.updateMatrixWorld(true);
+    const objects = [new THREE.Group(), new THREE.Group()];
+    const mounts = ['Right', 'Left'].map((side, i) => mountMocapWeapon(hybridBody, side, objects[i], weaponTilt(stance), 1.17));
+    // Form/weaponOpts 可在 object 根保存自己的变换；姿态叠加只修改挂点。
+    objects[0].rotation.set(0.1, 0.2, 0.3);
+    const objectRotation = objects[0].quaternion.clone();
+    const procedural = new Animator(rig), hybrid = new MocapAnimator(hybridBody, rig);
+    const state = { ...idle, calm: false, stance };
+    for (let i = 0; i < 60; i++) { procedural.update(1 / 60, state); hybrid.update(1 / 60, state); }
+    rig.root.updateMatrixWorld(true);
+    let maxDirectionError = 0;
+    for (const [side, suffix] of [['Right', 'R'], ['Left', 'L']]) {
+      const B = hybridBody.bones, P = rig.bones;
+      for (const [parent, child, sourceParent, sourceChild] of [
+        [B[side + 'Arm'], B[side + 'ForeArm'], P['sh' + suffix], P['el' + suffix]],
+        [B[side + 'ForeArm'], B[side + 'Hand'], P['el' + suffix], P['ha' + suffix]],
+      ]) {
+        const actual = child.getWorldPosition(new THREE.Vector3()).sub(parent.getWorldPosition(new THREE.Vector3())).normalize();
+        const desired = sourceChild.getWorldPosition(new THREE.Vector3()).sub(sourceParent.getWorldPosition(new THREE.Vector3())).normalize();
+        maxDirectionError = Math.max(maxDirectionError, actual.angleTo(desired));
+      }
+    }
+    check(maxDirectionError < 0.001, stance + ': 双臂与职业姿势方向一致');
+    check(objects[0].quaternion.angleTo(objectRotation) < 1e-6, stance + ': 保留武器 object 内部姿态');
+    if (stance === 'pistol') {
+      const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(rig.root.getWorldQuaternion(new THREE.Quaternion()));
+      const up = new THREE.Vector3(0, 1, 0);
+      let maxBarrelError = 0;
+      for (const mount of mounts) {
+        const dir = new THREE.Vector3(0, 1, 0).applyQuaternion(mount.getWorldQuaternion(new THREE.Quaternion()));
+        dir.addScaledVector(up, -dir.dot(up)).normalize();
+        maxBarrelError = Math.max(maxBarrelError, dir.angleTo(forward));
+      }
+      check(maxBarrelError < 0.001, '双枪枪管沿角色前向，无左右发散');
+      for (let i = 0; i < 60; i++) {
+        const shooting = { ...state, onGround: false, action: { clip: 'shoot2', stage: 'active', t: 0.5, key: 'shooting' } };
+        procedural.update(1 / 60, shooting); hybrid.update(1 / 60, shooting);
+      }
+      check(hybrid.stanceArms.weight === 1, '空中射击保留瞄准与后坐手臂');
+    }
+    for (let i = 0; i < 60; i++) {
+      const attack = { ...state, action: { clip: 'punchR', stage: 'active', t: 0.5, key: 'attack' } };
+      procedural.update(1 / 60, attack); hybrid.update(1 / 60, attack);
+    }
+    check(hybrid.stanceArms.weight === 0 && mounts.every((m, i) => m.quaternion.angleTo(hybrid.stanceArms.chains[i].mountRest) < 1e-6), stance + ': 出招后回到动捕与原武器挂点');
+    rig.root.traverse(o => { if (o.isMesh) { o.geometry.dispose(); for (const material of [].concat(o.material)) material.dispose(); } });
+  }
+} catch (e) { window.__errors.push(String(e)); }
+document.querySelector('#result').textContent = [...window.__results, ...window.__errors.map(e => '失败：' + e)].join('\n');
+window.__ready = true;
+</script></body></html>

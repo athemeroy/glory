@@ -4,12 +4,15 @@ import * as THREE from 'three';
 import { GLTFLoader } from '../../vendor/GLTFLoader.js';
 import * as SkeletonUtils from '../../vendor/SkeletonUtils.js';
 import { clamp } from '../engine/util.js';
+import { repairClothWeights } from './cloth.js';
+import { repairAttachmentWeights } from './attachment.js';
 
 const loader = new GLTFLoader();
 let clipLib = null;      // name -> AnimationClip（已去掉水平根位移）
 let clipLibPromise = null;
 const hipsY = new Map();   // 片段名 -> {times, ys}
 const sourceRest = new Map();
+const bodyClipCaches = new WeakMap();
 let refHipY = 1;           // 购买动作所用模型的站立髋高（片段单位）
 function sampleHip(name, t) {
   const h = hipsY.get(name); if (!h) return refHipY;
@@ -31,7 +34,8 @@ export function loadClipLibrary(url = 'assets/anim/anims.glb') {
     clipLib = new Map();
     for (const c of g.animations) {
       // 髋骨位移从片段里拿出来单独保存：只用竖直方向的“相对变化”，再按各模型比例叠加（不同模型骨架单位不同）
-      const flatY = /Jump|FlyUp|Dodge/.test(c.name);
+      // 跳跃/浮空的高度由战斗物理控制；地面闪避仍需要片段中的下蹲与翻滚高度。
+      const flatY = /Jump|FlyUp/.test(c.name);
       const i = c.tracks.findIndex((t) => t.name.startsWith('Hips') && t.name.endsWith('.position'));
       if (i >= 0) {
         const t = c.tracks[i];
@@ -69,7 +73,7 @@ const IMPACT = { Right_Hand_Sword_Slash: 0.38, Left_Slash: 0.4, Thrust_Slash: 0.
   Roundhouse_Kick: 0.45, Lunge_Spin_Kick: 0.5, Punch_Forward_with_Both_Fists: 0.45, Reaping_Swing: 0.45, Side_Shot: 0.35, Cowboy_Quick_Draw_Shooting: 0.3,
   mage_soell_cast: 0.5, Charged_Spell_Cast: 0.6, Crouch_Pull_and_Throw: 0.55, Spartan_Kick: 0.4, Shield_Push_Left: 0.4, Elbow_Strike: 0.4, Leg_Sweep: 0.4 };
 
-// 自动估计命中帧：采样右手（踢类用右脚）在片段中的速度峰值
+// 自动估计命中帧：采样攻击侧的手（踢类用右脚）在片段中的速度峰值
 const autoImpact = new Map();
 let probe = null;
 export function analyzeImpacts(riggedScene) {
@@ -80,7 +84,7 @@ export function analyzeImpacts(riggedScene) {
   const p0 = new THREE.Vector3(), p1 = new THREE.Vector3();
   for (const n of names) {
     const c = clipLib.get(n); if (!c) continue;
-    const bone = /Kick|Sweep/.test(n) ? probe.bones.RightFoot : probe.bones.RightHand;
+    const bone = /Kick|Sweep/.test(n) ? probe.bones.RightFoot : /^Left_Jab_/.test(n) ? probe.bones.LeftHand : probe.bones.RightHand;
     if (!bone) continue;
     const a = mixer.clipAction(retargetClip(c, probe.rest)); a.play(); a.paused = true;
     const N = 48; let best = 0.42, bs = -1;
@@ -112,7 +116,18 @@ export function createMocapBody(riggedScene) {
     world: bone.getWorldQuaternion(new THREE.Quaternion()),
     parent: bone.parent.getWorldQuaternion(new THREE.Quaternion()),
   });
-  return { model, bones, meshes, rest, sockets: new Map() };
+  // 同一模板、同一绑定坐标轴的实例共享只读动作数据；mixer/action 仍各自独立。
+  // 模板若被外部旋转后再克隆，绑定坐标轴签名改变，不能沿用原缓存。
+  const frameKey = [...rest].map(([name, r]) => name + ':' + [...r.world.toArray(), ...r.parent.toArray()].join(',')).join(';');
+  let cache = bodyClipCaches.get(riggedScene);
+  if (!cache || cache.frameKey !== frameKey) {
+    cache = { frameKey, clips: new WeakMap() };
+    bodyClipCaches.set(riggedScene, cache);
+  }
+  const body = { model, bones, meshes, rest, sockets: new Map(), retargetedClips: cache.clips };
+  repairClothWeights(body, riggedScene.userData.gloryClass);
+  repairAttachmentWeights(body, riggedScene.userData.gloryClass);
+  return body;
 }
 
 // 从绑定姿态中受手骨影响的顶点估计握持中心，避免武器插在手腕上。
@@ -221,11 +236,168 @@ export function splitForFirstPerson(body) {
   return out;
 }
 
+// 权重与 mixer 使用同一时间步，兼容工具直接调用 play() 后推进 mixer。
+class BlendMixer extends THREE.AnimationMixer {
+  constructor(root, blend) { super(root); this.blend = blend; }
+  update(dt) { this.blend(dt); return super.update(dt); }
+}
+
+// 髋高比例不能兼容所有腿长。用实际脚底蒙皮顶点的少量代表点，修正地面动作的悬空/穿地。
+class GroundFeet {
+  constructor(body) {
+    this.body = body; this.offset = 0; this.probes = [];
+    this.v = new THREE.Vector3(); this.origin = new THREE.Vector3(); this.inverse = new THREE.Matrix4();
+    body.model.updateMatrixWorld(true); this.inverse.copy(body.model.matrixWorld).invert();
+    const hipHeight = body.bones.Hips.getWorldPosition(this.v).applyMatrix4(this.inverse).y;
+    this.moveLimit = clamp(hipHeight * 0.35, 0.25, 0.30);
+    const seen = new Set();
+    for (const mesh of body.meshes) {
+      const { position, skinIndex, skinWeight } = mesh.geometry.attributes;
+      if (!skinIndex || !skinWeight || seen.has(position)) continue;
+      seen.add(position); mesh.skeleton.update();
+      for (const side of ['Left', 'Right']) {
+        const indices = new Set(mesh.skeleton.bones.map((b, i) => b.name.startsWith(side) && /Foot|Toe/.test(b.name) ? i : -1).filter(i => i >= 0));
+        if (!indices.size) continue;
+        const candidates = []; let floor = Infinity;
+        for (let i = 0; i < position.count; i++) {
+          let weight = 0;
+          for (let k = 0; k < 4; k++) if (indices.has(skinIndex.getComponent(i, k))) weight += skinWeight.getComponent(i, k);
+          if (weight < 0.5) continue;
+          mesh.getVertexPosition(i, this.v).applyMatrix4(mesh.matrixWorld).applyMatrix4(this.inverse);
+          floor = Math.min(floor, this.v.y);
+          candidates.push({ index: i, x: this.v.x, y: this.v.y, z: this.v.z });
+        }
+        const sole = candidates.filter(p => p.y <= floor + 0.025);
+        if (!sole.length) continue;
+        const minX = Math.min(...sole.map(p => p.x)), maxX = Math.max(...sole.map(p => p.x));
+        const minZ = Math.min(...sole.map(p => p.z)), maxZ = Math.max(...sole.map(p => p.z));
+        const cells = new Map();
+        for (const p of sole) {
+          const x = Math.min(2, Math.floor(3 * (p.x - minX) / Math.max(1e-6, maxX - minX)));
+          const z = Math.min(2, Math.floor(3 * (p.z - minZ) / Math.max(1e-6, maxZ - minZ)));
+          const key = x + ':' + z;
+          if (!cells.has(key) || p.y < cells.get(key).y) cells.set(key, p);
+        }
+        for (const p of cells.values()) this.probes.push({ mesh, index: p.index });
+      }
+    }
+    this.meshes = [...new Set(this.probes.map(p => p.mesh))];
+  }
+  update(dt, st) {
+    if (!this.probes.length) return;
+    const active = st.onGround && !st.action && !st.react && !st.dash;
+    const moving = active && !st.guard && (st.speed || 0) > 0.6;
+    const { body, v, inverse } = this;
+    let target = 0;
+    if (active) {
+      body.model.updateMatrixWorld(true); inverse.copy(body.model.matrixWorld).invert();
+      for (const mesh of this.meshes) mesh.skeleton.update();
+      let floor = Infinity;
+      for (const { mesh, index } of this.probes) {
+        mesh.getVertexPosition(index, v).applyMatrix4(mesh.matrixWorld).applyMatrix4(inverse);
+        floor = Math.min(floor, v.y);
+      }
+      const limit = moving ? this.moveLimit : 0.15;
+      target = clamp(-floor, -limit, limit);
+    }
+    // 跑步每秒约两轮步态；站姿的25ms平滑会落后脚底5cm以上。
+    // 移动用13ms响应，兼顾脚底跟踪与髋部平滑，退出动作按原速度归零。
+    this.offset += (target - this.offset) * (1 - Math.exp(-(moving ? 75 : 40) * Math.max(0, dt)));
+    if (Math.abs(this.offset) < 1e-6) this.offset = 0;
+    if (!this.offset) return;
+    // 转为髋骨父节点的位移，不依赖导出骨架的厘米单位或根节点朝向。
+    v.set(0, this.offset, 0).applyMatrix4(body.model.matrixWorld);
+    this.origin.set(0, 0, 0).applyMatrix4(body.model.matrixWorld);
+    body.bones.Hips.parent.worldToLocal(v).sub(body.bones.Hips.parent.worldToLocal(this.origin));
+    body.bones.Hips.position.add(v);
+    body.bones.Hips.updateMatrixWorld(true);
+  }
+}
+
+const HYBRID_STANCES = new Set(['pistol', 'cannon', 'umbrella_gun', 'staff', 'holy', 'broom', 'tome', 'fist', 'greatsword', 'spear']);
+
+// 闲置/移动及枪械瞄准时使用职业握持姿势，动捕仍负责下盘；近战/受击回到完整动捕。
+// 程序化 rig 在创建时保持绑定姿态，左右手的坐标轴差异只测量一次。
+class StanceArms {
+  constructor(body, rig) {
+    this.rig = rig; this.weight = 0;
+    this.spine = body.bones.Spine02 || body.bones.Spine01;
+    this.chestRest = rig.bones.chest.getWorldQuaternion(new THREE.Quaternion());
+    this.spineRest = this.spine.getWorldQuaternion(new THREE.Quaternion());
+    this.chains = [];
+    for (const [side, suffix] of [['Right', 'R'], ['Left', 'L']]) {
+      const P = rig.bones;
+      const hand = body.bones[side + 'Hand'];
+      const mount = hand.children.find(o => o.name === side + 'WeaponSocket');
+      this.chains.push({
+        arm: body.bones[side + 'Arm'], fore: body.bones[side + 'ForeArm'], hand,
+        sh: P['sh' + suffix], el: P['el' + suffix], ha: P['ha' + suffix], grip: P['grip' + suffix],
+        handFrame: P['ha' + suffix].getWorldQuaternion(new THREE.Quaternion()).invert().multiply(hand.getWorldQuaternion(new THREE.Quaternion())),
+        mount, mountRest: mount ? mount.quaternion.clone() : null,
+      });
+    }
+    this.v1 = new THREE.Vector3(); this.v2 = new THREE.Vector3(); this.v3 = new THREE.Vector3(); this.v4 = new THREE.Vector3();
+    this.q1 = new THREE.Quaternion(); this.q2 = new THREE.Quaternion(); this.q3 = new THREE.Quaternion();
+  }
+  update(dt, st) {
+    const shooting = /^(pistol|cannon|umbrella_gun)$/.test(st.stance || '') && /^(shoot|shoot2|shootUp|cannon)$/.test(st.action?.clip || '');
+    const active = HYBRID_STANCES.has(st.stance) && (shooting || (st.onGround && !st.action)) && !st.react && !st.dash && !st.guard;
+    this.weight += ((active ? 1 : 0) - this.weight) * (1 - Math.exp(-20 * Math.max(0, dt)));
+    if (this.weight < 1e-5) this.weight = 0;
+    if (this.weight > 1 - 1e-5) this.weight = 1;
+    const w = this.weight, { v1, v2, v3, v4, q1, q2, q3 } = this;
+    if (w) {
+      this.rig.root.updateMatrixWorld(true);
+      this.rig.bones.chest.getWorldQuaternion(q1).multiply(q2.copy(this.chestRest).invert()).multiply(this.spineRest);
+      this.spine.parent.getWorldQuaternion(q2).invert();
+      this.spine.quaternion.slerp(q2.multiply(q1), w);
+      this.spine.updateMatrixWorld(true);
+    }
+    const swing = (bone, child, from, to) => {
+      child.getWorldPosition(v1).sub(bone.getWorldPosition(v2)).normalize();
+      to.getWorldPosition(v3).sub(from.getWorldPosition(v4)).normalize();
+      q1.setFromUnitVectors(v1, v3);
+      bone.getWorldQuaternion(q2).premultiply(q1);
+      bone.parent.getWorldQuaternion(q3).invert();
+      bone.quaternion.slerp(q3.multiply(q2), w);
+      bone.updateMatrixWorld(true);
+    };
+    for (const chain of this.chains) {
+      const { arm, fore, hand, sh, el, ha, grip, handFrame, mount, mountRest } = chain;
+      if (w) {
+        swing(arm, fore, sh, el); swing(fore, hand, el, ha);
+        ha.getWorldQuaternion(q1).multiply(handFrame);
+        hand.parent.getWorldQuaternion(q2).invert();
+        hand.quaternion.slerp(q2.multiply(q1), w);
+        hand.updateMatrixWorld(true);
+      }
+      if (!mount) continue;
+      mount.quaternion.copy(mountRest);
+      if (w) {
+        grip.getWorldQuaternion(q1);
+        if (st.stance === 'pistol') {
+          // 两把枪共用角色的前向，保留俯仰，避免左右枪管在水平方向发散。
+          v1.set(0, 1, 0).applyQuaternion(q1);
+          this.rig.root.getWorldQuaternion(q2);
+          v2.set(0, 0, 1).applyQuaternion(q2); v3.set(0, 1, 0).applyQuaternion(q2);
+          v4.copy(v1).addScaledVector(v3, -v1.dot(v3)).normalize();
+          v2.addScaledVector(v3, -v2.dot(v3)).normalize();
+          q2.setFromUnitVectors(v4, v2); q1.premultiply(q2);
+        }
+        hand.getWorldQuaternion(q2).invert();
+        mount.quaternion.slerp(q2.multiply(q1), w);
+      }
+      mount.updateMatrixWorld(true);
+    }
+  }
+}
+
 // 动捕动画控制器：输入与程序化 Animator 相同的状态描述
 export class MocapAnimator {
-  constructor(body) {
+  constructor(body, proceduralRig = null) {
     this.body = body;
-    this.mixer = new THREE.AnimationMixer(body.model);
+    if (proceduralRig) proceduralRig.root.updateMatrixWorld(true);
+    this.mixer = new BlendMixer(body.model, dt => this.updateBlend(dt));
     this.actions = new Map();
     this.cur = null; this.curName = '';
     this.spine = body.bones.Spine02 || body.bones.Spine01;
@@ -233,27 +405,58 @@ export class MocapAnimator {
     this.hipRest = this.hips ? this.hips.position.clone() : null;
     this.pitchQ = new THREE.Quaternion();
     this.lastAttackKey = null;
+    this.blend = null;
+    this.stanceArms = proceduralRig && this.spine && ['RightArm', 'RightForeArm', 'RightHand', 'LeftArm', 'LeftForeArm', 'LeftHand'].every(n => body.bones[n])
+      ? new StanceArms(body, proceduralRig) : null;
+    this.groundFeet = this.hips ? new GroundFeet(body) : null;
   }
   action(name) {
     let a = this.actions.get(name);
-    if (!a) { const c = clipLib && clipLib.get(name); if (!c) return null; a = this.mixer.clipAction(retargetClip(c, this.body.rest)); this.actions.set(name, a); }
+    if (!a) {
+      const c = clipLib && clipLib.get(name); if (!c) return null;
+      let mapped = this.body.retargetedClips.get(c);
+      if (!mapped) { mapped = retargetClip(c, this.body.rest); this.body.retargetedClips.set(c, mapped); }
+      a = this.mixer.clipAction(mapped); this.actions.set(name, a);
+    }
     return a;
   }
   // 切换到片段；manual=true 时由调用方设置时间
   play(name, { fade = 0.15, loop = true, manual = false, speed = 1 } = {}) {
     const a = this.action(name); if (!a) return null;
     if (this.curName !== name || (!loop && this._restart)) {
-      a.reset();
+      // 从当前完整混合姿态继续过渡。crossFadeTo 会把被打断的淡入动作
+      // 重新当成满权重，并留下更早的淡出动作，连段/受击时会跳变。
+      const weights = new Map();
+      for (const action of this.actions.values()) {
+        if (action.isScheduled() && action.enabled) weights.set(action, action.getEffectiveWeight());
+      }
+      const resume = weights.get(a) > 0;
+      if (!resume || this._restart) a.reset();
       a.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
       a.clampWhenFinished = !loop;
-      a.enabled = true; a.setEffectiveWeight(1);
+      a.enabled = true; a.setEffectiveWeight(weights.size ? weights.get(a) || 0 : 1);
       a.play();
-      if (this.cur && this.cur !== a) this.cur.crossFadeTo(a, fade, false);
+      this.blend = weights.size ? { weights, t: 0, duration: Math.max(0, fade) } : null;
       this.cur = a; this.curName = name;
+      if (this.blend && !this.blend.duration) this.updateBlend(0);
     }
     a.paused = manual;
     a.timeScale = speed;
     return a;
+  }
+
+  updateBlend(dt) {
+    if (!this.blend) return;
+    const blend = this.blend;
+    blend.t += Math.max(0, dt);
+    const t = blend.duration ? Math.min(1, blend.t / blend.duration) : 1;
+    for (const action of this.actions.values()) {
+      if (!action.isScheduled()) continue;
+      const from = blend.weights.get(action) || 0;
+      action.setEffectiveWeight(from * (1 - t) + (action === this.cur ? t : 0));
+      if (t === 1 && action !== this.cur) action.stop();
+    }
+    if (t === 1) this.blend = null;
   }
 
   update(dt, st) {
@@ -320,11 +523,13 @@ export class MocapAnimator {
       const k = this.hipRest.y / (refHipY || 1);
       this.hips.position.set(this.hipRest.x, this.hipRest.y + offset * k, this.hipRest.z);
     }
+    if (this.groundFeet) this.groundFeet.update(dt, st);
     // 视线俯仰带动上身
     if (this.spine && st.pitch && !r) {
       this.pitchQ.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -st.pitch * 0.6);
       this.spine.quaternion.multiply(this.pitchQ);
     }
+    if (this.stanceArms) this.stanceArms.update(dt, st);
   }
 }
 

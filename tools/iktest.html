@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { TwoBoneIK } from '../src/game/ik.js';
+window.__errors=[];
+try {
+  const root=new THREE.Group(), upper=new THREE.Bone(), lower=new THREE.Bone(), hand=new THREE.Bone();
+  root.position.set(2,1,-3); root.rotation.set(0.4,0.7,-0.2); root.scale.setScalar(1.3);
+  root.add(upper); upper.add(lower); lower.position.set(0,-0.3,0); lower.add(hand); hand.position.set(0,-0.26,0);
+  root.updateMatrixWorld(true);
+  const solver=new TwoBoneIK(); let tested=0;
+  for(let i=0;i<100;i++) {
+    const target=new THREE.Vector3(Math.sin(i*1.7)*0.25,-0.22-Math.cos(i*0.8)*0.15,Math.cos(i*1.3)*0.25); root.localToWorld(target);
+    const error=solver.solve(upper,lower,hand,target);
+    const a=upper.getWorldPosition(new THREE.Vector3()), b=lower.getWorldPosition(new THREE.Vector3()), c=hand.getWorldPosition(new THREE.Vector3());
+    if(error>1e-5) throw Error('可达目标未收敛 '+error);
+    if(Math.abs(a.distanceTo(b)-0.39)>1e-5 || Math.abs(b.distanceTo(c)-0.338)>1e-5) throw Error('IK 改变骨长');
+    tested++;
+  }
+  for(const local of [new THREE.Vector3(),new THREE.Vector3(10,0,0),new THREE.Vector3(0,-0.56,0)]) {
+    const target=root.localToWorld(local);
+    const error=solver.solve(upper,lower,hand,target);
+    if(!Number.isFinite(error)||![upper,lower,hand].every(b=>b.quaternion.toArray().every(Number.isFinite))) throw Error('不可达/共线目标产生无效旋转');
+    tested++;
+  }
+  document.querySelector('#result').textContent='PASS '+tested+' 个目标，旋转缩放父级、骨长保持、不可达与共线处理';
+  window.__results=[tested];
+} catch(e) {window.__errors.push(String(e));document.querySelector('#result').textContent=String(e);}
+window.__ready=true;
+</script></body></html>

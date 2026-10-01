@@ -1,10 +1,11 @@
 // 战斗单位：物理、状态机、技能执行。玩家、Bot、训练木桩、副本怪物与 Boss 共用。
 import * as THREE from 'three';
-import { buildCharacter, setFirstPersonHidden } from './model.js';
+import { buildCharacter, setFirstPersonHidden, disposeRig } from './model.js';
 import { buildWeapon } from './weapons.js';
 import { Animator } from './anim.js';
 import { applySkinnedModel } from './skin.js';
-import { createMocapBody, splitForFirstPerson, MocapAnimator, hasClips, analyzeImpacts, weaponTilt, mountMocapWeapon } from './mocap.js';
+import { createMocapBody, splitForFirstPerson, MocapAnimator, hasClips, analyzeImpacts, weaponTilt, mountMocapWeapon, handSocket } from './mocap.js';
+import { installGripHands, fitWorldGripHands } from './grip.js';
 import { clamp, wrapAngle, turnToward, uid, DEG } from '../engine/util.js';
 
 export const GRAVITY = 24;
@@ -877,6 +878,7 @@ export class Fighter {
     };
     this.anim.update(dt, st);
     if (this.mocap) this.mocap.update(dt, st);
+    if (this.gripHands?.length) fitWorldGripHands(this.mocapBody, this.gripHands, this.weapon, this.leftWeapon);
     this.applyFlash();
     this.applyTell(dt);
   }
@@ -885,6 +887,8 @@ export class Fighter {
   attachMocap(look) {
     const rs = this.game.rigged && this.game.rigged.get(this.modelKey);
     this.mocap = null;
+    this.mocapBody = null;
+    this.gripHands = [];
     if (!rs || !hasClips() || (look && look.proc)) return;
     try {
       analyzeImpacts(rs);
@@ -900,8 +904,11 @@ export class Fighter {
       const tilt = weaponTilt(this.weapon.type);
       mountMocapWeapon(body, 'Right', this.weapon.obj, tilt, this.scale);
       mountMocapWeapon(body, 'Left', this.leftWeapon, -tilt, this.scale);
+      this.gripHands = installGripHands(body, { Right: handSocket(body,'Right'), Left: handSocket(body,'Left') }, this.weapon.type, this.scale);
+      fitWorldGripHands(body,this.gripHands);
+      for(const hand of this.gripHands) hand.root.traverse(object=>{if(object.isMesh){object.castShadow=true; this.rig.armParts.push(object);}});
       this.mocapBody = body;
-      this.mocap = new MocapAnimator(body);
+      this.mocap = new MocapAnimator(body, this.rig);
       this.fpGlb = rs;
       this.usesModel = false;
     } catch (e) { console.warn('动捕身体创建失败', e); this.mocap = null; }
@@ -920,12 +927,21 @@ export class Fighter {
   prepMaterials() {
     this.weaponMats = null;
     this.flashMats = [];
+    this.privateMaterials ||= new WeakSet();
     const seen = new Map();
     this.rig.root.traverse((o) => {
-      if (!o.isMesh || !o.material || !o.material.isMeshStandardMaterial) return;
-      let m = seen.get(o.material);
-      if (!m) { m = o.material.clone(); m.userData.baseE = o.material.emissive.clone(); seen.set(o.material, m); this.flashMats.push(m); addCamFade(m, this.game); }
-      o.material = m;
+      if (!o.isMesh || !o.material) return;
+      const materials=[].concat(o.material).map(source=>{
+        if(!source.isMeshStandardMaterial) return source;
+        let m=seen.get(source);
+        if(!m) {
+          m=this.privateMaterials.has(source)?source:source.clone();
+          if(!this.privateMaterials.has(m)) {m.userData.baseE=source.emissive.clone();this.privateMaterials.add(m);addCamFade(m,this.game);}
+          m.emissive.copy(m.userData.baseE);seen.set(source,m);this.flashMats.push(m);
+        }
+        return m;
+      });
+      o.material=Array.isArray(o.material)?materials:materials[0];
     });
     this._flashOn = false;
   }
@@ -980,7 +996,12 @@ export class Fighter {
 
   rebuildLook(look) {
     const parent = this.rig.root.parent;
-    this.rig.root.removeFromParent();
+    // 武器继续使用，先移出旧骨架再释放旧身体的独占资源。
+    this.weapon.obj.removeFromParent();
+    this.leftWeapon?.removeFromParent();
+    this.mocap?.mixer.stopAllAction();
+    disposeRig(this.rig, { sharedRoots: [this.game.models?.get(this.modelKey), this.game.rigged?.get(this.modelKey), ...(this.gripHands || []).map(hand=>hand.root)] });
+    for(const hand of this.gripHands || []) hand.dispose();
     this.rig = buildCharacter(look);
     this.rig.root.scale.setScalar(this.scale);
     this.rig.bones.gripR.add(this.weapon.obj);
@@ -1000,7 +1021,10 @@ export class Fighter {
   }
 
   dispose() {
-    this.rig.root.removeFromParent();
+    this.mocap?.mixer.stopAllAction();
+    disposeRig(this.rig, { sharedRoots: [this.game.models?.get(this.modelKey), this.game.rigged?.get(this.modelKey), ...(this.gripHands || []).map(hand=>hand.root)] });
+    for(const hand of this.gripHands || []) hand.dispose();
+    this.gripHands=[];
     if (this.fp) this.fp.dispose();
   }
 }

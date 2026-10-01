@@ -1,10 +1,12 @@
 // 第一人称专用手臂（视图模型）：只保留手臂与武器，跟随主相机，
 // 骨骼旋转逐帧从世界身体复制，所以镜子里的动作和第一人称看到的出招时刻一致。
 import * as THREE from 'three';
-import { buildCharacter } from './model.js';
+import { buildCharacter, disposeRig } from './model.js';
 import { buildWeapon } from './weapons.js';
 import { applySkinnedModel } from './skin.js';
 import { createMocapBody, splitForFirstPerson, handSocket } from './mocap.js';
+import { buildGripHand, handColor } from './grip.js';
+import { TwoBoneIK } from './ik.js';
 
 export const FP_LAYER = 2;
 
@@ -25,6 +27,9 @@ const ARM_BONES = ['shL', 'elL', 'haL', 'shR', 'elR', 'haR', 'gripR', 'gripL'];
 export class FPView {
   constructor(look, weaponType, weaponOpts = {}, glb = null, modelKey = '') {
     this.root = new THREE.Group();
+    this.sourceGlb = glb;
+    this.weaponType = weaponType;
+    this.gripOrientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), weaponType === 'pistol' ? 0 : -Math.PI / 2);
     this.root.name = 'fpView';
     this.rig = buildCharacter(look);
     this.inner = new THREE.Group();
@@ -93,6 +98,11 @@ export class FPView {
   sync(worldRig, dt, moveSpeed = 0, mouseDX = 0, mouseDY = 0, enabledBob = true) {
     const src = worldRig.bones, dst = this.rig.bones;
     for (const b of ARM_BONES) dst[b].rotation.copy(src[b].rotation);
+    // 双枪保持两侧握持，避免精模较长的前臂把两把枪挤到准星上。
+    if (this.weaponType === 'pistol') {
+      dst.shR.rotation.y -= 14 * Math.PI / 180;
+      dst.shL.rotation.y += 14 * Math.PI / 180;
+    }
     dst.chest.rotation.set(0, src.chest.rotation.y * 0.5, src.chest.rotation.z * 0.4);
     dst.spine.rotation.set(0, src.spine.rotation.y * 0.5, 0);
     dst.hips.rotation.set(0, 0, 0);
@@ -120,6 +130,7 @@ export class FPView {
   initMeshyArms(glb) {
     const body = createMocapBody(glb);
     const palms = { Right: handSocket(body, 'Right'), Left: handSocket(body, 'Left') };
+    const colors = { Right: handColor(body, 'Right'), Left: handColor(body, 'Left') };
     const split = splitForFirstPerson(body);
     for (const m of [...split.head, ...split.body]) m.removeFromParent();
     if (!split.arms.length) return false;
@@ -128,12 +139,17 @@ export class FPView {
     for (const m of split.arms) {
       const g = m.geometry, si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
       const names = m.skeleton.bones.map((b) => b.name);
-      const isShoulder = (vi) => {
+      const region = (vi) => {
         let best = 0, bw = -1; for (let k = 0; k < 4; k++) { const w = sw.getComponent(vi, k); if (w > bw) { bw = w; best = si.getComponent(vi, k); } }
-        return /Shoulder/.test(names[best] || '');
+        const name = names[best] || '';
+        return /Shoulder/.test(name) ? 'shoulder' : /Hand/.test(name) ? 'hand' : 'arm';
       };
       const idx = g.index.array, keep = [];
-      for (let t = 0; t < idx.length; t += 3) if (!(isShoulder(idx[t]) && isShoulder(idx[t + 1]) && isShoulder(idx[t + 2]))) keep.push(idx[t], idx[t + 1], idx[t + 2]);
+      for (let t = 0; t < idx.length; t += 3) {
+        const regions = [region(idx[t]), region(idx[t + 1]), region(idx[t + 2])];
+        if (regions.every(r => r === 'shoulder') || regions.filter(r => r === 'hand').length >= 2) continue;
+        keep.push(idx[t], idx[t + 1], idx[t + 2]);
+      }
       g.setIndex(keep);
       m.material = nearFade(m.material);
     }
@@ -155,7 +171,27 @@ export class FPView {
       spineRest: B.Spine02.getWorldQuaternion(new THREE.Quaternion()),
       v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3(), v4: new THREE.Vector3(),
       q1: new THREE.Quaternion(), q2: new THREE.Quaternion(), q3: new THREE.Quaternion(),
+      supportIK: new TwoBoneIK(), supportGoal: new THREE.Vector3(), supportUpper: new THREE.Quaternion(), supportLower: new THREE.Quaternion(),
     };
+    this.gripHands = [];
+    for (const side of ['Right', 'Left']) {
+      const hand = B[side + 'Hand'], grip = buildGripHand(side, colors[side]);
+      const scale = 1 / hand.getWorldScale(new THREE.Vector3()).x;
+      grip.root.quaternion.copy(this.mc.handFrames[side]).invert();
+      grip.root.scale.setScalar(scale);
+      grip.root.position.copy(palms[side]).sub(grip.grip.clone().applyQuaternion(grip.root.quaternion).multiplyScalar(scale));
+      hand.add(grip.root);
+      const faded = new Map();
+      grip.root.traverse(object => {
+        if (!object.isMesh) return;
+        const materials = [].concat(object.material).map(material => {
+          if (!faded.has(material)) faded.set(material, nearFade(material));
+          return faded.get(material);
+        });
+        object.material = Array.isArray(object.material) ? materials : materials[0];
+      });
+      this.gripHands.push(grip);
+    }
     return true;
   }
 
@@ -180,6 +216,7 @@ export class FPView {
       bone.updateMatrixWorld(true);
     };
     const wp = (o, v) => o.getWorldPosition(v);
+    let handIndex = 0;
     for (const [s, sh, el, ha, grip, w, base] of [
       ['Right', P.shR, P.elR, P.haR, P.gripR, this.weapon.obj, mc.wR],
       ['Left', P.shL, P.elL, P.haL, P.gripL, this.left, mc.wL],
@@ -192,6 +229,18 @@ export class FPView {
       hand.parent.getWorldQuaternion(q2).invert();
       hand.quaternion.copy(q2.multiply(q1));
       hand.updateMatrixWorld(true);
+      let supported = false;
+      if (s === 'Left' && !this.left && this.weapon.offhandGrip) {
+        mc.supportGoal.copy(this.weapon.offhandGrip); this.weapon.obj.localToWorld(mc.supportGoal);
+        const offset = hand.localToWorld(v1.copy(mc.palms[s])).sub(hand.getWorldPosition(v2));
+        mc.supportGoal.sub(offset);
+        mc.supportUpper.copy(arm.quaternion); mc.supportLower.copy(fore.quaternion);
+        const error = mc.supportIK.solve(arm, fore, hand, mc.supportGoal);
+        supported = error < 0.02;
+        if (!supported) { arm.quaternion.copy(mc.supportUpper); fore.quaternion.copy(mc.supportLower); arm.updateMatrixWorld(true); }
+        hand.parent.getWorldQuaternion(q2).invert();
+        hand.quaternion.copy(q2.multiply(q1)); hand.updateMatrixWorld(true);
+      }
       // 武器：朝向沿用程序化握把，位置移到模型手心
       if (w && base) {
         w.position.copy(base);
@@ -199,13 +248,40 @@ export class FPView {
         const cur = grip.localToWorld(v2.copy(base));
         const target = cur.add(palm.sub(wp(grip, v4)));
         w.position.copy(grip.worldToLocal(target));
+        if (this.weaponType === 'pistol') {
+          // 只消除水平发散，保留程序化开火动作的仰角与后坐力。
+          w.getWorldQuaternion(q1);
+          v1.set(0, 1, 0).applyQuaternion(q1);
+          this.root.getWorldQuaternion(q2);
+          v2.set(0, 0, -1).applyQuaternion(q2);
+          const up = v3.set(0, 1, 0).applyQuaternion(q2);
+          v4.copy(v1).addScaledVector(up, -v1.dot(up)).normalize();
+          v2.addScaledVector(up, -v2.dot(up)).normalize();
+          q2.setFromUnitVectors(v4, v2);
+          q1.premultiply(q2);
+          grip.getWorldQuaternion(q2).invert();
+          w.quaternion.copy(q2.multiply(q1));
+        }
       }
+      // 握持手的指列对齐实际握柄轴，而不只跟随前臂朝向。
+      const fitted = this.gripHands[handIndex++];
+      (w || (supported ? this.weapon.obj : grip)).getWorldQuaternion(q1).multiply(this.gripOrientation);
+      hand.getWorldQuaternion(q2).invert();
+      fitted.root.quaternion.copy(q2.multiply(q1));
+      fitted.root.position.copy(mc.palms[s]).sub(v1.copy(fitted.grip).applyQuaternion(fitted.root.quaternion).multiplyScalar(fitted.root.scale.x));
+      fitted.root.updateMatrixWorld(true);
+      fitted.connectWrist(fitted.root.worldToLocal(hand.getWorldPosition(v1)));
     }
   }
 
   setForm(form) { if (this.weapon.setForm) this.weapon.setForm(form); }
   update(dt) { if (this.weapon.update) this.weapon.update(dt); }
-  dispose() { this.root.removeFromParent(); }
+  dispose() {
+    disposeRig(this.rig, { sharedRoots: [this.sourceGlb, ...(this.gripHands || []).map(hand => hand.root)] });
+    for (const hand of this.gripHands || []) hand.dispose();
+    this.gripHands = [];
+    this.root.removeFromParent();
+  }
 }
 
 // 第一人称时隐藏世界身体的手臂与武器（避免重复），镜子里仍可见

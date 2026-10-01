@@ -47,13 +47,17 @@ class App {
 
   startMode(id, opts) {
     this.endMode();
+    const generation = this._modeGeneration;
+    const current = () => generation === this._modeGeneration;
+    this._loadingMode = true;
     const load = this.menu.loading(id);
     audio.music(false);
     this.modeId = id; this.modeOpts = opts;
     // 让加载界面先渲染一帧，并等贴图就绪
-    const go = () => setTimeout(() => {
+    const go = () => { this._startTimer = setTimeout(() => {
+      this._startTimer = null;
+      if (!current()) return;
       try {
-        if (this.mode) this.endMode(); // 例如主菜单背景对战刚好在此时启动
         const M = MODES[id];
         this.mode = new M(this, opts);
         this.game.mode = this.mode;
@@ -64,16 +68,26 @@ class App {
         this.game.applyView();
         this.hud.show(true);
         const bar = load.querySelector('.load-bar i'); if (bar) bar.style.width = '100%';
-        setTimeout(() => { this.menu.hide(); input.enabled = true; input.lock(false); this.firstTimeHelp(); }, 350);
+        this._hideLoadTimer = setTimeout(() => {
+          this._hideLoadTimer = null;
+          if (!current()) return;
+          this._loadingMode = false;
+          this.menu.hide(); input.enabled = true; input.lock(false); this.firstTimeHelp();
+        }, 350);
       } catch (e) {
         console.error(e);
+        this.endMode();
         this.menu.main();
         alert('加载失败：' + e.message);
       }
-    }, 60);
+    }, 60); };
     const bar = load.querySelector('.load-bar i');
-    const tick = setInterval(() => { const g = this.game; if (bar && g.loadTotal) bar.style.width = Math.min(95, 10 + 85 * (g.loadDone || 0) / g.loadTotal) + '%'; }, 100);
-    this.game.preload().then(() => { clearInterval(tick); go(); });
+    this._loadTick = setInterval(() => { const g = this.game; if (bar && g.loadTotal) bar.style.width = Math.min(95, 10 + 85 * (g.loadDone || 0) / g.loadTotal) + '%'; }, 100);
+    this.game.preload().then(() => {
+      if (!current()) return;
+      clearInterval(this._loadTick); this._loadTick = null;
+      go();
+    });
   }
 
   firstTimeHelp() {
@@ -93,19 +107,33 @@ class App {
       <p><kbd>${k('lockon')}</kbd> 锁定目标　<kbd>${k('view')}</kbd> 切换视角　<kbd>Tab</kbd> 数据　<kbd>Esc</kbd> 暂停</p>
       <small>挑空 → 空中追击 → 击倒，是荣耀连段的基本套路。按任意键关闭</small>`;
     document.body.appendChild(el);
-    const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), 400); window.removeEventListener('keydown', close); };
+    let expireTimer, keyTimer, fadeTimer;
+    const close = (immediate = false) => {
+      clearTimeout(expireTimer); clearTimeout(keyTimer); clearTimeout(fadeTimer);
+      window.removeEventListener('keydown', close);
+      const remove = () => { el.remove(); if (this._closeHelp === close) this._closeHelp = null; };
+      if (immediate === true) remove();
+      else { el.classList.add('out'); fadeTimer = setTimeout(remove, 400); }
+    };
+    this._closeHelp = close;
     if (input.touchMode) el.addEventListener('pointerdown', (e) => { e.stopPropagation(); close(); });
-    setTimeout(close, 9000);
-    setTimeout(() => window.addEventListener('keydown', close), 800);
+    expireTimer = setTimeout(close, 9000);
+    keyTimer = setTimeout(() => window.addEventListener('keydown', close), 800);
   }
 
   endMode() {
+    this._modeGeneration = (this._modeGeneration || 0) + 1;
+    clearInterval(this._loadTick); clearTimeout(this._startTimer); clearTimeout(this._hideLoadTimer);
+    this._loadTick = this._startTimer = this._hideLoadTimer = null;
+    this._loadingMode = false;
+    this._closeHelp?.(true);
     input.enabled = false;
     document.body.classList.remove('attract');
     this.hideClickPlay();
     if (this.mode) { this.mode.over = true; this.mode.dispose(); }
     this.mode = null;
     this.game.mode = null;
+    this.game.isAttract = false;
     this.game.clearFighters();
     this.game.unloadLevel();
     this.game.lockTarget = null;
@@ -181,13 +209,15 @@ class App {
 
   // 主菜单背景的实时 AI 对战
   startAttract() {
-    if (this.game.settings.attract === false || this.mode) return;
+    if (input.touchMode || this.game.settings.attract === false || this.mode || this._loadingMode) return;
+    const generation = this._modeGeneration || 0;
     this.game.preload().then(() => {
-      if (this.mode) return;
+      if (input.touchMode || this.mode || this._loadingMode || generation !== (this._modeGeneration || 0)) return;
       try {
         this.mode = new MODES.attract(this, {});
         this.modeId = 'attract';
         this.game.mode = this.mode;
+        this.game.isAttract = true;
         this.game.paused = false;
         this.mode.start();
         this.hud.show(false);

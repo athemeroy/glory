@@ -57,6 +57,8 @@ export class Game {
     this.acc = 0;
     this.time = 0;
     this.paused = true;
+    this.isAttract = false;
+    this._renderDirty = true; this._wasPaused = true;
     this.running = false;
     this.mode = null;
     this.lockTarget = null;
@@ -94,6 +96,7 @@ export class Game {
     this.aspect = w / h;
     this.updateFov();
     this.vfx.setScale(h * this.renderer.getPixelRatio());
+    this._renderDirty = true;
   }
   updateFov(zoom = 1) {
     // 越肩/第三人称用更窄的视野（约 80°），角色不至于太小
@@ -102,6 +105,7 @@ export class Game {
     this.camera.fov = vf; this.camera.aspect = this.aspect; this.camera.updateProjectionMatrix();
     // 手臂层：固定竖直视野，保证不同 FOV 下手臂大小一致
     this.vmCamera.fov = 60; this.vmCamera.aspect = this.aspect; this.vmCamera.updateProjectionMatrix();
+    this._renderDirty = true;
   }
 
   // 关卡构建前预加载平铺贴图（关卡会用它们烘焙环境光与画布纹理）
@@ -121,7 +125,7 @@ export class Game {
     const noModels = this.settings.models === false || q.get('models') === '0';
     const getList = (u) => fetch(u).then((r) => (r.ok ? r.json() : [])).catch(() => []);
     const rigged = (noRig || noModels ? Promise.resolve([]) : loadClipLibrary().then((lib) => (lib ? getList('assets/models/rigged/manifest.json') : [])))
-      .then((list) => { this.loadTotal += (list || []).length; return Promise.all((list || []).map((k) => new GLTFLoader().loadAsync(`assets/models/rigged/${k}.glb`).then((g) => { this.rigged.set(k, g.scene); this.loadDone++; }).catch(() => { this.loadDone++; }))); });
+      .then((list) => { this.loadTotal += (list || []).length; return Promise.all((list || []).map((k) => new GLTFLoader().loadAsync(`assets/models/rigged/${k}.glb`).then((g) => { g.scene.userData.gloryClass = k; this.rigged.set(k, g.scene); this.loadDone++; }).catch(() => { this.loadDone++; }))); });
     const models = noModels ? Promise.resolve() : rigged.then(() => getList('assets/models/manifest.json'))
       .then((list) => { list = (list || []).filter((k) => !this.rigged.has(k)); this.loadTotal += list.length; return Promise.all(list.map((k) => loadModel(`assets/models/${k}.glb`).then((sc) => { if (sc) this.models.set(k, sc); this.loadDone++; }))); });
     this._preload = Promise.all([tex, models, rigged]);
@@ -154,6 +158,7 @@ export class Game {
       this.sunOffset = level.sun.position.clone().sub(level.sun.target.position);
     }
     for (const m of level.mirrors || []) m.reflectLayers = (1 << 0) | (1 << 1);
+    this._renderDirty = true;
     return level;
   }
   unloadLevel() {
@@ -171,6 +176,7 @@ export class Game {
     if (opts.ai) { f.ai = new Brain(f, opts.ai); }
     const accent = f.cls.look?.accent || '#e8f4ff';
     if (f.weapon.tip && f.weapon.base) this.trails.set(f, new WeaponTrail(this.scene, opts.trailColor || accent, 14, 0));
+    this._renderDirty = true;
     return f;
   }
   removeFighter(f) {
@@ -181,6 +187,7 @@ export class Game {
     const tr = this.trails.get(f); if (tr) { tr.dispose(); this.trails.delete(f); }
     if (f === this.player) { if (this.fpTrail) { this.fpTrail.dispose(); this.fpTrail = null; } }
     f.dispose();
+    this._renderDirty = true;
   }
   clearFighters() {
     for (const f of [...this.fighters]) this.removeFighter(f);
@@ -224,6 +231,7 @@ export class Game {
     }
     hideWorldArmsForFP(f.rig, f.weapon.obj, f.leftWeapon, this.firstPerson);
     f.fp.root.visible = this.firstPerson;
+    this._renderDirty = true;
   }
   get viewMode() { return this._viewMode || (this.firstPerson ? 'fp' : 'ots'); }
   setViewMode(m) {
@@ -400,6 +408,18 @@ export class Game {
   }
 
   frame(dt) {
+    // 菜单不需要空场景后处理；后台页与手机背景对战也不消耗模拟和 GPU。
+    if (document.hidden || (this.isAttract && input.touchMode)) { this._renderDirty = true; return; }
+    if (!this.level) return;
+    const pauseChanged = this.paused !== this._wasPaused; this._wasPaused = this.paused;
+    if (this.paused) {
+      // 保留暂停瞬间的画面，只有机位、画质或窗口改变后才重画。
+      if (pauseChanged || this._renderDirty) {
+        this.updateCamera(dt); this.render(dt);
+        if (this.hud) this.hud.update(0, this);
+      }
+      return;
+    }
     this.fpsT += dt; this.frames++;
     if (this.fpsT >= 1) {
       this.fps = this.frames / this.fpsT; this.frames = 0; this.fpsT = 0;
@@ -654,6 +674,7 @@ export class Game {
   }
 
   render(dt = 1 / 60) {
+    this._renderDirty = false;
     // 录制工具用：外部接管机位（宣传片运镜），游戏本身不设置
     if (this.camHook) { try { this.camHook(this.camera, this); } catch (e) { this.camHook = null; console.warn('camHook', e); } }
     if (this.settings.post !== false && this.post) { this.post.render(dt); return; }
