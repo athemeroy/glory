@@ -147,6 +147,7 @@ body.attract .mode-card { min-height: 0; } body.attract .mc-img { height: 120px;
 .help-box b { color: var(--gold2); }
 .set-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,.05); gap: 12px; }
 .set-row label { color: #d6dbe0; font-size: 14px; }
+.set-row .set-toggle { display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .set-row .ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .set-row input[type=range] { width: 200px; accent-color: var(--teal); }
 .set-row span { min-width: 48px; text-align: right; color: var(--gold2); font-size: 13px; }
@@ -407,6 +408,8 @@ tr.enemy td:first-child { color: var(--red2); font-weight: 700; }
 .touch-mode .quick-help p { margin: 6px 0; }
 .touch-mode .btn { min-height: 44px; }
 .touch-mode input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--teal); }
+.touch-mode .set-row > label { display: flex; align-items: center; min-height: 44px; flex: 1; cursor: pointer; }
+.touch-mode .set-row .set-toggle { width: 44px; height: 44px; }
 .touch-mode .viewer-canvas { touch-action: pan-y; }
 
 /* 手机菜单：内容滚动，开始与返回操作保留在屏幕内。 */

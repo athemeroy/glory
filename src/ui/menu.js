@@ -352,16 +352,22 @@ export class Menu {
     const st = game.settings;
     const s = el('div', 'screen pause-screen', this.root);
     const box = el('div', 'panel settings-box', s, '<h2>设置</h2>');
-    const row = (label, html) => { const r = el('div', 'set-row', box, `<label>${label}</label><div class="ctl">${html}</div>`); return r.querySelector('.ctl'); };
+    const row = (label, html, key) => {
+      const r = el('div', 'set-row', box, `<label>${label}</label><div class="ctl">${html}</div>`);
+      const control = r.querySelector('input, select');
+      control.id = `setting-${key}`;
+      r.querySelector('label').htmlFor = control.id;
+      return r.querySelector('.ctl');
+    };
     const range = (key, label, min, max, step, fmt = (v) => v) => {
-      const c = row(label, `<input type="range" min="${min}" max="${max}" step="${step}" value="${st[key]}"><span>${fmt(st[key])}</span>`);
+      const c = row(label, `<input type="range" min="${min}" max="${max}" step="${step}" value="${st[key]}"><span>${fmt(st[key])}</span>`, key);
       const i = c.querySelector('input'), sp = c.querySelector('span');
       i.oninput = () => { st[key] = parseFloat(i.value); sp.textContent = fmt(st[key]); game.saveSettings(); };
     };
-    const check = (key, label) => { const c = row(label, `<input type="checkbox" ${st[key] ? 'checked' : ''}>`); c.querySelector('input').onchange = (e) => { st[key] = e.target.checked; game.saveSettings(); }; };
+    const check = (key, label) => { const c = row(label, `<label class="set-toggle"><input type="checkbox" ${st[key] ? 'checked' : ''}></label>`, key); c.querySelector('input').onchange = (e) => { st[key] = e.target.checked; game.saveSettings(); }; };
     range('sens', input.touchMode ? '触屏视角灵敏度' : '鼠标灵敏度', 0.2, 3, 0.05, (v) => v.toFixed(2));
     range('fov', '水平视野 FOV', 80, 110, 1, (v) => v + '°');
-    { const c = row(input.touchMode ? '视角（对局中点“视角”切换）' : '视角（对局中 F5 切换）', `<select><option value="fp">第一人称</option><option value="ots">越肩</option><option value="tp">第三人称</option></select>`);
+    { const c = row(input.touchMode ? '视角（对局中点“视角”切换）' : '视角（对局中 F5 切换）', `<select><option value="fp">第一人称</option><option value="ots">越肩</option><option value="tp">第三人称</option></select>`, 'defaultView');
       const sel = c.querySelector('select'); sel.value = store.get('viewMode', st.defaultView || 'fp');
       sel.onchange = (e) => { st.defaultView = e.target.value; store.set('viewMode', e.target.value); game.saveSettings(); if (game.player) game.setViewMode(e.target.value); }; }
     check('invertY', '反转 Y 轴');
@@ -373,7 +379,7 @@ export class Menu {
     check('showFps', '显示帧率');
     if (st.post === undefined) st.post = true;
     check('post', '后期特效（泛光/调色/抗锯齿）');
-    const q = row('画质（刷新页面生效）', `<select><option value="high">高</option><option value="low">流畅（手机 / 老电脑）</option></select>`);
+    const q = row('画质（刷新页面生效）', `<select><option value="high">高</option><option value="low">流畅（手机 / 老电脑）</option></select>`, 'quality');
     q.querySelector('select').value = st.quality; q.querySelector('select').onchange = (e) => { st.quality = e.target.value; game.saveSettings(); };
     range('master', '总音量', 0, 1, 0.05, (v) => Math.round(v * 100) + '%');
     range('sfx', '音效', 0, 1, 0.05, (v) => Math.round(v * 100) + '%');
