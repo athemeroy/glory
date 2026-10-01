@@ -40,7 +40,7 @@ export class Menu {
         <div class="logo-en">GLORY · 第一人称动作网游</div>
         <div class="tagline">操作、意识、手速——在第一人称里重现荣耀。越肩、第三人称随时切换。</div>
         <button class="btn primary big" id="enter">进入荣耀</button>
-        <div class="fine">《全职高手》（蝴蝶蓝 著）粉丝同人作品，非官方，无任何商业利益。角色账号名、招式名归原著权利人所有，如有侵权请联系，我们会立即下线。<br>需要键盘和鼠标；推荐 Chrome / Edge 浏览器。</div>
+        <div class="fine">《全职高手》（蝴蝶蓝 著）粉丝同人作品，非官方，无任何商业利益。角色账号名、招式名归原著权利人所有，如有侵权请联系，我们会立即下线。<br>支持键鼠与手机触屏；手机横屏操作更舒适。</div>
       </div>`;
     click(s.querySelector('#enter'), () => { audio.init(); audio.music(true); this.main(); this.app.startAttract(); });
   }
@@ -143,9 +143,9 @@ export class Menu {
   classDetail(acc, box) {
     const c = CLASSES[acc.cls];
     const rows = [];
-    const k = (slot) => keyLabel(input.binds[slot]);
-    rows.push(`<tr><td><kbd>${keyLabel(input.binds.attack)}</kbd></td><td>普通攻击</td><td>连按三段</td></tr>`);
-    rows.push(`<tr><td><kbd>${keyLabel(input.binds.special)}</kbd></td><td>${c.special?.name || ''}</td><td>${c.special?.type === 'aim' ? '按住瞄准，精度与伤害提高' : c.special?.parry ? '按住格挡；出招瞬间格挡为完美格挡，可左键回锋' : '按住格挡正面攻击，消耗法力'}</td></tr>`);
+    const k = (slot) => input.touchMode ? (BIND_LABELS[slot] || slot) : keyLabel(input.binds[slot]);
+    rows.push(`<tr><td><kbd>${k('attack')}</kbd></td><td>普通攻击</td><td>连按三段；长按蓄力 / 连射</td></tr>`);
+    rows.push(`<tr><td><kbd>${k('special')}</kbd></td><td>${c.special?.name || ''}</td><td>${c.special?.type === 'aim' ? '按住瞄准，精度与伤害提高' : c.special?.parry ? '按住格挡；出招瞬间格挡为完美格挡，可普攻回锋' : '按住格挡正面攻击，消耗法力'}</td></tr>`);
     for (const slot of SLOT_ORDER) { const d = c.skills[slot]; if (d) rows.push(`<tr><td><kbd>${k(slot)}</kbd></td><td>${d.name}${d.form ? `<small>（${{ sword: '剑', spear: '矛', gun: '枪', shield: '盾' }[d.form]}）</small>` : ''}</td><td>${d.desc || ''}</td></tr>`); }
     box.innerHTML = `<div class="cd-flex"><div class="viewer"><div class="viewer-tag">${acc.name}<small>${acc.weaponName}</small></div></div><div class="cd-text"><div class="cd-head"><b>${c.name}</b><span>${c.role}</span></div><p>${c.desc}</p><p class="passive">被动 · ${c.passive}</p><table class="skill-table">${rows.join('')}</table></div></div>`;
     const vbox = box.querySelector('.viewer');
@@ -293,7 +293,7 @@ export class Menu {
   }
   tip() {
     const tips = [
-      '被挑空后，在落地瞬间按空格可以“受身”，避免倒地被追击。',
+      input.touchMode ? '被挑空后，在落地瞬间点“跳跃”可以受身，避免倒地被追击。' : '被挑空后，在落地瞬间按空格可以“受身”，避免倒地被追击。',
       '同一连段第三次挑空后，目标进入浮空保护，无法再被挑起。',
       '连段伤害从第二段开始递减，最低到 45%。',
       '散人的技能会自动切换千机伞形态；连续用不同形态的技能命中，叠加“百家”增伤。',
@@ -301,7 +301,7 @@ export class Menu {
       '霸体技能不会被打断，但仍然会受到伤害。',
       '背后攻击伤害 +15%。',
       '战斗中没有背景音乐——仔细听脚步声和出招声判断方位。',
-      '按 T 锁定目标，视线会柔和地跟随对手。',
+      input.touchMode ? '点“锁定”选择目标，视线会柔和地跟随对手；右侧空白处拖动转视角。' : '按 T 锁定目标，视线会柔和地跟随对手。',
       '倒地后的起身有短暂无敌，别急着出大招。',
       'APM 只是复盘数据，不等于实力。',
     ];
@@ -358,9 +358,9 @@ export class Menu {
       i.oninput = () => { st[key] = parseFloat(i.value); sp.textContent = fmt(st[key]); game.saveSettings(); };
     };
     const check = (key, label) => { const c = row(label, `<input type="checkbox" ${st[key] ? 'checked' : ''}>`); c.querySelector('input').onchange = (e) => { st[key] = e.target.checked; game.saveSettings(); }; };
-    range('sens', '鼠标灵敏度', 0.2, 3, 0.05, (v) => v.toFixed(2));
+    range('sens', input.touchMode ? '触屏视角灵敏度' : '鼠标灵敏度', 0.2, 3, 0.05, (v) => v.toFixed(2));
     range('fov', '水平视野 FOV', 80, 110, 1, (v) => v + '°');
-    { const c = row('视角（对局中 F5 切换）', `<select><option value="fp">第一人称</option><option value="ots">越肩</option><option value="tp">第三人称</option></select>`);
+    { const c = row(input.touchMode ? '视角（对局中点“视角”切换）' : '视角（对局中 F5 切换）', `<select><option value="fp">第一人称</option><option value="ots">越肩</option><option value="tp">第三人称</option></select>`);
       const sel = c.querySelector('select'); sel.value = store.get('viewMode', st.defaultView || 'fp');
       sel.onchange = (e) => { st.defaultView = e.target.value; store.set('viewMode', e.target.value); game.saveSettings(); if (game.player) game.setViewMode(e.target.value); }; }
     check('invertY', '反转 Y 轴');
@@ -372,17 +372,19 @@ export class Menu {
     check('showFps', '显示帧率');
     if (st.post === undefined) st.post = true;
     check('post', '后期特效（泛光/调色/抗锯齿）');
-    const q = row('画质（重启对局生效）', `<select><option value="high">高</option><option value="low">低（老电脑）</option></select>`);
+    const q = row('画质（刷新页面生效）', `<select><option value="high">高</option><option value="low">流畅（手机 / 老电脑）</option></select>`);
     q.querySelector('select').value = st.quality; q.querySelector('select').onchange = (e) => { st.quality = e.target.value; game.saveSettings(); };
     range('master', '总音量', 0, 1, 0.05, (v) => Math.round(v * 100) + '%');
     range('sfx', '音效', 0, 1, 0.05, (v) => Math.round(v * 100) + '%');
     range('music', '菜单音乐', 0, 1, 0.05, (v) => Math.round(v * 100) + '%');
     if (st.voice === undefined) st.voice = 1;
     range('voice', '解说与喊招语音', 0, 1, 0.05, (v) => Math.round(v * 100) + '%');
-    el('h3', '', box, '键位（点击后按新键；Esc 取消）');
+    if (input.touchMode) el('p', 'muted', box, '触屏：左下摇杆移动，拖动空白处转视角，右下点按技能。普攻与格挡支持长按。');
+    else el('h3', '', box, '键位（点击后按新键；Esc 取消）');
     const kb = el('div', 'bind-grid', box);
     const renderBinds = () => {
       kb.innerHTML = '';
+      if (input.touchMode) return;
       for (const k in DEFAULT_BINDS) {
         const b = el('div', 'bind', kb, `<span>${BIND_LABELS[k] || k}</span><button class="btn chip">${keyLabel(input.binds[k])}</button>`);
         click(b.querySelector('button'), (ev) => { ev.target.textContent = '按键…'; input.captureNext = (code) => { if (code) input.setBind(k, code); renderBinds(); }; });
@@ -390,7 +392,7 @@ export class Menu {
     };
     renderBinds();
     const foot = el('div', 'set-foot', box);
-    click(el('button', 'btn', foot, '恢复默认键位'), () => { input.resetBinds(); renderBinds(); });
+    if (!input.touchMode) click(el('button', 'btn', foot, '恢复默认键位'), () => { input.resetBinds(); renderBinds(); });
     click(el('button', 'btn primary', foot, '完成'), () => back());
   }
 
@@ -401,22 +403,31 @@ export class Menu {
     el('div', 'panel help-box', s, `<h2>操作说明</h2>
       <div class="help-cols"><div>
       <h3>基础</h3>
+      ${input.touchMode ? `
+      <p><b>移动 / 视角</b>：左下摇杆移动，在画面空白处拖动视角，可多指同时操作。</p>
+      <p><b>普攻</b>：点按连击；近战长按蓄力重击，松手出招；远程长按连射。</p>
+      <p><b>格挡 / 瞄准</b>：按住对应职业特技按钮保持，松手结束。</p>
+      <p><b>技能 / 大招</b>：点右下技能按钮，按钮显示招式名和剩余冷却。</p>
+      <p><b>跳跃 / 闪避</b>：点“跳跃”起跳或在落地时受身；点“闪避”冲刺。</p>
+      <p><b>千机伞</b>：左侧点剑 / 矛 / 枪 / 盾切换形态。</p>
+      <p><b>其他</b>：点“锁定”跟随目标；走到镜子前点“换装”。顶部可切换视角、查看数据、暂停；支持的浏览器还可全屏。</p>
+      <p>建议横屏，手机首次使用默认采用流畅画质，可在设置里调整。</p>` : `
       <p><kbd>${keyLabel(b.forward)}${keyLabel(b.left)}${keyLabel(b.back)}${keyLabel(b.right)}</kbd> 移动 · 鼠标转视角</p>
       <p><kbd>${keyLabel(b.attack)}</kbd> 普通攻击（连按三段；近战按住＝蓄力重击，带霸体，蓄满破防；远程按住连射）</p>
       <p><kbd>${keyLabel(b.special)}</kbd> 格挡 / 瞄准（按住）</p>
       <p><kbd>${keyLabel(b.s1)}</kbd><kbd>${keyLabel(b.s2)}</kbd><kbd>${keyLabel(b.s3)}</kbd><kbd>${keyLabel(b.s4)}</kbd><kbd>${keyLabel(b.s5)}</kbd><kbd>${keyLabel(b.s6)}</kbd> 技能 · <kbd>${keyLabel(b.ult)}</kbd> 大招</p>
       <p><kbd>${keyLabel(b.jump)}</kbd> 跳跃；被击飞时按下 = 受身 · <kbd>${keyLabel(b.dash)}</kbd> 闪避冲刺（短暂无敌）</p>
       <p><kbd>1</kbd>–<kbd>4</kbd> 散人切换千机伞形态（剑 / 矛 / 枪 / 盾）</p>
-      <p><kbd>${keyLabel(b.lockon)}</kbd> 锁定目标 · <kbd>${keyLabel(b.stats)}</kbd> 数据面板 · <kbd>${keyLabel(b.view)}</kbd> 第一人称 / 越肩 / 第三人称 · <kbd>G</kbd> 镜前换装 · <kbd>Esc</kbd> 暂停</p>
+      <p><kbd>${keyLabel(b.lockon)}</kbd> 锁定目标 · <kbd>${keyLabel(b.stats)}</kbd> 数据面板 · <kbd>${keyLabel(b.view)}</kbd> 第一人称 / 越肩 / 第三人称 · <kbd>G</kbd> 镜前换装 · <kbd>Esc</kbd> 暂停</p>`}
       </div><div>
       <h3>荣耀的战斗</h3>
       <p><b>浮空</b>：天击、上挑、升龙击、浮空弹等把人打上天，空中继续命中会把目标托住。</p>
       <p><b>保护</b>：同一连段第三次挑空或浮空超过 2 秒后，目标进入保护，不能再被挑起；连段伤害逐段递减到 45%。</p>
-      <p><b>受身</b>：被击飞时在落地前后按空格，翻滚起身并短暂无敌；否则倒地，起身时也有无敌。</p>
+      <p><b>受身</b>：被击飞时在落地前后${input.touchMode ? '点“跳跃”' : '按空格'}，翻滚起身并短暂无敌；否则倒地，起身时也有无敌。</p>
       <p><b>霸体</b>：部分技能（崩拳、铁山靠、各职业大招）与蓄力重击出招过程中不会被打断——看到对手武器发<b style="color:#6fb6ff">蓝光</b>就别硬拼。</p>
       <p><b>破防</b>：武器发<b style="color:#ffc040">金光</b>的招式无视格挡（蓄满的重击、崩拳、缠手、背摔），要闪开。</p>
       <p><b>取消</b>：普攻收招可以接技能，技能收招末段可以接别的技能——这就是连段。</p>
-      <p><b>视角</b>：原著的荣耀是第一人称视角，低头能看到自己的身体，去训练室能照镜子。按 <kbd>${keyLabel(b.view)}</kbd> 可切到越肩（像《永劫无间》）或第三人称，看清自己的出招。</p>
+      <p><b>视角</b>：原著的荣耀是第一人称视角，低头能看到自己的身体，去训练室能照镜子。${input.touchMode ? '点“视角”' : `按 <kbd>${keyLabel(b.view)}</kbd>`} 可切到越肩（像《永劫无间》）或第三人称，看清自己的出招。</p>
       </div></div>`);
     click(el('button', 'btn primary', s.querySelector('.help-box'), '返回'), () => back());
   }

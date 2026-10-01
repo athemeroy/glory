@@ -79,7 +79,9 @@ export class HUD {
     this.skillBar.innerHTML = '';
     this.slots = {};
     const mk = (slot, name, icon, keyName, extra = '') => {
-      const s = el('div', 'slot ' + extra, this.skillBar, `<img src="assets/icons/${icon}.svg" alt=""><div class="cd"></div><div class="cdn"></div><div class="key">${keyName}</div><div class="nm">${name}</div>`);
+      const s = el('button', 'slot ' + extra, this.skillBar, `<img src="assets/icons/${icon}.svg" alt=""><div class="cd"></div><div class="cdn"></div><div class="key">${keyName}</div><div class="nm">${name}</div>`);
+      s.type = 'button'; s.dataset.action = slot === 'atk' ? 'attack' : slot;
+      s.setAttribute('aria-label', name);
       this.slots[slot] = s;
       return s;
     };
@@ -104,7 +106,9 @@ export class HUD {
     this.formBar.style.display = p.cls.forms ? '' : 'none';
     if (p.cls.forms) {
       ['sword', 'spear', 'gun', 'shield'].forEach((f, i) => {
-        el('div', 'form ' + f, this.formBar, `<img src="assets/icons/${FORM_ICONS[f]}.svg"><span>${FORM_NAMES[f]}</span><kbd>${keyLabel(input.binds['form' + (i + 1)])}</kbd>`);
+        const btn = el('button', 'form ' + f, this.formBar, `<img src="assets/icons/${FORM_ICONS[f]}.svg" alt=""><span>${FORM_NAMES[f]}</span><kbd>${keyLabel(input.binds['form' + (i + 1)])}</kbd>`);
+        btn.type = 'button'; btn.dataset.action = 'form' + (i + 1);
+        btn.setAttribute('aria-label', '千机伞·' + FORM_NAMES[f]);
       });
       this.setForm(p.form);
     }

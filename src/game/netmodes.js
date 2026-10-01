@@ -266,9 +266,7 @@ export class NetGuestDuel {
     if (input.consume('lockon', 200)) this.game.toggleLock();
     if (!presses.length && this.sendT < 16) return;
     this.sendT = 0;
-    let mx = 0, my = 0;
-    if (input.held('forward')) my += 1; if (input.held('back')) my -= 1;
-    if (input.held('left')) mx -= 1; if (input.held('right')) mx += 1;
+    const [mx, my] = input.moveAxes();
     const g = this.game;
     this.net.relay({ k: 'in', mx, my, yaw: +g.viewYaw.toFixed(4), pitch: +g.viewPitch.toFixed(4), guard: input.held('special') ? 1 : 0, atk: input.held('attack') ? 1 : 0, p: presses });
     const p = this.player; if (p) { const cp = Math.cos(g.viewPitch); p.aimDir.set(Math.sin(g.viewYaw) * cp, Math.sin(g.viewPitch), Math.cos(g.viewYaw) * cp); }

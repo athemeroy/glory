@@ -82,6 +82,7 @@ EffectComposer：主画面 RenderPass → 第一人称手臂层 OverlayPass（�
 - `fpseq.py`、`tour.py`：`?manual=1` 下用 `game.debugAdvance(sec)` 确定性推进并截图（tour 在 Mini 真 GPU 1080p 跑）。
 - `balance.py`：12 账号两两对战矩阵（Mini 上 6 页并行，约 10 分钟）。
 - `nettest.py`：两页联机冒烟测试。`skin-test.html`：精模蒙皮姿势检查。`model-preview.html`：程序化姿势三视图。
+- `mobiletest.py URL`：真实多点触摸、摇杆与技能、长按 / 松手、镜前换装、暂停 / 恢复、横竖屏与安全区域、键鼠回归、联机来宾输入；手动推进模拟和渲染。可用 `--metal`（Mini）或 `--cdp URL` 复用支持 WebGL 的 Chromium。
 
 ## 动捕角色（src/game/mocap.js）
 - `assets/models/rigged/<clsId>.glb`：Tripo P1 模型经 Meshy 绑骨（24 骨：Hips、Spine/Spine01/Spine02、neck、Head、Left/Right Shoulder/Arm/ForeArm/Hand、UpLeg/Leg/Foot/ToeBase），Armature 缩放 0.01。`manifest.json` 列出可用角色。

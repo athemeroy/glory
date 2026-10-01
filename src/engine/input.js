@@ -1,4 +1,4 @@
-// 键鼠输入：指针锁定、可重绑定键位、输入缓冲、APM 统计
+// 键鼠与触控输入：指针锁定、可重绑定键位、输入缓冲、APM 统计
 import { store } from './util.js';
 
 export const DEFAULT_BINDS = {
@@ -32,14 +32,40 @@ class Input {
     this.binds = { ...DEFAULT_BINDS, ...store.get('binds', {}) };
     this.down = new Set();
     this.pressedAt = new Map(); // code -> performance.now()
+    this.touchDown = new Set();
+    this.touchPressedAt = new Map();
+    this.touchMove = [0, 0];
+    this.touchMode = matchMedia('(pointer: coarse)').matches;
     this.mouseDX = 0; this.mouseDY = 0;
     this.locked = false;
-    this.enabled = false; // 游戏中才接收
+    this._enabled = false; // 游戏中才接收
     this.actionTimes = [];
     this.onEscape = null;
     this.onKey = null; // 调试/界面钩子
     this.captureNext = null; // 重绑定时捕获下一个按键
     this.canvas = null;
+  }
+
+  get enabled() { return this._enabled; }
+  set enabled(on) {
+    this._enabled = on;
+    if (!on) this.clear();
+    this.onEnabledChange?.();
+  }
+  setTouchMode(on) {
+    if (this.touchMode === on) return;
+    this.touchMode = on;
+    if (on && this.locked) this.unlock();
+    this.onTouchModeChange?.();
+  }
+  resetTouch() {
+    this.touchDown.clear(); this.touchPressedAt.clear();
+    this.touchMove = [0, 0];
+  }
+  clear() {
+    this.down.clear(); this.pressedAt.clear(); this.resetTouch();
+    this.mouseDX = 0; this.mouseDY = 0;
+    this.onReset?.();
   }
 
   attach(canvas) {
@@ -60,10 +86,11 @@ class Input {
     const ku = (e) => { this.down.delete(e.code); if (this.onKey) this.onKey(e.code, false, e); };
     window.addEventListener('keydown', kd);
     window.addEventListener('keyup', ku);
-    window.addEventListener('blur', () => this.down.clear());
+    window.addEventListener('blur', () => this.clear());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) this.clear(); });
     canvas.addEventListener('mousedown', (e) => {
       if (this.captureNext) { const cb = this.captureNext; this.captureNext = null; cb('Mouse' + e.button); e.preventDefault(); return; }
-      if (!this.enabled) return;
+      if (!this.enabled || (this.touchMode && e.sourceCapabilities?.firesTouchEvents)) return;
       if (!this.locked && !this.fallbackLook) { this.lock(); return; }
       this._press('Mouse' + e.button);
     });
@@ -87,7 +114,7 @@ class Input {
 
   // gesture=true 表示由用户点击触发；只有点击触发仍失败（如沙箱 iframe）才退回拖拽转视角
   lock(gesture = true) {
-    if (!this.canvas || this.locked) return;
+    if (this.touchMode || !this.canvas || this.locked) return;
     this._gesture = gesture;
     const fail = () => { if (this._gesture) { this.fallbackLook = true; if (this.onLockFail) this.onLockFail(); } else if (this.onLockNeeded) this.onLockNeeded(); };
     if (!this.canvas.requestPointerLock) { fail(); return; }
@@ -115,9 +142,26 @@ class Input {
   simPress(action) { const c = this.binds[action]; if (c) this._press(c); }
   simHold(action, on) { const c = this.binds[action]; if (!c) return; if (on) this.down.add(c); else this.down.delete(c); }
 
-  held(action) { return this.down.has(this.binds[action]); }
+  // 触控按动作存储，改键和键盘同时按住时也不会互相释放。
+  touchHold(action, on) {
+    if (on) {
+      if (!this.enabled || this.touchDown.has(action)) return;
+      this.touchDown.add(action);
+      const now = performance.now();
+      this.touchPressedAt.set(action, now); this.actionTimes.push(now);
+    } else if (!this.touchDown.delete(action)) return;
+    this.onKey?.(this.binds[action], on);
+  }
+  held(action) { return this.down.has(this.binds[action]) || this.touchDown.has(action); }
+  moveAxes() {
+    const x = this.touchMove[0] + Number(this.held('right')) - Number(this.held('left'));
+    const y = this.touchMove[1] + Number(this.held('forward')) - Number(this.held('back'));
+    return [Math.max(-1, Math.min(1, x)), Math.max(-1, Math.min(1, y))];
+  }
   // 在 windowMs 内按下过（输入缓冲），消费后清除
   consume(action, windowMs = 120) {
+    const touchTime = this.touchPressedAt.get(action);
+    if (touchTime !== undefined && performance.now() - touchTime <= windowMs) { this.touchPressedAt.delete(action); return true; }
     const code = this.binds[action];
     const t = this.pressedAt.get(code);
     if (t !== undefined && performance.now() - t <= windowMs) { this.pressedAt.delete(code); return true; }
@@ -125,7 +169,8 @@ class Input {
   }
   peek(action, windowMs = 120) {
     const t = this.pressedAt.get(this.binds[action]);
-    return t !== undefined && performance.now() - t <= windowMs;
+    const tt = this.touchPressedAt.get(action);
+    return (t !== undefined && performance.now() - t <= windowMs) || (tt !== undefined && performance.now() - tt <= windowMs);
   }
   takeMouse() { const d = [this.mouseDX, this.mouseDY]; this.mouseDX = 0; this.mouseDY = 0; return d; }
 

@@ -27,7 +27,7 @@ export class Game {
   constructor(canvas, hud) {
     this.canvas = canvas;
     this.hud = hud;
-    this.settings = { ...SETTINGS_DEFAULT, ...store.get('settings', {}) };
+    this.settings = { ...SETTINGS_DEFAULT, ...(input.touchMode ? { quality: 'low' } : {}), ...store.get('settings', {}) };
     const hi = this.settings.quality === 'high';
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: hi, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, hi ? 1.5 : 1));
@@ -493,11 +493,7 @@ export class Game {
     p.pitch = this.viewPitch;
     const cp = Math.cos(p.pitch);
     p.aimDir.set(Math.sin(p.yaw) * cp, Math.sin(p.pitch), Math.cos(p.yaw) * cp).normalize();
-    let mx = 0, my = 0;
-    if (input.held('forward')) my += 1;
-    if (input.held('back')) my -= 1;
-    if (input.held('left')) mx -= 1;
-    if (input.held('right')) mx += 1;
+    const [mx, my] = input.moveAxes();
     p.moveInput.set(mx, my);
     p.wantGuard = input.held('special');
     if (input.consume('jump', 150)) {

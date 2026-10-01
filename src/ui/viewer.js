@@ -39,10 +39,10 @@ export class CharViewer {
     this.holder = new THREE.Group(); this.scene.add(this.holder);
     this.rot = 0.4; this.drag = null; this.t = 0; this.demoT = 3;
     const cvs = this.r.domElement;
-    this.onDown = (e) => { this.drag = e.clientX; };
-    this.onMove = (e) => { if (this.drag !== null) { this.rot += (e.clientX - this.drag) * 0.01; this.drag = e.clientX; } };
-    this.onUp = () => { this.drag = null; };
-    cvs.addEventListener('pointerdown', this.onDown); window.addEventListener('pointermove', this.onMove); window.addEventListener('pointerup', this.onUp);
+    this.onDown = (e) => { this.drag = e.clientX; this.dragPointer = e.pointerId; };
+    this.onMove = (e) => { if (this.drag !== null && e.pointerId === this.dragPointer) { this.rot += (e.clientX - this.drag) * 0.01; this.drag = e.clientX; } };
+    this.onUp = (e) => { if (e.pointerId === this.dragPointer) this.drag = null; };
+    cvs.addEventListener('pointerdown', this.onDown); window.addEventListener('pointermove', this.onMove); window.addEventListener('pointerup', this.onUp); window.addEventListener('pointercancel', this.onUp);
     this.running = true;
     this.last = performance.now();
     const loop = () => { if (!this.running) return; requestAnimationFrame(loop); this.frame(); };
@@ -124,7 +124,7 @@ export class CharViewer {
 
   dispose() {
     this.running = false;
-    window.removeEventListener('pointermove', this.onMove); window.removeEventListener('pointerup', this.onUp);
+    window.removeEventListener('pointermove', this.onMove); window.removeEventListener('pointerup', this.onUp); window.removeEventListener('pointercancel', this.onUp);
     this.r.domElement.removeEventListener('pointerdown', this.onDown);
     this.r.domElement.remove();
   }

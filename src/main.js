@@ -2,6 +2,7 @@
 import { Game } from './game/game.js';
 import { HUD } from './ui/hud.js';
 import { Menu } from './ui/menu.js';
+import { TouchControls } from './ui/touch.js';
 import { MODES, AttractMode } from './game/modes.js';
 import { NetHostDuel, NetGuestDuel } from './game/netmodes.js';
 import { net } from './engine/net.js';
@@ -23,7 +24,7 @@ class App {
     this.menu = new Menu(document.getElementById('menu'), this);
     input.attach(this.canvas);
     input.onLockChange = (locked) => {
-      if (!locked && this.mode && this.modeId !== 'attract' && !this.game.paused && !this.inWardrobe && !this.mode.over && !input.fallbackLook) this.pause();
+      if (!locked && !input.touchMode && this.mode && this.modeId !== 'attract' && !this.game.paused && !this.inWardrobe && !this.mode.over && !input.fallbackLook) this.pause();
     };
     input.onLockNeeded = () => this.showClickPlay();
     input.onLockFail = () => { if (!this._lockWarned) { this._lockWarned = true; this.hud.toast('无法锁定鼠标：按住右键拖动或用方向键转视角'); } };
@@ -37,6 +38,7 @@ class App {
       if (code === input.binds.stats) this.hud.showStats(down, this.game);
       if (down && code === input.binds.view) this.game.toggleView();
     };
+    this.touch = new TouchControls(this);
     this.game.start();
     this.game.preload();
     this.menu.title();
@@ -75,23 +77,30 @@ class App {
   }
 
   firstTimeHelp() {
-    if (store.get('seenHelp', false) || this.modeId === 'attract' || new URLSearchParams(location.search).get('auto')) return;
-    store.set('seenHelp', true);
+    const helpKey = input.touchMode ? 'seenTouchHelp' : 'seenHelp';
+    if (store.get(helpKey, false) || this.modeId === 'attract' || new URLSearchParams(location.search).get('auto')) return;
+    store.set(helpKey, true);
     const b = input.binds; const k = (x) => keyLabel(b[x]);
     const el = document.createElement('div');
     el.className = 'quick-help';
-    el.innerHTML = `<h3>操作速览</h3>
+    el.innerHTML = input.touchMode ? `<h3>触屏操作</h3>
+      <p>左下摇杆移动 · 在画面空白处拖动视角</p>
+      <p>右下点按技能，普攻长按蓄力 / 连射，格挡或瞄准长按保持。</p>
+      <p>跳跃可受身，闪避躲攻击；顶部可暂停、切视角和查看数据。</p>
+      <small>横屏操作更舒适 · 轻触此提示关闭</small>` : `<h3>操作速览</h3>
       <p><kbd>${k('forward')}${k('left')}${k('back')}${k('right')}</kbd> 移动　鼠标 视角　<kbd>${k('attack')}</kbd> 普攻（连按三段）　<kbd>${k('special')}</kbd> 格挡/瞄准</p>
       <p><kbd>${k('s1')}</kbd><kbd>${k('s2')}</kbd><kbd>${k('s3')}</kbd><kbd>${k('s4')}</kbd><kbd>${k('s5')}</kbd><kbd>${k('s6')}</kbd> 技能　<kbd>${k('ult')}</kbd> 大招　<kbd>${k('dash')}</kbd> 闪避　<kbd>${k('jump')}</kbd> 跳跃 / 被击飞时受身</p>
       <p><kbd>${k('lockon')}</kbd> 锁定目标　<kbd>${k('view')}</kbd> 切换视角　<kbd>Tab</kbd> 数据　<kbd>Esc</kbd> 暂停</p>
       <small>挑空 → 空中追击 → 击倒，是荣耀连段的基本套路。按任意键关闭</small>`;
     document.body.appendChild(el);
     const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), 400); window.removeEventListener('keydown', close); };
+    if (input.touchMode) el.addEventListener('pointerdown', (e) => { e.stopPropagation(); close(); });
     setTimeout(close, 9000);
     setTimeout(() => window.addEventListener('keydown', close), 800);
   }
 
   endMode() {
+    input.enabled = false;
     document.body.classList.remove('attract');
     this.hideClickPlay();
     if (this.mode) { this.mode.over = true; this.mode.dispose(); }
@@ -110,7 +119,7 @@ class App {
 
   // 需要用户点击才能锁定鼠标时显示的遮罩
   showClickPlay(onGo) {
-    if (input.locked || input.fallbackLook || !this.mode || this.modeId === 'attract' || new URLSearchParams(location.search).get('auto')) { if (onGo) onGo(); return; }
+    if (input.touchMode || input.locked || input.fallbackLook || !this.mode || this.modeId === 'attract' || new URLSearchParams(location.search).get('auto')) { if (onGo) onGo(); return; }
     let el = document.getElementById('clickplay');
     if (!el) {
       el = document.createElement('div'); el.id = 'clickplay';
@@ -137,7 +146,7 @@ class App {
     input.enabled = true;
     const go = () => { this.game.paused = false; this.game.last = performance.now(); };
     // 通过按钮点击继续：这是用户手势，可以直接锁定；通过 Esc 继续则需要再点一次画面
-    if (input.locked || input.fallbackLook) { go(); return; }
+    if (input.touchMode || input.locked || input.fallbackLook) { go(); return; }
     this.game.paused = true;
     this.showClickPlay(go);
   }

@@ -159,7 +159,7 @@ export class TrainingMode extends BaseMode {
     const mz = this.mirrorZone;
     let prompt = '';
     if (mz && Math.hypot(p.pos.x - mz.center[0], p.pos.z - mz.center[1]) < mz.radius + 0.6) {
-      prompt = '<kbd>G</kbd> 照镜子 · 换装';
+      prompt = input.touchMode ? '点击左侧“换装”照镜子' : '<kbd>G</kbd> 照镜子 · 换装';
       if (input.consume('interact', 200)) { this.goal('mirror'); this.app.openWardrobe(); }
     }
     this.hud.setPrompt(prompt);
