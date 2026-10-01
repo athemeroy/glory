@@ -1,0 +1,56 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查整张网格的新增拉伸…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+import { repairClothWeights } from '../src/game/cloth.js';
+import { repairAttachmentWeights } from '../src/game/attachment.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+import { CLASSES } from '../src/data/classes.js';
+import { MOBS } from '../src/data/enemies.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const point=new THREE.Vector3();
+function positions(body){
+  body.model.updateMatrixWorld(true);const mesh=body.meshes[0];
+  mesh.updateWorldMatrix(true,false);mesh.skeleton.update();
+  const out=new Float32Array(mesh.geometry.attributes.position.count*3);
+  for(let i=0;i<out.length/3;i++)mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld).toArray(out,i*3);
+  return out;
+}
+const distance=(array,a,b)=>Math.hypot(array[a*3]-array[b*3],array[a*3+1]-array[b*3+1],array[a*3+2]-array[b*3+2]);
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');const loader=new GLTFLoader();
+  const classes=new URLSearchParams(location.search).get('classes')?.split(',')||['berserker','warlock','frostcaster','cleric'];
+  for(const cls of classes){
+    const source=(await loader.loadAsync(`../assets/models/rigged/${cls}.glb`)).scene,C=CLASSES[cls]||MOBS[cls];
+    const before=createMocapBody(source);repairClothWeights(before,cls);
+    if(cls==='skeleton')repairAttachmentWeights(before,cls);
+    source.userData.gloryClass=cls;const after=createMocapBody(source),reference=positions(before),index=before.meshes[0].geometry.index,edges=[],seen=new Set();
+    for(let i=0;i<index.count;i+=3)for(const [a,b]of [[index.getX(i),index.getX(i+1)],[index.getX(i+1),index.getX(i+2)],[index.getX(i+2),index.getX(i)]]){
+      const key=Math.min(a,b)+':'+Math.max(a,b);if(seen.has(key))continue;seen.add(key);
+      const rest=distance(reference,a,b);if(rest>=.005)edges.push({a,b,rest});
+    }
+    const pairs=[before,after].map(body=>{const rig=buildCharacter(C.look),proc=new Animator(rig);proc.breath=0;return {body,rig,proc,anim:new MocapAnimator(body,rig)}});
+    for(const pose of ['stance','run','attack','overhead','down']){
+      const state={speed:pose==='run'?5.6:0,fwd:1,onGround:true,stance:C.stance,pitch:0,react:pose==='down'?{type:'down',t:.8,dur:1}:null,action:pose==='attack'?{clip:C.chain?.[0]?.anim||'slash1',stage:'active',t:.65,key:'proof'}:pose==='overhead'?{clip:'jumpslam',stage:'wind',t:1,key:'proof'}:null};
+      for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,state);pair.anim.update(1/60,state)}
+      const original=positions(before),fixed=positions(after),regressions=[];let maxBefore=1,maxAfter=1,stretchedBefore=0,stretchedAfter=0;
+      for(const edge of edges){
+        const oldLength=distance(original,edge.a,edge.b),newLength=distance(fixed,edge.a,edge.b);
+        maxBefore=Math.max(maxBefore,oldLength/edge.rest);maxAfter=Math.max(maxAfter,newLength/edge.rest);
+        if(oldLength/edge.rest>1.8)stretchedBefore++;if(newLength/edge.rest>1.8)stretchedAfter++;
+        // 独立比较每条边，防止最大尖刺修好后在修复边界生成新的可见裂口。
+        if(newLength>oldLength+.10&&newLength>edge.rest*1.8)regressions.push({...edge,before:oldLength,after:newLength,delta:newLength-oldLength,restA:Array.from(reference.slice(edge.a*3,edge.a*3+3)),restB:Array.from(reference.slice(edge.b*3,edge.b*3+3))});
+      }
+      regressions.sort((a,b)=>b.delta-a.delta);
+      const metric={cls,pose,edges:edges.length,maxBefore,maxAfter,stretchedBefore,stretchedAfter,newSpikes:regressions.length,worstNew:regressions.slice(0,10)};__metrics.push(metric);
+      if(regressions.length)__errors.push(`${cls} ${pose}: ${regressions.length}条新增>10cm拉伸边`);
+      else __results.push(`${cls} ${pose}: 整张网格无新增>10cm拉伸边`);
+    }
+    for(const pair of pairs){pair.anim.mixer.stopAllAction();disposeRig({root:pair.body.model},{sharedRoots:[source]});disposeRig(pair.rig)}
+  }
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

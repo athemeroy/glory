@@ -40,7 +40,7 @@ try {
     source.userData.gloryClass=cls;
     const integrated=createMocapBody(source);
     check(integrated.cloth?.changed===fixed.cloth.changed,cls+': 真实 createMocapBody 入口覆盖布面修复');
-    for(let i=0;i<fixedSI.count;i++)if(corrected.userData.clothStrength[i]>0)for(let k=0;k<4;k++) {
+    for(let i=0;i<fixedSI.count;i++)if(corrected.userData.clothStrength[i]>0&&!integrated.meshes[0].userData.attachmentComponent?.[i])for(let k=0;k<4;k++) {
       if(integrated.meshes[0].geometry.attributes.skinIndex.getComponent(i,k)!==fixedSI.getComponent(i,k)||integrated.meshes[0].geometry.attributes.skinWeight.getComponent(i,k)!==fixedSW.getComponent(i,k))throw Error(cls+': 其他修复影响布面绑定 '+i);
     }
     const ba=new MocapAnimator(baseline),fa=new MocapAnimator(fixed);

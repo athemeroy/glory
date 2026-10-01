@@ -103,8 +103,10 @@ export class Game {
     const hf = this.settings.fov * DEG * zoom * (this.firstPerson || !this.player ? 1 : 0.84);
     const vf = 2 * Math.atan(Math.tan(hf / 2) / this.aspect) / DEG;
     this.camera.fov = vf; this.camera.aspect = this.aspect; this.camera.updateProjectionMatrix();
-    // 手臂层：固定竖直视野，保证不同 FOV 下手臂大小一致
-    this.vmCamera.fov = 60; this.vmCamera.aspect = this.aspect; this.vmCamera.updateProjectionMatrix();
+    // 宽屏固定竖直视野；窄屏保留至少62°水平取景，双手与重武器不会挤出画面。
+    // 不随世界 FOV/瞄准缩放，保持武器大小稳定。
+    this.vmCamera.fov = Math.max(60, 2 * Math.atan(Math.tan(31 * DEG) / this.aspect) / DEG);
+    this.vmCamera.aspect = this.aspect; this.vmCamera.updateProjectionMatrix();
     this._renderDirty = true;
   }
 

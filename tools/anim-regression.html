@@ -40,6 +40,11 @@ try {
   check(Math.abs(first.cur.getEffectiveWeight() - 0.5) < 1e-5, '工具直接推进 mixer 也更新淡入权重');
   const body = createMocapBody(source), animator = new MocapAnimator(body);
   const idle = { onGround: true, speed: 0, calm: true };
+  // 缓存的片段默认 enabled=true；从未播放的起身动作不能参与站姿髋高。
+  const prewarmed = new MocapAnimator(createMocapBody(source)), fresh = new MocapAnimator(createMocapBody(source));
+  prewarmed.action('Stand_Up1');
+  prewarmed.update(0.3, idle); fresh.update(0.3, idle);
+  check(Math.abs(prewarmed.hips.position.y - fresh.hips.position.y) < 1e-6, '预载未播放的起身动作不污染站姿髋高');
   animator.update(0.3, idle);
   animator.update(0.05, { ...idle, guard: true });
   const pose = new Map(Object.entries(body.bones).map(([n, b]) => [n, b.quaternion.clone()]));

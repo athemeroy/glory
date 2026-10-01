@@ -6,6 +6,7 @@ import { Brain } from './ai.js';
 import { input } from '../engine/input.js';
 import { audio } from '../engine/audio.js';
 import { fmtTime, rand, pick, store } from '../engine/util.js';
+import { ModeTimers } from './mode-timers.js';
 
 const ROUND_TIME = 180;
 
@@ -27,6 +28,7 @@ class BaseMode {
     this.app = app; this.game = app.game; this.hud = app.hud; this.opts = opts;
     this.t = 0; this.phase = 'intro'; this.phaseT = 0;
     this.over = false;
+    this.timers = new ModeTimers(() => this.app.mode === this);
   }
   spawnHero(acc, team, spawn, isPlayer, diff) {
     const cls = accountCls(acc);
@@ -42,16 +44,16 @@ class BaseMode {
     let n = 3;
     const step = () => {
       if (this.over) return;
-      if (n > 0) { this.hud.bigCenter(String(n), '', 0.9, 'count'); audio.play('countdown'); this.game.voice('cd' + n); n--; setTimeout(step, 800); }
+      if (n > 0) { this.hud.bigCenter(String(n), '', 0.9, 'count'); audio.play('countdown'); this.game.voice('cd' + n); n--; this.timers.after(step, 800); }
       else { this.hud.bigCenter('开始', '', 0.8, 'go'); audio.play('round_start'); this.game.voice('go'); this.freeze(false); input.resetApm(); then && then(); }
     };
-    setTimeout(step, 400);
+    this.timers.after(step, 400);
   }
   finish(result) {
     if (this.over) return;
     this.over = true;
     this.freeze(true);
-    setTimeout(() => this.app.showResults(result), 2200);
+    this.timers.after(() => this.app.showResults(result), 2200);
   }
   resetFighter(f, spawn) {
     f.resetState();
@@ -63,7 +65,7 @@ class BaseMode {
   frame() {}
   onDeath() {}
   onHit() {}
-  dispose() {}
+  dispose() { this.timers.clear(); }
 }
 
 // ---------------- 训练场 ----------------
@@ -131,12 +133,12 @@ export class TrainingMode extends BaseMode {
   onDeath(f) {
     if (f === this.player) {
       this.hud.bigCenter('重伤', '3 秒后在训练室复活', 2);
-      setTimeout(() => { if (!this.over) { this.resetFighter(this.player, this.game.level.spawns.player); } }, 2500);
+      this.timers.after(() => { if (!this.over) { this.resetFighter(this.player, this.game.level.spawns.player); } }, 2500);
     } else if (f === this.sparring) {
       this.hud.bigCenter('胜利', `击败陪练「${f.name}」`, 1.6, 'go');
       this.goal('spar');
       audio.play('victory');
-      setTimeout(() => { if (this.sparring === f) this.resetFighter(f, [this.player.pos.x + 6, 0, this.player.pos.z, 0]); }, 3000);
+      this.timers.after(() => { if (this.sparring === f) this.resetFighter(f, [this.player.pos.x + 6, 0, this.player.pos.z, 0]); }, 3000);
     }
   }
   tick(dt) {
@@ -193,7 +195,7 @@ export class DuelMode extends BaseMode {
     this.t = ROUND_TIME;
     this.roundOver = false;
     this.hud.announce(`第 ${this.round} 局`, 'ally', 1.4);
-    setTimeout(() => this.game.voice(this.round >= 3 ? 'round3' : 'round' + this.round), 150);
+    this.timers.after(() => this.game.voice(this.round >= 3 ? 'round3' : 'round' + this.round), 150);
     if (this.round === 1) this.game.startCinematic([this.player, this.enemy], 2.7);
     this.countdown();
   }
@@ -220,11 +222,11 @@ export class DuelMode extends BaseMode {
     audio.play(winner === 0 ? 'victory' : 'defeat');
     if (!w.dead) w.cheer = true;
     const final = this.wins[winner] >= 2;
-    setTimeout(() => this.game.voice(final ? (winner === 0 ? 'win' : 'lose') : (winner === 0 ? 'roundwin' : 'roundlose')), 500);
+    this.timers.after(() => this.game.voice(final ? (winner === 0 ? 'win' : 'lose') : (winner === 0 ? 'roundwin' : 'roundlose')), 500);
     if (final) {
       this.finish({ win: winner === 0, title: winner === 0 ? '个人赛胜利' : '个人赛失败', sub: `${this.wins[0]} : ${this.wins[1]}`, fighters: [this.player, this.enemy], mode: 'duel' });
     } else {
-      setTimeout(() => { if (!this.over) { this.round++; this.startRound(); } }, 2600);
+      this.timers.after(() => { if (!this.over) { this.round++; this.startRound(); } }, 2600);
     }
   }
 }
@@ -287,15 +289,15 @@ export class RelayMode extends BaseMode {
     audio.play(aLost ? 'defeat' : 'victory');
     if (this.ia >= this.teamA.length || this.ib >= this.teamB.length) {
       const win = this.ib >= this.teamB.length;
-      setTimeout(() => this.game.voice(win ? 'win' : 'lose'), 500);
+      this.timers.after(() => this.game.voice(win ? 'win' : 'lose'), 500);
       this.finish({ win, title: win ? '擂台赛胜利' : '擂台赛失败', sub: `剩余 ${this.teamA.length - this.ia} : ${this.teamB.length - this.ib}`, fighters: [this.a, this.b], mode: 'relay' });
-    } else setTimeout(() => { if (!this.over) this.nextBout(); }, 2800);
+    } else this.timers.after(() => { if (!this.over) this.nextBout(); }, 2800);
   }
 }
 
 // ---------------- 团队赛 3v3 ----------------
 export class TeamMode extends BaseMode {
-  dispose() { this.game.spectate = null; }
+  dispose() { super.dispose(); this.game.spectate = null; }
   start() {
     const g = this.game;
     const L = g.loadLevel('arena');
@@ -453,7 +455,7 @@ export class DungeonMode extends BaseMode {
     // 关门锁场：落在门外的队友拉进来
     const gz = this.L.markers.gate ? this.L.markers.gate.pos[2] : 11.5;
     for (const m of this.party) if (m !== this.player && m.alive && m.pos.z > gz - 1) { m.pos.set(m.pos.x * 0.5, 0, gz - 2); }
-    setTimeout(() => { if (!this.over && this.L.closeGate) this.L.closeGate(); }, 1500);
+    this.timers.after(() => { if (!this.over && this.L.closeGate) this.L.closeGate(); }, 1500);
     this.game.shake(f.pos, 0.8);
   }
   enterPhase2() {
@@ -511,7 +513,7 @@ export class DungeonMode extends BaseMode {
       this.deaths++;
       if (this.party.some((m) => m.alive && m !== this.player)) {
         this.hud.bigCenter('重伤倒地', '5 秒后在队友身边复活', 2.5, 'lose');
-        setTimeout(() => {
+        this.timers.after(() => {
           if (this.over) return;
           const mate = this.party.find((m) => m.alive && m !== this.player);
           if (!mate) { this.failRun(); return; }
@@ -548,7 +550,7 @@ export class AttractMode extends BaseMode {
     for (const f of this.fs) if (f.hp < f.maxHp * 0.25 && !f.dead) f.hp += f.maxHp * 0.002; // 拉长表演
   }
   onDeath() {}
-  dispose() { this.game.cinematic = null; this.game.camera.layers.disable(1); }
+  dispose() { super.dispose(); this.game.cinematic = null; this.game.camera.layers.disable(1); }
 }
 
 export const MODES = { training: TrainingMode, duel: DuelMode, relay: RelayMode, team: TeamMode, dungeon: DungeonMode };

@@ -13,6 +13,7 @@ let clipLibPromise = null;
 const hipsY = new Map();   // 片段名 -> {times, ys}
 const sourceRest = new Map();
 const bodyClipCaches = new WeakMap();
+const pitchAxis = new THREE.Vector3(1, 0, 0);
 let refHipY = 1;           // 购买动作所用模型的站立髋高（片段单位）
 function sampleHip(name, t) {
   const h = hipsY.get(name); if (!h) return refHipY;
@@ -339,6 +340,16 @@ class StanceArms {
     this.v1 = new THREE.Vector3(); this.v2 = new THREE.Vector3(); this.v3 = new THREE.Vector3(); this.v4 = new THREE.Vector3();
     this.q1 = new THREE.Quaternion(); this.q2 = new THREE.Quaternion(); this.q3 = new THREE.Quaternion();
   }
+  swing(bone, child, from, to, weight) {
+    const { v1, v2, v3, v4, q1, q2, q3 } = this;
+    child.getWorldPosition(v1).sub(bone.getWorldPosition(v2)).normalize();
+    to.getWorldPosition(v3).sub(from.getWorldPosition(v4)).normalize();
+    q1.setFromUnitVectors(v1, v3);
+    bone.getWorldQuaternion(q2).premultiply(q1);
+    bone.parent.getWorldQuaternion(q3).invert();
+    bone.quaternion.slerp(q3.multiply(q2), weight);
+    bone.updateMatrixWorld(true);
+  }
   update(dt, st) {
     const shooting = /^(pistol|cannon|umbrella_gun)$/.test(st.stance || '') && /^(shoot|shoot2|shootUp|cannon)$/.test(st.action?.clip || '');
     const active = HYBRID_STANCES.has(st.stance) && (shooting || (st.onGround && !st.action)) && !st.react && !st.dash && !st.guard;
@@ -353,19 +364,10 @@ class StanceArms {
       this.spine.quaternion.slerp(q2.multiply(q1), w);
       this.spine.updateMatrixWorld(true);
     }
-    const swing = (bone, child, from, to) => {
-      child.getWorldPosition(v1).sub(bone.getWorldPosition(v2)).normalize();
-      to.getWorldPosition(v3).sub(from.getWorldPosition(v4)).normalize();
-      q1.setFromUnitVectors(v1, v3);
-      bone.getWorldQuaternion(q2).premultiply(q1);
-      bone.parent.getWorldQuaternion(q3).invert();
-      bone.quaternion.slerp(q3.multiply(q2), w);
-      bone.updateMatrixWorld(true);
-    };
     for (const chain of this.chains) {
       const { arm, fore, hand, sh, el, ha, grip, handFrame, mount, mountRest } = chain;
       if (w) {
-        swing(arm, fore, sh, el); swing(fore, hand, el, ha);
+        this.swing(arm, fore, sh, el, w); this.swing(fore, hand, el, ha, w);
         ha.getWorldQuaternion(q1).multiply(handFrame);
         hand.parent.getWorldQuaternion(q2).invert();
         hand.quaternion.slerp(q2.multiply(q1), w);
@@ -516,9 +518,10 @@ export class MocapAnimator {
     if (this.hips && this.hipRest && this.cur) {
       // 与旋转使用同一套交叉淡入权重，避免切换动作时身体瞬间上下跳。
       let offset = 0;
-      for (const [name, action] of this.actions) {
-        if (!action.enabled) continue;
-        offset += (sampleHip(name, action.time) - refHipY) * action.getEffectiveWeight();
+      for (const action of this.actions.values()) {
+        if (!action.isScheduled() || !action.enabled) continue;
+        const weight = action.getEffectiveWeight(); if (!weight) continue;
+        offset += (sampleHip(action.getClip().name, action.time) - refHipY) * weight;
       }
       const k = this.hipRest.y / (refHipY || 1);
       this.hips.position.set(this.hipRest.x, this.hipRest.y + offset * k, this.hipRest.z);
@@ -526,7 +529,7 @@ export class MocapAnimator {
     if (this.groundFeet) this.groundFeet.update(dt, st);
     // 视线俯仰带动上身
     if (this.spine && st.pitch && !r) {
-      this.pitchQ.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -st.pitch * 0.6);
+      this.pitchQ.setFromAxisAngle(pitchAxis, -st.pitch * 0.6);
       this.spine.quaternion.multiply(this.pitchQ);
     }
     if (this.stanceArms) this.stanceArms.update(dt, st);

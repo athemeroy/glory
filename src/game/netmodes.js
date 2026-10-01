@@ -5,6 +5,7 @@ import { CLASSES } from '../data/classes.js';
 import { input } from '../engine/input.js';
 import { audio } from '../engine/audio.js';
 import { fmtTime, store, uid } from '../engine/util.js';
+import { ModeTimers } from './mode-timers.js';
 
 const SNAP_MS = 33;
 const PRESS_ACTIONS = ['jump', 'dash', 'attack', 's1', 's2', 's3', 's4', 's5', 's6', 'ult', 'form1', 'form2', 'form3', 'form4'];
@@ -89,7 +90,7 @@ export class NetHostDuel extends DuelMode {
       this.net.on('close', () => this.peerLost()),
     ];
     this.lastInT = performance.now();
-    if (this.net.peerGone || !this.net.connected) setTimeout(() => this.peerLost(), 500);
+    if (this.net.peerGone || !this.net.connected) this.timers.after(() => this.peerLost(), 500);
     this.net.relay({ k: 'go', level: this.L.id || 'courtyard', host: { acc: this.opts.account.id, id: this.player.id }, guest: { acc: this.opts.enemy.id, id: this.enemy.id } });
   }
   peerLost() {
@@ -142,12 +143,12 @@ export class NetHostDuel extends DuelMode {
     this.net.relay({ k: 'end', res: { win: !result.win, title: result.win ? '个人赛失败' : '个人赛胜利', sub: result.sub } });
     super.finish(result);
   }
-  dispose() { if (this.uninstall) this.uninstall(); for (const o of this.offs || []) o(); }
+  dispose() { super.dispose(); if (this.uninstall) this.uninstall(); for (const o of this.offs || []) o(); }
 }
 
 // ======================= 客机 =======================
 export class NetGuestDuel {
-  constructor(app, opts) { this.app = app; this.game = app.game; this.hud = app.hud; this.opts = opts; this.net = opts.net; this.over = false; this.snaps = []; this.puppets = new Map(); this.projs = new Map(); this.sendT = 0; this.lastYr = 0; }
+  constructor(app, opts) { this.app = app; this.game = app.game; this.hud = app.hud; this.opts = opts; this.net = opts.net; this.over = false; this.snaps = []; this.puppets = new Map(); this.projs = new Map(); this.sendT = 0; this.lastYr = 0; this.timers = new ModeTimers(() => this.app.mode === this); }
   start() {
     const g = this.game, o = this.opts;
     const L = g.loadLevel(o.level || 'courtyard');
@@ -162,7 +163,7 @@ export class NetGuestDuel {
     this.offs = [
       this.net.on('relay', (d) => {
         if (d.k === 'snap') { d.rt = performance.now(); this.snaps.push(d); if (this.snaps.length > 30) this.snaps.shift(); this.replay(d.ev || []); }
-        else if (d.k === 'end') { this.over = true; setTimeout(() => this.app.showResults({ ...d.res, fighters: [this.player, this.enemy], mode: 'net' }), 2200); }
+        else if (d.k === 'end' && !this.over) { this.over = true; this.timers.after(() => this.app.showResults({ ...d.res, fighters: [this.player, this.enemy], mode: 'net' }), 2200); }
       }),
       this.net.on('left', () => this.hostLost()),
       this.net.on('close', () => this.hostLost()),
@@ -181,7 +182,7 @@ export class NetGuestDuel {
     if (this.over) return;
     this.over = true;
     this.hud.bigCenter('主机已离开', '', 2.5, 'lose');
-    setTimeout(() => this.app.showResults({ win: true, title: '对手离线', sub: '对局结束', fighters: [this.player, this.enemy], mode: 'net' }), 2000);
+    this.timers.after(() => this.app.showResults({ win: true, title: '对手离线', sub: '对局结束', fighters: [this.player, this.enemy], mode: 'net' }), 2000);
   }
   lookup(id) { return this.puppets.get(id) || null; }
   replay(evs) {
@@ -278,5 +279,5 @@ export class NetGuestDuel {
   }
   onDeath() {}
   onHit() {}
-  dispose() { this.game.netGuest = false; for (const o of this.offs || []) o(); for (const [, m] of this.projs) m.removeFromParent(); this.projs.clear(); }
+  dispose() { this.timers.clear(); this.game.netGuest = false; for (const o of this.offs || []) o(); for (const [, m] of this.projs) m.removeFromParent(); this.projs.clear(); }
 }

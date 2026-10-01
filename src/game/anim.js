@@ -82,20 +82,13 @@ export class Animator {
   constructor(rig) {
     this.rig = rig;
     this.cur = {};
-    for (const b of BONES) this.cur[b] = [0, 0, 0];
+    this.target = {};
+    for (const b of BONES) { this.cur[b] = [0, 0, 0]; this.target[b] = [0, 0, 0]; }
     this.cur.gripR[0] = 90; this.cur.gripL[0] = 90;
     this.body = { bodyY: 0, bodyRX: 0, bodyRZ: 0, bodyRY: 0, bodyZ: 0 };
-    this.phase = 0; // 跑步相位
-    this.breath = Math.random() * 10;
-    this.spinOffset = 0;
-  }
-
-  // st: { speed, fwd, side, onGround, vy, stance, action:{clip, stage:'wind'|'active'|'recover', t}, react:{type, t, dur}, pitch, guard, time }
-  update(dt, st) {
-    const T = {}; for (const b of BONES) T[b] = [0, 0, 0];
-    T.gripR[0] = 90; T.gripL[0] = 90; // 握点默认：武器指向手掌前方
-    const B = { bodyY: 0, bodyRX: 0, bodyRZ: 0, bodyRY: 0, bodyZ: 0 };
-    const set = (pose, w = 1) => {
+    this.targetBody = { bodyY: 0, bodyRX: 0, bodyRZ: 0, bodyRY: 0, bodyZ: 0 };
+    const T = this.target, B = this.targetBody;
+    this.setPose = (pose, w = 1) => {
       if (!pose) return;
       for (const k in pose) {
         const v = pose[k];
@@ -104,6 +97,17 @@ export class Animator {
         t[0] = lerp(t[0], v[0], w); t[1] = lerp(t[1], v[1], w); t[2] = lerp(t[2], v[2], w);
       }
     };
+    this.phase = 0; // 跑步相位
+    this.breath = Math.random() * 10;
+    this.spinOffset = 0;
+  }
+
+  // st: { speed, fwd, side, onGround, vy, stance, action:{clip, stage:'wind'|'active'|'recover', t}, react:{type, t, dur}, pitch, guard, time }
+  update(dt, st) {
+    const T = this.target, B = this.targetBody, set = this.setPose;
+    for (const b of BONES) T[b][0] = T[b][1] = T[b][2] = 0;
+    for (const k of BODY_KEYS) B[k] = 0;
+    T.gripR[0] = 90; T.gripL[0] = 90; // 握点默认：武器指向手掌前方
     this.breath += dt;
 
     // ---- 下半身：移动循环 ----

@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><div id="hud"></div><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { HUD } from '../src/ui/hud.js';
+import { Fighter } from '../src/game/fighter.js';
+import { CLASSES } from '../src/data/classes.js';
+window.__errors=[];window.__results=[];
+const check=(value,label)=>{if(!value)throw Error(label);__results.push(label)};
+try {
+  const hud=new HUD(document.querySelector('#hud'));
+  const game={scene:new THREE.Scene(),camera:new THREE.PerspectiveCamera(),settings:{crosshair:true},fighters:[],world:{raycast:()=>({fighter:null})},firstPerson:true};
+  const player=new Fighter(game,{cls:CLASSES.swordmaster,clsId:'swordmaster',name:'本局玩家',team:1}),enemy=new Fighter(game,{cls:CLASSES.battlemage,clsId:'battlemage',name:'上局对手',team:2});
+  game.player=player;game.fighters=[player,enemy];hud.bindPlayer(player);hud.show(true);
+  game.world.raycast=()=>({fighter:enemy});hud.update(1/60,game);
+  check(hud.targetBox.style.display==='block'&&hud._aimT===enemy,'准星目标在当前战斗正常显示');
+  game.fighters=[player];game.world.raycast=()=>({fighter:null});hud.update(1/60,game);
+  check(hud.targetBox.style.display==='none'&&hud._aimT===null,'守擂换对手后不保留已移除角色的目标框');game.fighters=[player,enemy];
+  game.world.raycast=()=>({fighter:null});hud.bindPlayer(player);hud.update(1/60,game);
+  check(hud.targetBox.style.display==='none'&&hud._aimT===null,'更换玩家后不显示旧准星目标');
+  hud.setTeams([player],[enemy]);hud.update(1/60,game);const rows=hud.teamBox.innerHTML;
+  hud.setTeams([player],[enemy]);hud.update(1/60,game);
+  check(rows.length>0&&hud.teamBox.innerHTML===rows,'相同队伍重复绑定后重新显示队友栏');
+  player.hp=player.maxHp*.25;hud.bindPlayer(player);hud.update(1/60,game);
+  check(Math.abs(hud._hpLag-.25)<1e-6,'新玩家生命条不继承上个玩家的延迟血量');
+  hud.floatText(player.pos,'旧伤害','dmg');const float=hud.floats[0].e;
+  hud._aimT=enemy;hud._aimKeep=2;hud.dirFrom=enemy.pos.clone();hud.dirT=1;hud.hurtT=.5;
+  hud.combo(3,120);hud.toast('上一局提示');hud.announce('上一局公告');hud.bigCenter('上一局结束');hud.showStats(true,game);
+  hud.resetBattle();
+  check(hud.player===null&&hud._aimT===null&&hud._aimKeep===0&&hud.allies===null&&hud.enemies===null&&hud.dirFrom===null,'退出后释放旧玩家、目标、队伍与受击来源');
+  check(hud.floats.length===0&&float.style.display==='none'&&hud.pool.includes(float)&&hud.plates.size===0&&hud.teamBox.innerHTML==='','旧伤害飘字回收且角色名牌与队友栏清空');
+  check([hud.comboBox,hud.toastBox,hud.announceBox,hud.center].every(node=>!node.classList.contains('show'))&&hud.stats.style.display==='none'&&hud.targetBox.style.display==='none'&&hud.dirBox.style.opacity==='0','新战斗没有上一局连击、公告、结算或受击遮罩');
+  const pooled=hud.pool.length;hud.resetBattle();check(hud.pool.length===pooled,'重复退出不重复回收飘字');
+  player.dispose();enemy.dispose();
+  document.querySelector('#result').textContent=__results.join('\n');
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

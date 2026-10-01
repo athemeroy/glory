@@ -139,10 +139,7 @@ class App {
     this.game.lockTarget = null;
     this.game.inputFrozen = false; this.game.aiFrozen = false;
     this.hud.show(false);
-    this.hud.setBoss(null);
-    this.hud.setGoals(null);
-    for (const [, e] of this.hud.plates) e.remove(); this.hud.plates.clear();
-    this.hud.showStats(false, this.game);
+    this.hud.resetBattle();
   }
 
   // 需要用户点击才能锁定鼠标时显示的遮罩

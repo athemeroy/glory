@@ -54,7 +54,7 @@ try {
   splitForFirstPerson(fixed);const splitGeometry=fixed.meshes.find(mesh=>mesh.geometry.attributes.skinWeight===skinWeight).geometry;let retained=false;splitGeometry.addEventListener('dispose',()=>{retained=!Object.values(splitGeometry.attributes).includes(skinWeight)});
   disposeRig({root:fixed.model},{sharedRoots:[source]});check(cachedDisposed===0&&retained&&splitGeometry.attributes.skinWeight===skinWeight,'释放实例保护头饰缓存及共享蒙皮缓冲');
   disposeRig({root:baseline.model},{sharedRoots:[source]});disposeRig({root:shared.model},{sharedRoots:[source]});
-  const unrelated=(await loader.loadAsync('../assets/models/rigged/berserker.glb')).scene;unrelated.userData.gloryClass='berserker';const other=createMocapBody(unrelated);check(!other.attachment&&!repairAttachmentWeights(other,'berserker'),'其他职业不会进入头饰专用修复');disposeRig({root:other.model},{sharedRoots:[unrelated]});
+  const unrelated=(await loader.loadAsync('../assets/models/rigged/swordmaster.glb')).scene;unrelated.userData.gloryClass='swordmaster';const other=createMocapBody(unrelated);check(!other.attachment&&!repairAttachmentWeights(other,'swordmaster'),'未审计职业不会进入服饰专用修复');disposeRig({root:other.model},{sharedRoots:[unrelated]});
   document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
 }catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
 window.__ready=true;

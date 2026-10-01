@@ -1,0 +1,45 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { MODES, AttractMode } from '../src/game/modes.js';
+import { NetHostDuel, NetGuestDuel } from '../src/game/netmodes.js';
+window.__errors=[];window.__results=[];
+const check=(value,label)=>{if(!value)throw Error(label);__results.push(label)};
+const nativeSet=window.setTimeout,nativeClear=window.clearTimeout;
+let now=0,next=1;const pending=new Map();
+window.setTimeout=(callback,delay)=>{const id=next++;pending.set(id,{callback,time:now+delay});return id};
+window.clearTimeout=id=>pending.delete(id);
+const advance=duration=>{
+  const end=now+duration;
+  while(true){const due=[...pending].filter(([,task])=>task.time<=end).sort((a,b)=>a[1].time-b[1].time)[0];if(!due)break;pending.delete(due[0]);now=due[1].time;due[1].callback()}
+  now=end;
+};
+const app=()=>({game:{fighters:[],camera:new THREE.Camera(),voice(){},loadLevel:()=>({spawns:{}})},hud:{bigCenter(){},bindPlayer(){},setTeams(){},setBoss(){},setHint(){}},results:[],showResults(result){this.results.push(result)}});
+try {
+  for(const [name,Mode] of Object.entries({...MODES,attract:AttractMode,nethost:NetHostDuel})) {
+    const owner=app(),mode=new Mode(owner,{net:{relay(){}}});owner.mode=mode;
+    mode.finish({title:'旧局结算'});mode.dispose();owner.mode={};advance(3000);
+    check(owner.results.length===0&&mode.timers.pending.size===0,name+': 退出取消旧局结算与延迟任务');
+  }
+  const owner=app(),normal=new MODES.duel(owner,{});owner.mode=normal;normal.finish({title:'本局结算'});advance(2200);
+  check(owner.results.length===1&&owner.results[0].title==='本局结算','当前已结束对局仍按时显示结算');normal.dispose();
+  const staleOwner=app(),stale=new MODES.duel(staleOwner,{});staleOwner.mode=stale;stale.finish({title:'已替换'});staleOwner.mode={};advance(2200);
+  check(staleOwner.results.length===0,'模式已替换时旧回调不能覆盖新模式');stale.dispose();
+  const countdownOwner=app(),countdown=new MODES.duel(countdownOwner,{});countdownOwner.mode=countdown;let calls=0,done=false;
+  countdownOwner.hud.bigCenter=()=>calls++;countdown.countdown(()=>done=true);advance(2800);
+  check(done&&calls===4&&!countdownOwner.game.inputFrozen,'有效模式完整播放倒计时并解除输入冻结');countdown.dispose();
+  const cancelledOwner=app(),cancelled=new MODES.duel(cancelledOwner,{});cancelledOwner.mode=cancelled;let notices=0;
+  cancelledOwner.hud.bigCenter=()=>notices++;cancelled.countdown();cancelled.dispose();advance(5000);
+  check(notices===0,'退出后倒计时不再弹出或解除新局冻结');
+  const guestOwner=app(),handlers=new Map(),net={on(name,callback){handlers.set(name,callback);return()=>handlers.delete(name)}};
+  const guest=new NetGuestDuel(guestOwner,{net,hostAcc:{},guestAcc:{}});guestOwner.mode=guest;guest.spawnPuppet=()=>({});guest.start();
+  handlers.get('relay')({k:'end',res:{title:'联机结算'}});handlers.get('relay')({k:'end',res:{title:'重复结算'}});advance(2200);
+  check(guestOwner.results.length===1&&guestOwner.results[0].title==='联机结算','重复联机结束消息只结算一次');guest.dispose();
+  const lostOwner=app(),lost=new NetGuestDuel(lostOwner,{net:{}});lostOwner.mode=lost;lost.hostLost();lost.dispose();lostOwner.mode={};advance(3000);
+  check(lostOwner.results.length===0&&lost.timers.pending.size===0,'联机退出取消离线结算');
+  check(pending.size===0,'所有模式测试结束后无遗留计时器');
+  document.querySelector('#result').textContent=__results.join('\n');
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+finally{window.setTimeout=nativeSet;window.clearTimeout=nativeClear}
+window.__ready=true;
+</script></body></html>

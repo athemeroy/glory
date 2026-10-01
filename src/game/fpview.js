@@ -11,7 +11,7 @@ import { TwoBoneIK } from './ik.js';
 export const FP_LAYER = 2;
 
 // 离镜头过近的片元直接丢弃（半条前臂贴脸时不露断口），带抖动过渡
-function nearFade(mat, near = 0.42, band = 0.06) {
+function nearFade(mat, near = 0.42, band = 0.025) {
   const m = mat.clone();
   m.side = THREE.DoubleSide;
   m.onBeforeCompile = (sh) => {
@@ -19,7 +19,7 @@ function nearFade(mat, near = 0.42, band = 0.06) {
       { float d = vViewPosition.z; float h = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
         if (d < ${near.toFixed(3)} + ${band.toFixed(3)} * h) discard; }`);
   };
-  m.customProgramCacheKey = () => 'fpNearFade';
+  m.customProgramCacheKey = () => `fpNearFade:${near}:${band}`;
   return m;
 }
 const ARM_BONES = ['shL', 'elL', 'haL', 'shR', 'elR', 'haR', 'gripR', 'gripL'];
@@ -151,7 +151,7 @@ export class FPView {
         keep.push(idx[t], idx[t + 1], idx[t + 2]);
       }
       g.setIndex(keep);
-      m.material = nearFade(m.material);
+      m.material = Array.isArray(m.material) ? m.material.map(material => nearFade(material)) : nearFade(m.material);
     }
     for (const p of this.rig.parts) p.visible = false;
     for (const p of this.rig.procParts || []) p.visible = false;

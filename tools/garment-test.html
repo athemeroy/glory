@@ -1,0 +1,84 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator, splitForFirstPerson } from '../src/game/mocap.js';
+import { repairClothWeights } from '../src/game/cloth.js';
+import { disposeRig } from '../src/game/model.js';
+import { CLASSES } from '../src/data/classes.js';
+import { MOBS } from '../src/data/enemies.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,label)=>{if(!ok)throw Error(label);__results.push(label)};
+const weights=geometry=>Array.from({length:geometry.attributes.skinIndex.count*4},(_,i)=>[geometry.attributes.skinIndex.getComponent(Math.floor(i/4),i%4),geometry.attributes.skinWeight.getComponent(Math.floor(i/4),i%4)]);
+const point=(mesh,i)=>mesh.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(mesh.matrixWorld);
+const update=(body,anim,state)=>{for(let i=0;i<60;i++)anim.update(1/60,state);body.model.updateMatrixWorld(true);for(const mesh of body.meshes)mesh.skeleton.update()};
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');const loader=new GLTFLoader();
+  for(const cls of ['berserker','warlock','frostcaster']) {
+    const source=(await loader.loadAsync(`../assets/models/rigged/${cls}.glb`)).scene;
+    let sourceMesh;source.traverse(object=>{if(object.isSkinnedMesh&&!sourceMesh)sourceMesh=object});const sourceGeometry=sourceMesh.geometry,original=JSON.stringify(weights(sourceGeometry));
+    const baseline=createMocapBody(source);repairClothWeights(baseline,cls);
+    source.userData.gloryClass=cls;const fixed=createMocapBody(source),before=baseline.meshes[0],after=fixed.meshes[0],si=before.geometry.attributes.skinIndex,sw=before.geometry.attributes.skinWeight,ai=after.geometry.attributes.skinIndex,aw=after.geometry.attributes.skinWeight,mask=after.userData.attachmentComponent;
+    const expected=cls==='berserker'?294:cls==='warlock'?855:fixed.attachment?.targetVertices;
+    check(cls==='frostcaster'?expected>1000&&expected<4000:fixed.attachment?.targetVertices===expected,cls+': 只识别已审计服饰区域');
+    check(sourceMesh.geometry===sourceGeometry&&JSON.stringify(weights(sourceGeometry))===original,cls+': GLB源geometry与权重不变');
+    let protectedVertices=0,invalid=0,bindError=0;const names=after.skeleton.bones.map(bone=>bone.name),bindPositions=[],segments=[];
+    if(cls==='frostcaster')for(const side of ['Left','Right'])for(const [a,b]of [['Arm','ForeArm'],['ForeArm','Hand'],['UpLeg','Leg'],['Leg','Foot'],['Foot','ToeBase']]) {
+      const start=baseline.bones[side+a],end=baseline.bones[side+b];if(start&&end)segments.push(new THREE.Line3(start.getWorldPosition(new THREE.Vector3()),end.getWorldPosition(new THREE.Vector3())));
+    }
+    let protectedNear=0;const nearest=new THREE.Vector3(),nearBody=new Uint8Array(ai.count);
+    before.skeleton.update();after.skeleton.update();
+    for(let i=0;i<ai.count;i++) {
+      let sum=0;
+      for(let k=0;k<4;k++) {
+        const weight=aw.getComponent(i,k),index=ai.getComponent(i,k);sum+=weight;
+        if(!Number.isFinite(weight)||weight<0||index>=names.length)invalid++;
+        if(!mask[i]&&(index!==si.getComponent(i,k)||weight!==sw.getComponent(i,k)))throw Error(cls+': 非目标component改变 '+i);
+        if(mask[i]&&after.userData.attachmentStrength[i]>=.999999&&weight>0&&!['Hips','Spine','Spine02'].includes(names[index]))throw Error(cls+': 布片仍受头或交叉腿骨牵拉 '+i);
+      }
+      if(Math.abs(sum-1)>1e-5)invalid++;
+      if(!mask[i])protectedVertices++;
+      const originalPoint=point(before,i);bindPositions.push(originalPoint);bindError=Math.max(bindError,originalPoint.distanceTo(point(after,i)));
+      if(cls==='frostcaster') {
+        let distance=Infinity;for(const segment of segments){segment.closestPointToPoint(originalPoint,true,nearest);distance=Math.min(distance,originalPoint.distanceTo(nearest));}
+        if(distance<=.13)nearBody[i]=1;
+        if(originalPoint.y>baseline.bones.Hips.getWorldPosition(nearest).y+.02&&mask[i])throw Error('frostcaster: 头袖区域被误当下袍 '+i);
+      }
+    }
+    check(invalid===0,cls+': 权重归一化且仅由腰身骨驱动目标片');
+    check(protectedVertices===ai.count-expected,cls+': 真实头、手、肘、膝、脚及全部非目标片逐项保持原绑定');
+    check(bindError<1e-5,cls+': 绑定形状不变');
+    if(cls==='frostcaster') {
+      // 最低点位于实际腿脚组件；独立验证该整片保护，防止把靴子误当袍摆。
+      const cells=new Map(),parent=[],welded=bindPositions.map(p=>{const key=[p.x,p.y,p.z].map(v=>Math.round(v/.00005)).join(',');let id=cells.get(key);if(id===undefined){id=parent.length;parent.push(id);cells.set(key,id)}return id});
+      const root=id=>{while(parent[id]!==id){parent[id]=parent[parent[id]];id=parent[id]}return id};
+      const index=before.geometry.index;for(let i=0;i<index.count;i+=3){const a=root(welded[index.getX(i)]),b=root(welded[index.getX(i+1)]),c=root(welded[index.getX(i+2)]);parent[b]=a;parent[c]=a}
+      const floor=bindPositions.reduce((best,p,i)=>p.y<bindPositions[best].y?i:best,0),footRoot=root(welded[floor]),robeRoot=root(welded[13172]);let feet=0;
+      for(let i=0;i<welded.length;i++) {
+        const component=root(welded[i]);
+        if(component===footRoot){feet++;if(mask[i])throw Error('frostcaster: 实际腿脚连通片被改变 '+i)}
+        if(nearBody[i]&&component!==robeRoot){protectedNear++;if(mask[i])throw Error('frostcaster: 真人关节保护区被改变 '+i)}
+      }
+      check(feet===2647,'frostcaster: 整个2647顶点真实腿脚片保持原绑定');
+      check(protectedNear>2000,'frostcaster: 非外袍13cm人体肢段逐顶点完全保护');
+    }
+    const shared=createMocapBody(source);check(shared.meshes[0].geometry===after.geometry,cls+': 服饰修复缓存只读复用');
+    const edges=cls==='berserker'?[[1572,1561],[1663,1662]]:cls==='warlock'?[[611,612]]:[[13172,13191],[20,1],[13283,13188]],rest=new Map(edges.map(([a,b])=>[a,point(before,a).distanceTo(point(before,b))])),ba=new MocapAnimator(baseline),fa=new MocapAnimator(fixed);
+    for(const pose of ['stance','run','attack','overhead','down']) {
+      const state={speed:pose==='run'?5.6:0,fwd:1,onGround:true,stance:(CLASSES[cls]||MOBS[cls]).stance,pitch:0,react:pose==='down'?{type:'down',t:.8,dur:1}:null,action:pose==='attack'?{clip:'slash1',stage:'active',t:.65,key:'proof'}:pose==='overhead'?{clip:'jumpslam',stage:'wind',t:1,key:'proof'}:null};
+      update(baseline,ba,state);update(fixed,fa,state);
+      for(const [a,b]of edges) {
+        const beforeLength=point(before,a).distanceTo(point(before,b)),afterLength=point(after,a).distanceTo(point(after,b)),restLength=rest.get(a);
+        __metrics.push({cls,pose,a,b,rest:restLength,before:beforeLength,after:afterLength,improvement:beforeLength/afterLength});
+        check(afterLength<restLength*1.10,cls+': '+pose+' 挂布边恢复绑定长度');
+      }
+    }
+    ba.mixer.stopAllAction();fa.mixer.stopAllAction();const geo=after.geometry,skinWeight=geo.attributes.skinWeight;let disposed=0;geo.addEventListener('dispose',()=>disposed++);
+    splitForFirstPerson(fixed);const splitGeometry=fixed.meshes.find(mesh=>mesh.geometry.attributes.skinWeight===skinWeight).geometry;let retained=false;splitGeometry.addEventListener('dispose',()=>{retained=!Object.values(splitGeometry.attributes).includes(skinWeight)});
+    disposeRig({root:fixed.model},{sharedRoots:[source]});check(disposed===0&&retained&&splitGeometry.attributes.skinWeight===skinWeight,cls+': 释放实例保护缓存与共享GPU缓冲');
+    disposeRig({root:baseline.model},{sharedRoots:[source]});disposeRig({root:shared.model},{sharedRoots:[source]});
+  }
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

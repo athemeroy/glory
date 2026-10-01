@@ -27,8 +27,16 @@ parser.add_argument('--probes',default='',help='Comma-separated class:vertex-a:v
 parser.add_argument('--check-pages',default='',help='Comma-separated test HTML pages exposing __ready and __errors')
 parser.add_argument('--app-check',action='store_true',help='Verify the actual default asset-loading game path on desktop and phone')
 parser.add_argument('--app-accounts',default='yysf',help='Comma-separated real training accounts; two-handed accounts also verify world/FP grips and mirror rendering')
+parser.add_argument('--framing-check',action='store_true',help='Snapshot real first-person weapons at phone portrait and landscape sizes with screen projection metrics')
+parser.add_argument('--fade-check',action='store_true',help='Compare runtime-only first-person arm nearFade thresholds and count visible/dither mask pixels on Mini')
+parser.add_argument('--mode-check',action='store_true',help='Verify real battle result cancellation, repeated team HUD and relay/training transitions')
+parser.add_argument('--cpu-benchmark',type=Path,help='Run a pure CPU page.evaluate function in the DOM regression page, without creating a WebGL renderer')
+parser.add_argument('--benchmark-before',type=Path,help='JSON of prior source modules passed to the CPU benchmark')
 parser.add_argument('--mobile-check',action='store_true',help='Run the existing touch, menu and desktop input regression through the same temporary server')
 args=parser.parse_args()
+if args.cpu_benchmark:
+    if args.app_check or args.framing_check or args.fade_check or args.mode_check or args.mobile_check:parser.error('CPU benchmark cannot be combined with GPU or input checks')
+    args.classes=args.samples=args.probes=''
 server=None
 if args.serve:
     class QuietHandler(SimpleHTTPRequestHandler):
@@ -50,8 +58,15 @@ with sync_playwright() as pw:
     page=context.new_page()
     page.on('pageerror',lambda error: errors.append(str(error)))
     try:
-        page.goto(args.url.rstrip('/')+'/tools/model-audit.html',wait_until='networkidle',timeout=90000)
+        initial='/tools/anim-regression.html' if args.cpu_benchmark else '/tools/model-audit.html'
+        page.goto(args.url.rstrip('/')+initial,wait_until='networkidle',timeout=90000)
         page.wait_for_function('window.__ready',timeout=90000,polling=100)
+        if args.cpu_benchmark:
+            if not args.benchmark_before:parser.error('--cpu-benchmark requires --benchmark-before')
+            result=page.evaluate(args.cpu_benchmark.read_text(),json.loads(args.benchmark_before.read_text()))
+            checks.append({'page':'animation-cpu-benchmark',**result})
+            (output/'benchmark.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
+            print('BENCHMARK',json.dumps(result),flush=True)
         for cls in filter(None,args.classes.split(',')):
             for pose in filter(None,args.poses.split(',')):
                 result=page.evaluate('([c,p])=>__audit(c,p)',[cls,pose])
@@ -106,7 +121,7 @@ with sync_playwright() as pw:
                           };
                           return {rigged:g.rigged.size,cls:p.clsId,mocap:!!p.mocap,fp:!!p.fp?.mc,quality:g.settings.quality,...__appGrips(),errors:window.__errs||[]};
                         }''')
-                        checks.append({'page':f'app-{label}-{account}',**result});errors.extend(result['errors'])
+                        errors.extend(result['errors'])
                         assert result['rigged']==15 and result['mocap'] and result['fp'] and result['finiteBones'],result
                         if result['worldGripDistance'] is not None:
                             assert result['worldGripDistance']<.02 and result['weaponGripDistance']<.001 and result['fpGripDistance']<.02,result
@@ -123,9 +138,158 @@ with sync_playwright() as pw:
                           return {draws,width:target.width,height:target.height,...__appGrips()};
                         }''')
                         assert result['mirror']['draws']>0 and result['mirror']['finiteBones'] and result['mirror']['maxBoneLengthChange']<1e-5,result['mirror']
+                        checks.append({'page':f'app-{label}-{account}',**result})
                         game_page.screenshot(path=str(output/f'app-{label}-{account}-mirror.png'))
                         print('CHECK',label,account,json.dumps(result),flush=True)
                     finally:game_context.close()
+        if args.framing_check:
+            for orientation,viewport in [('portrait',{'width':390,'height':844}),('landscape',{'width':844,'height':390})]:
+                for account in filter(None,args.app_accounts.split(',')):
+                    game_context=browser.new_context(viewport=viewport,is_mobile=True,has_touch=True,device_scale_factor=1)
+                    game_context.add_init_script('window.requestAnimationFrame=()=>0; Element.prototype.requestPointerLock=()=>Promise.resolve()')
+                    game_page=game_context.new_page();game_page.on('pageerror',lambda error:errors.append(str(error)))
+                    try:
+                        game_page.goto(args.url.rstrip('/')+f'/?auto=training&acc={account}&manual=1&noenv=1',wait_until='networkidle',timeout=120000)
+                        game_page.wait_for_function('window.__glory?.game.player?.fp?.mc',timeout=90000,polling=100)
+                        result=game_page.evaluate('''async()=>{
+                          const {Vector3}=await import('/vendor/three.module.js'),g=__glory.game,p=g.player;g.setViewMode('fp');g.debugAdvance(3);
+                          const camera=g.vmCamera;camera.updateWorldMatrix(true,false);
+                          const projection=o=>{if(!o)return null;const ndc=o.getWorldPosition(new Vector3()).project(camera);return {ndc:ndc.toArray(),screen:[(ndc.x+1)*innerWidth/2,(1-ndc.y)*innerHeight/2],inside:Math.abs(ndc.x)<=1&&Math.abs(ndc.y)<=1&&Math.abs(ndc.z)<=1}};
+                          const projectedBounds=root=>{
+                            const min=[Infinity,Infinity],max=[-Infinity,-Infinity],point=new Vector3();let vertices=0,inside=0,behind=0;
+                            root.traverse(mesh=>{if(!mesh.isMesh||!mesh.visible)return;if(mesh.skeleton)mesh.skeleton.update();const position=mesh.geometry.attributes.position;
+                              for(let i=0;i<position.count;i++){
+                                if(mesh.isSkinnedMesh)mesh.getVertexPosition(i,point);else point.fromBufferAttribute(position,i);
+                                point.applyMatrix4(mesh.matrixWorld).project(camera);if(point.z>1){behind++;continue;}
+                                vertices++;if(Math.abs(point.x)<=1&&Math.abs(point.y)<=1)inside++;
+                                min[0]=Math.min(min[0],point.x);min[1]=Math.min(min[1],point.y);max[0]=Math.max(max[0],point.x);max[1]=Math.max(max[1],point.y);
+                              }
+                            });return {min,max,vertices,behind,insideFraction:vertices?inside/vertices:null};
+                          };
+                          const reticle=document.querySelector('.crosshair'),rect=reticle.getBoundingClientRect();
+                          return {cls:p.clsId,rigged:g.rigged.size,viewport:[innerWidth,innerHeight],vmCamera:{fov:camera.fov,aspect:camera.aspect},worldCamera:{fov:g.camera.fov,aspect:g.camera.aspect},
+                            right:{origin:projection(p.fp.weapon.obj),tip:projection(p.fp.weapon.tip),bounds:projectedBounds(p.fp.weapon.obj)},
+                            left:p.fp.left?{origin:projection(p.fp.left),tip:projection(p.fp.left.userData.muzzle),bounds:projectedBounds(p.fp.left)}:null,
+                            hands:p.fp.gripHands.map(h=>projectedBounds(h.root)),reticle:{visible:getComputedStyle(reticle).display!=='none',center:[rect.x+rect.width/2,rect.y+rect.height/2]},errors:window.__errs||[]};
+                        }''')
+                        checks.append({'page':f'framing-{orientation}-{account}',**result});errors.extend(result['errors'])
+                        game_page.screenshot(path=str(output/f'framing-{orientation}-{account}.png'))
+                        print('FRAMING',orientation,account,json.dumps(result),flush=True)
+                    finally:game_context.close()
+        if args.fade_check:
+            for account in filter(None,args.app_accounts.split(',')):
+                game_context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True,device_scale_factor=1)
+                game_context.add_init_script('window.requestAnimationFrame=()=>0; Element.prototype.requestPointerLock=()=>Promise.resolve()')
+                game_page=game_context.new_page();game_page.on('pageerror',lambda error:errors.append(str(error)))
+                try:
+                    game_page.goto(args.url.rstrip('/')+f'/?auto=training&acc={account}&manual=1&noenv=1',wait_until='networkidle',timeout=120000)
+                    game_page.wait_for_function('window.__glory?.game.player?.fp?.mc',timeout=90000,polling=100)
+                    game_page.evaluate('''()=>{const g=__glory.game;g.setViewMode('fp');g.debugAdvance(3)}''')
+                    for variant,near,band in [('baseline',.42,.06),('lower',.30,.06),('narrow',.42,.025),('lower-narrow',.30,.025)]:
+                        result=game_page.evaluate(r'''async({near,band})=>{
+                          const T=await import('/vendor/three.module.js'),g=__glory.game,p=g.player,r=g.renderer,camera=g.vmCamera;
+                          const materials=new Set(),all=[];p.fp.root.traverse(mesh=>{if(mesh.isMesh){all.push(mesh);for(const m of [].concat(mesh.material))if(m.customProgramCacheKey?.().startsWith('fpNearFade'))materials.add(m)}});
+                          if(!materials.size)throw Error('No production nearFade materials found');
+                          for(const m of materials){
+                            m.userData.qaOriginalCompile??=m.onBeforeCompile;
+                            const original=m.userData.qaOriginalCompile;
+                            m.onBeforeCompile=shader=>{original(shader);const old=shader.fragmentShader;
+                              const injected=/d < \d+\.\d{3} \+ \d+\.\d{3} \* h/;
+                              if(!injected.test(old))throw Error('nearFade shader injection not found');
+                              shader.fragmentShader=old.replace(injected,`d < ${near.toFixed(3)} + ${band.toFixed(3)} * h`);};
+                            m.customProgramCacheKey=()=>`fpNearFade-qa-${near}-${band}`;m.needsUpdate=true;
+                          }
+                          const savedMeshes=all.map(mesh=>({mesh,material:mesh.material,visible:mesh.visible}));
+                          const target=new T.WebGLRenderTarget(innerWidth,innerHeight,{depthBuffer:true});
+                          const mask=new T.ShaderMaterial({side:T.DoubleSide,toneMapped:false,uniforms:{near:{value:near},band:{value:band},mode:{value:0}},
+                            vertexShader:`#include <common>
+                              #include <skinning_pars_vertex>
+                              varying float qaDepth;
+                              void main(){
+                                #include <skinbase_vertex>
+                                #include <begin_vertex>
+                                #include <skinning_vertex>
+                                #include <project_vertex>
+                                qaDepth=-mvPosition.z;
+                              }`,
+                            fragmentShader:`uniform float near;uniform float band;uniform float mode;varying float qaDepth;
+                              void main(){
+                                if(mode<.5){gl_FragColor=vec4(1.);return;}
+                                if(mode<1.5){if(qaDepth<near)discard;gl_FragColor=qaDepth<near+band?vec4(1.,0.,0.,1.):vec4(0.,1.,0.,1.);return;}
+                                float h=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
+                                if(qaDepth<near+band*h)discard;gl_FragColor=vec4(1.);
+                              }`});
+                          const saved={target:r.getRenderTarget(),viewport:r.getViewport(new T.Vector4()),scissor:r.getScissor(new T.Vector4()),scissorTest:r.getScissorTest(),autoClear:r.autoClear,clear:r.getClearColor(new T.Color()).clone(),alpha:r.getClearAlpha(),background:g.scene.background};
+                          const pixels=new Uint8Array(innerWidth*innerHeight*4),counts={};
+                          try{
+                            for(const {mesh,material,visible} of savedMeshes){const faded=[].concat(material).some(m=>materials.has(m));mesh.visible=visible&&faded;if(faded)mesh.material=mask;}
+                            g.scene.background=null;r.autoClear=true;r.setClearColor(0,0);r.setRenderTarget(target);r.setViewport(0,0,innerWidth,innerHeight);r.setScissorTest(false);
+                            for(const [name,mode] of [['uncut',0],['regions',1],['visible',2]]){
+                              mask.uniforms.mode.value=mode;r.render(g.scene,camera);r.readRenderTargetPixels(target,0,0,innerWidth,innerHeight,pixels);
+                              let occupied=0,dither=0,opaque=0;for(let i=0;i<pixels.length;i+=4){if(pixels[i+3]>127){occupied++;if(pixels[i]>127&&pixels[i+1]<127)dither++;if(pixels[i]<127&&pixels[i+1]>127)opaque++;}}
+                              counts[name]={occupied,dither,opaque};
+                            }
+                          }finally{
+                            for(const {mesh,material,visible} of savedMeshes){mesh.material=material;mesh.visible=visible;}
+                            g.scene.background=saved.background;r.autoClear=saved.autoClear;r.setRenderTarget(saved.target);r.setViewport(saved.viewport);r.setScissor(saved.scissor);r.setScissorTest(saved.scissorTest);r.setClearColor(saved.clear,saved.alpha);target.dispose();mask.dispose();
+                          }
+                          g.render();
+                          return {cls:p.clsId,near,band,vmCamera:{fov:camera.fov,aspect:camera.aspect},maskResolution:[innerWidth,innerHeight],maskIsolation:'arms with weapons hidden',materials:materials.size,maskPixels:counts,
+                            visibleFraction:counts.visible.occupied/counts.uncut.occupied,ditherScreenFraction:counts.regions.dither/(innerWidth*innerHeight),errors:window.__errs||[]};
+                        }''',{'near':near,'band':band})
+                        checks.append({'page':f'fade-{account}-{variant}',**result});errors.extend(result['errors'])
+                        game_page.screenshot(path=str(output/f'fade-{account}-{variant}.png'))
+                        print('FADE',account,variant,json.dumps(result),flush=True)
+                finally:game_context.close()
+        if args.mode_check:
+            for label,mobile in [('desktop',False),('phone',True)]:
+                game_context=browser.new_context(viewport={'width':390 if mobile else 1280,'height':844 if mobile else 800},is_mobile=mobile,has_touch=mobile,device_scale_factor=1)
+                game_context.add_init_script('window.requestAnimationFrame=()=>0; Element.prototype.requestPointerLock=()=>Promise.resolve()')
+                game_page=game_context.new_page();game_page.on('pageerror',lambda error:errors.append(str(error)))
+                try:
+                    game_page.goto(args.url.rstrip('/')+'/?auto=training&acc=yysf&manual=1&noenv=1',wait_until='networkidle',timeout=120000)
+                    game_page.wait_for_function('window.__glory?.game.player?.mocap && !__glory._loadingMode',timeout=90000,polling=100)
+                    game_page.evaluate('''async()=>{
+                      const app=__glory,g=app.game,{ACCOUNTS}=await import('/src/data/classes.js');g.settings.attract=false;
+                      window.__modeOpts={account:ACCOUNTS.find(a=>a.id==='yysf'),enemy:ACCOUNTS.find(a=>a.id==='yqcy'),diff:'normal',
+                        teamA:['lt','myc','yyzq'].map(id=>ACCOUNTS.find(a=>a.id===id)),teamB:['yysf','dmgy','yqcy'].map(id=>ACCOUNTS.find(a=>a.id===id))};
+                      window.__resultCalls=[];const show=app.showResults.bind(app);app.showResults=result=>{__resultCalls.push(result.title);return show(result)};
+                      window.__modeState=()=>{if(g.level)g.debugAdvance(.05);return {mode:app.modeId,paused:g.paused,over:app.mode?.over,menu:app.menu.root.style.display,
+                        resultPage:!!document.querySelector('.results-screen'),resultCalls:[...__resultCalls],teamRows:app.hud.teamBox.innerHTML.length,
+                        allies:app.hud.allies?.length??null,enemies:app.hud.enemies?.length??null,target:app.hud._aimT?.name??null,
+                        fighters:g.fighters.length,inputFrozen:g.inputFrozen,finiteBones:g.fighters.every(f=>!f.mocapBody||Object.values(f.mocapBody.bones).every(b=>b.matrixWorld.elements.every(Number.isFinite))),
+                        errors:window.__errs||[]}};
+                    }''')
+                    def start_actual(mode):
+                        game_page.evaluate('mode=>__glory.startMode(mode,__modeOpts)',mode)
+                        game_page.wait_for_function('mode=>__glory.modeId===mode && __glory.mode && !__glory._loadingMode',arg=mode,polling=100,timeout=90000)
+                    rows={}
+                    start_actual('duel')
+                    rows['finalScheduled']=game_page.evaluate('''()=>{window.__oldFinal=__glory.mode;__oldFinal.wins[0]=1;__oldFinal.endRound(0,'QA');return {over:__oldFinal.over,pending:__oldFinal.timers.pending.size}}''')
+                    assert rows['finalScheduled']['over'] and rows['finalScheduled']['pending']>0,rows['finalScheduled']
+                    start_actual('training')
+                    game_page.wait_for_timeout(3000)
+                    rows['trainingAfterFinal']=game_page.evaluate('''()=>({...__modeState(),oldTimers:__oldFinal.timers.pending.size})''')
+                    state=rows['trainingAfterFinal']
+                    assert state['mode']=='training' and not state['paused'] and not state['resultPage'] and not state['resultCalls'] and state['oldTimers']==0 and state['menu']=='none' and not state['inputFrozen'],state
+                    game_page.screenshot(path=str(output/f'mode-{label}-training-after-final.png'))
+                    for key in ['teamFirst','teamRepeated']:
+                        start_actual('team');rows[key]=game_page.evaluate('__modeState()')
+                        state=rows[key];assert state['teamRows']>0 and state['allies']==3 and state['enemies']==3 and state['fighters']==6,state
+                    game_page.screenshot(path=str(output/f'mode-{label}-team-repeated.png'))
+                    game_page.evaluate('__glory.quit()');rows['quitAfterTeam']=game_page.evaluate('__modeState()')
+                    state=rows['quitAfterTeam'];assert state['teamRows']==0 and state['allies'] is None and state['enemies'] is None and state['target'] is None and state['fighters']==0,state
+                    start_actual('relay');rows['relayAfterTeam']=game_page.evaluate('__modeState()')
+                    state=rows['relayAfterTeam'];assert state['teamRows']==0 and state['allies'] is None and state['enemies'] is None and state['fighters']==2,state
+                    game_page.evaluate('window.__oldRelay=__glory.mode')
+                    start_actual('training');game_page.wait_for_timeout(3000)
+                    rows['trainingAfterRelay']=game_page.evaluate('''()=>({...__modeState(),oldTimers:__oldRelay.timers.pending.size})''')
+                    state=rows['trainingAfterRelay'];assert state['teamRows']==0 and state['allies'] is None and state['enemies'] is None and state['target'] is None and not state['resultPage'] and not state['resultCalls'] and state['oldTimers']==0 and not state['inputFrozen'],state
+                    for state in rows.values():
+                        assert state.get('finiteBones',True) and not state.get('errors'),state
+                    checks.append({'page':f'actual-mode-{label}','measurements':rows,'errors':[]})
+                    print('MODE',label,json.dumps(rows),flush=True)
+                finally:game_context.close()
         if args.mobile_check:
             subprocess.run([sys.executable,str(Path(__file__).resolve().with_name('mobiletest.py')),args.url,'--cdp',args.cdp,'--output',str(output/'mobile')],check=True)
             checks.append({'page':'tools/mobiletest.py','passed':True})

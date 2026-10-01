@@ -50,8 +50,20 @@ function bounds(body){
     for(let i=0;i<p.count;i++){m.getVertexPosition(i,v).applyMatrix4(m.matrixWorld);box.expandByPoint(v);}}
   return {min:box.min.toArray(),max:box.max.toArray(),size:box.getSize(v).toArray()};
 }
+function skinNormals(mesh){
+  const normal=mesh.geometry.attributes.normal;if(!normal)return null;
+  const result=new Float32Array(normal.count*3),si=mesh.geometry.attributes.skinIndex,sw=mesh.geometry.attributes.skinWeight;
+  const bound=new THREE.Vector4(),sum=new THREE.Vector4(),part=new THREE.Vector4(),bone=new THREE.Matrix4();
+  const worldNormal=new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld),point=new THREE.Vector3();
+  for(let i=0;i<normal.count;i++){
+    bound.set(normal.getX(i),normal.getY(i),normal.getZ(i),0).applyMatrix4(mesh.bindMatrix);sum.set(0,0,0,0);
+    for(let k=0;k<4;k++){const weight=sw.getComponent(i,k);if(!weight)continue;bone.fromArray(mesh.skeleton.boneMatrices,si.getComponent(i,k)*16);sum.add(part.copy(bound).applyMatrix4(bone).multiplyScalar(weight));}
+    sum.applyMatrix4(mesh.bindMatrixInverse);point.set(sum.x,sum.y,sum.z).applyMatrix3(worldNormal).normalize().toArray(result,i*3);
+  }
+  return result;
+}
 function bindMetrics(body){
-  const vertex=new THREE.Vector3(),restPositions=new Map();
+  const vertex=new THREE.Vector3(),restPositions=new Map(),restNormals=new Map();
   let vertices=0,invalidWeights=0,rigidVertices=0,triangles=0;
   for(const mesh of body.meshes){
     mesh.skeleton.update();const {position,skinIndex:si,skinWeight:sw}=mesh.geometry.attributes;
@@ -63,19 +75,28 @@ function bindMetrics(body){
       if(invalid||Math.abs(sum-1)>0.01)invalidWeights++;
       if(max>0.98)rigidVertices++;
     }
-    restPositions.set(mesh,rest);vertices+=position.count;triangles+=(mesh.geometry.index?.count||position.count)/3;
+    restPositions.set(mesh,rest);restNormals.set(mesh,skinNormals(mesh));vertices+=position.count;triangles+=(mesh.geometry.index?.count||position.count)/3;
   }
-  return {restPositions,vertices,invalidWeights,rigidVertices,triangles};
+  return {restPositions,restNormals,vertices,invalidWeights,rigidVertices,triangles};
 }
 function edgeMetrics(body,bind){
-  const vertex=new THREE.Vector3();let edges=0,stretched=0,collapsed=0,maxStretch=1,worst=null;
+  const vertex=new THREE.Vector3();let edges=0,stretched=0,collapsed=0,extremeEdges5=0,extremeEdges10=0,faces=0,bindFaceFlips=0,faceFlips=0,newFaceFlips=0,maxStretch=1,worst=null;
   for(const mesh of body.meshes){
     mesh.skeleton.update();const p=mesh.geometry.attributes.position,index=mesh.geometry.index;
-    const posed=new Float32Array(p.count*3),rest=bind.restPositions.get(mesh);
+    const posed=new Float32Array(p.count*3),rest=bind.restPositions.get(mesh),normals=skinNormals(mesh),restNormals=bind.restNormals.get(mesh);
     for(let i=0;i<p.count;i++){mesh.getVertexPosition(i,vertex).applyMatrix4(mesh.matrixWorld);vertex.toArray(posed,i*3);}
     const n=index?.count||p.count,at=i=>index?index.getX(i):i;
     const distance=(array,a,b)=>Math.hypot(array[a*3]-array[b*3],array[a*3+1]-array[b*3+1],array[a*3+2]-array[b*3+2]);
-    for(let i=0;i<n;i+=3)for(const [a,b] of [[at(i),at(i+1)],[at(i+1),at(i+2)],[at(i+2),at(i)]]){
+    const orientation=(positions,normals,a,b,c)=>{
+      if(!normals)return 0;
+      const ux=positions[b*3]-positions[a*3],uy=positions[b*3+1]-positions[a*3+1],uz=positions[b*3+2]-positions[a*3+2];
+      const vx=positions[c*3]-positions[a*3],vy=positions[c*3+1]-positions[a*3+1],vz=positions[c*3+2]-positions[a*3+2];
+      return (uy*vz-uz*vy)*(normals[a*3]+normals[b*3]+normals[c*3])+(uz*vx-ux*vz)*(normals[a*3+1]+normals[b*3+1]+normals[c*3+1])+(ux*vy-uy*vx)*(normals[a*3+2]+normals[b*3+2]+normals[c*3+2]);
+    };
+    for(let i=0;i<n;i+=3){
+      const a=at(i),b=at(i+1),c=at(i+2),before=orientation(rest,restNormals,a,b,c),after=orientation(posed,normals,a,b,c);faces++;
+      if(before< -1e-10)bindFaceFlips++;if(after< -1e-10){faceFlips++;if(before>= -1e-10)newFaceFlips++;}
+      for(const [a,b] of [[at(i),at(i+1)],[at(i+1),at(i+2)],[at(i+2),at(i)]]){
       const length=distance(rest,a,b);if(length<0.005)continue;
       const ratio=distance(posed,a,b)/length;edges++;
       if(ratio>maxStretch){
@@ -84,9 +105,11 @@ function edgeMetrics(body,bind){
         worst={mesh:mesh.name,vertexA:a,vertexB:b,length,posedLength:ratio*length,restA:Array.from(rest.slice(a*3,a*3+3)),restB:Array.from(rest.slice(b*3,b*3+3)),posedA:Array.from(posed.slice(a*3,a*3+3)),posedB:Array.from(posed.slice(b*3,b*3+3)),weightsA:influence(a),weightsB:influence(b)};
       }
       if(ratio>1.8)stretched++;if(ratio<0.4)collapsed++;
+      if(ratio>=5)extremeEdges5++;if(ratio>=10)extremeEdges10++;
+      }
     }
   }
-  return {edges,stretched,collapsed,maxStretch,worst};
+  return {edges,stretched,collapsed,extremeEdges5,extremeEdges10,faces,bindFaceFlips,faceFlips,newFaceFlips,maxStretch,worst};
 }
 function handMotion(grip){
   const mesh=grip.mesh;if(!mesh?.isSkinnedMesh)return {skinned:false};
@@ -139,7 +162,7 @@ window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
     fitWorldGripHands(body,worldHands,W,left);
   }
   body.model.updateMatrixWorld(true);
-  const {restPositions,...skin}=bind;
+  const {restPositions,restNormals,...skin}=bind;
   const metric={cls:clsId,pose,form,sample,weapon:C.weapon,bones:Object.keys(body.bones).length,bounds:bounds(body),skin,deformation:edgeMetrics(body,bind),cloth:body.cloth||null,attachment:body.attachment||null,clip:anim.curName,handSocket:body.sockets.get('Right')?.toArray()};
   if(W.offhandGrip&&!left){
     const grip=worldHands.find(hand=>hand.side==='Left'),B=body.bones;

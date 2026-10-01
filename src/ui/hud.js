@@ -69,9 +69,28 @@ export class HUD {
 
   show(on) { this.visible = on; this.root.style.display = on ? '' : 'none'; }
 
+  resetBattle() {
+    this.player = null; this._aimT = null; this._aimKeep = 0;
+    this._hpLag = this._bossLag = undefined; this._eff = null;
+    this.comboT = this.comboDmg = this.hurtT = this.dirT = this.toastT = this.announceT = this.centerT = 0;
+    this.dirFrom = null;
+    for (const item of this.floats || []) { item.e.style.display = 'none'; this.pool.push(item.e); }
+    this.floats = [];
+    for (const node of this.plates.values()) node.remove();
+    this.plates.clear();
+    this.setTeams(null, null); this.setBoss(null); this.setGoals(null);
+    this.setPrompt(''); this.setHint(''); this.showStats(false);
+    this.targetBox.style.display = this.lockMark.style.display = 'none';
+    for (const node of [this.comboBox, this.toastBox, this.announceBox, this.center]) node.classList.remove('show', 'pop');
+    this.hitmark.classList.remove('on', 'heavy');
+    for (const node of [this.hurtBox, this.blindBox, this.dirBox]) node.style.opacity = 0;
+  }
+
   // 根据玩家职业重建技能栏
   bindPlayer(p, account) {
     this.player = p;
+    this._aimT = null; this._aimKeep = 0; this._hpLag = clamp(p.hp / p.maxHp, 0, 1);
+    this.targetBox.style.display = this.lockMark.style.display = 'none';
     $('.sf-name', this.selfBox).textContent = p.name;
     $('.sf-cls', this.selfBox).textContent = `${p.cls.name}${account ? ' · ' + account.weaponName : ''}`;
     const img = $('.sf-portrait', this.selfBox);
@@ -119,7 +138,7 @@ export class HUD {
   }
   skillFlash(slot) { const s = this.slots[slot]; if (!s) return; s.classList.remove('flash'); void s.offsetWidth; s.classList.add('flash'); }
 
-  setTeams(allies, enemies) { this.allies = allies; this.enemies = enemies; this.teamBox.innerHTML = ''; this.teamRows = []; }
+  setTeams(allies, enemies) { this.allies = allies; this.enemies = enemies; this.teamBox.innerHTML = ''; this._teamHtml = null; }
   setTop(left, mid, right, sub = '') { this.topL.innerHTML = left; this.timer.innerHTML = mid; this.topR.innerHTML = right; this.sub.innerHTML = sub; }
   setBoss(f, phaseText = '') { this.boss = f; this.bossBox.style.display = f ? 'block' : 'none'; if (f) { $('.bf-name', this.bossBox).textContent = f.name; $('.bf-phase', this.bossBox).textContent = phaseText; } }
   setPrompt(t) { if (this._prompt !== t) { this._prompt = t; this.prompt.innerHTML = t || ''; this.prompt.style.display = t ? 'block' : 'none'; } }
@@ -273,6 +292,7 @@ export class HUD {
         s._wasReady = ready;
       }
       // 目标：锁定 > 准星所指 > 最近攻击者
+      if (this._aimT && !game.fighters.includes(this._aimT)) { this._aimT = null; this._aimKeep = 0; }
       let tgt = game.lockTarget;
       if (!tgt) {
         const o = p.eyePos(new THREE.Vector3());
