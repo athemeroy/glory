@@ -1,0 +1,89 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Getup timing window proof</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">比较450ms起身时间窗…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator, getupClipPhase } from '../src/game/mocap.js';
+import { GroundReactionSupport } from '../src/game/ground-contact.js';
+import { CLASSES } from '../src/data/classes.js';
+import { MOBS, BOSS } from '../src/data/enemies.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(condition,message)=>(condition?__results:__errors).push(message);
+const vector=new THREE.Vector3();
+const phaseKnots=[0,.30,.90,1],timeKnots=[1.2,4.4666667,5.9666667,7.0];
+function sourceTime(phase){for(let i=1;i<phaseKnots.length;i++)if(phase<=phaseKnots[i]){const t=(phase-phaseKnots[i-1])/(phaseKnots[i]-phaseKnots[i-1]);return timeKnots[i-1]+(timeKnots[i]-timeKnots[i-1])*t}return timeKnots.at(-1)}
+function poseError(a,b){let error=a.anim.hips.position.distanceTo(b.anim.hips.position);for(const name of Object.keys(a.body.bones)){const x=a.body.bones[name].quaternion,y=b.body.bones[name].quaternion;error=Math.max(error,Math.abs(x.x-y.x),Math.abs(x.y-y.y),Math.abs(x.z-y.z),Math.abs(x.w-y.w))}return error}
+try{
+  const library=await loadClipLibrary('../assets/anim/anims.glb'),sourceClip=library.get('Stand_Up1'),loader=new GLTFLoader();
+  const originalDuration=sourceClip.duration,originalTracks=sourceClip.tracks.map(track=>({track,times:track.times.slice(),values:track.values.slice()}));
+  check(Math.abs(sourceClip.duration-8.3)<1e-5,'源 Stand_Up1 时长仍为8.3s');
+  check(getupClipPhase('Arise',.5,8.3)===.5&&getupClipPhase('Stand_Up1',.5,9)===.5&&getupClipPhase('Stand_Up1',.5,undefined)===.5,'其他片段/不同源时长保留原采样');
+  let endpointPoseError=0;
+  for(let i=0;i<phaseKnots.length;i++)for(const track of sourceClip.tracks){const interpolant=track.createInterpolant(),actual=interpolant.evaluate(getupClipPhase('Stand_Up1',phaseKnots[i],sourceClip.duration)*sourceClip.duration).slice(),expected=interpolant.evaluate(timeKnots[i]);for(let k=0;k<actual.length;k++)endpointPoseError=Math.max(endpointPoseError,Math.abs(actual[k]-expected[k]))}
+  check(endpointPoseError<1e-6&&phaseKnots.every((phase,i)=>Math.abs(getupClipPhase('Stand_Up1',phase,sourceClip.duration)*sourceClip.duration-timeKnots[i])<1e-7),'分段首尾与两个撑起关键时刻精确匹配认证源姿态');
+  const classes=new URLSearchParams(location.search).get('classes')?.split(',')||['boss','frostcaster','skeleton'];
+  for(const cls of classes){
+    const source=(await loader.loadAsync(`../assets/models/rigged/${cls}.glb`)).scene;source.userData.gloryClass=cls;
+    const C=CLASSES[cls]||MOBS[cls]||(cls==='boss'?BOSS:null),state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0};
+    const pairs=['before','candidate','production'].map(mode=>{
+      const body=createMocapBody(source),anim=new MocapAnimator(body),support=new GroundReactionSupport(body,null,true);
+      const pair={mode,body,anim,support,samples:[],previousPose:new Map(),previousHip:0,getupPhase:null};
+      // 独立夹具在 mixer 真正采样前设置时间。状态的真实 t、dur 和生产淡入/髋/接地逻辑保持一致。
+      if(mode!=='production'){const update=anim.mixer.update.bind(anim.mixer);anim.mixer.update=dt=>{if(pair.getupPhase!==null&&anim.curName==='Stand_Up1'){const duration=anim.cur.getClip().duration;anim.cur.time=mode==='before'?pair.getupPhase*duration:sourceTime(pair.getupPhase)}return update(dt)}}
+      return pair;
+    });
+    for(const pair of pairs){
+      for(let i=0;i<60;i++)pair.anim.update(1/60,state);
+      for(let frame=0;frame<39;frame++)pair.anim.update(1/60,{...state,react:{type:'down',t:frame/60,dur:.65}});
+      pair.previousHip=pair.body.bones.Hips.getWorldPosition(vector).y;
+      for(const [name,bone]of Object.entries(pair.body.bones))pair.previousPose.set(name,bone.quaternion.clone());
+    }
+    let productionError=0,stateMutated=false;
+    for(let frame=0;frame<27;frame++){
+      const phase=frame/27,react={type:'getup',t:phase*.45,dur:.45};
+      for(const pair of pairs){
+        pair.getupPhase=phase;
+        pair.anim.update(1/60,{...state,react});
+        stateMutated ||= react.t!==phase*.45||react.dur!==.45;
+        const t01=pair.anim.cur.time/pair.anim.cur.getClip().duration;
+        const footMin=pair.support.floor(pair.support.fullProbes),hip=pair.body.bones.Hips.getWorldPosition(vector).y;
+        let maxAngle=0;for(const[name,bone]of Object.entries(pair.body.bones)){maxAngle=Math.max(maxAngle,bone.quaternion.angleTo(pair.previousPose.get(name)));pair.previousPose.get(name).copy(bone.quaternion)}
+        pair.samples.push({phase:'getup',frame,t01,hip,hipDelta:hip-pair.previousHip,maxAngle,footMin,offset:pair.anim.groundFeet.offset});pair.previousHip=hip;
+      }
+      productionError=Math.max(productionError,poseError(pairs[1],pairs[2]),Math.abs(pairs[1].anim.groundFeet.offset-pairs[2].anim.groundFeet.offset),Math.abs(pairs[1].anim.cur.time-pairs[2].anim.cur.time));
+    }
+    for(const pair of pairs){
+      pair.getupPhase=null;
+      for(let frame=0;frame<30;frame++){
+        pair.anim.update(1/60,state);const hip=pair.body.bones.Hips.getWorldPosition(vector).y,footMin=pair.support.floor(pair.support.fullProbes);
+        pair.samples.push({phase:'recover',frame,hip,hipDelta:hip-pair.previousHip,footMin});pair.previousHip=hip;
+      }
+    }
+    const metrics={};for(const pair of pairs){
+      const getup=pair.samples.filter(s=>s.phase==='getup'),recover=pair.samples.filter(s=>s.phase==='recover');
+      metrics[pair.mode]={maxUpHipDelta:Math.max(...getup.map(s=>s.hipDelta)),maxHipDelta:Math.max(...getup.map(s=>Math.abs(s.hipDelta))),maxJointAngle:Math.max(...getup.map(s=>s.maxAngle)),minFootY:Math.min(...getup.map(s=>s.footMin)),recoverMaxHipDelta:Math.max(...recover.map(s=>Math.abs(s.hipDelta))),samples:pair.samples};
+    }
+    check(metrics.candidate.maxUpHipDelta<metrics.before.maxUpHipDelta*.6,cls+': 同450ms起身髋上升单帧峰值减少40%以上');
+    check(metrics.candidate.maxJointAngle<=metrics.before.maxJointAngle+1e-6,cls+': 起身最大关节角步长不增加');
+    check(metrics.candidate.minFootY>=-.02,cls+': 完整真实脚部穿透<2cm');
+    check(metrics.candidate.recoverMaxHipDelta<=metrics.before.recoverMaxHipDelta+.005,cls+': 回站姿髋步长不额外增加5mm');
+    check(productionError<1e-6,cls+': 生产真实计时与独立候选逐帧骨骼/髋/脚补偿/源时间一致');
+    check(!stateMutated,cls+': 动画采样保留调用方真实t与450ms反应时长');
+    for(let i=0;i<90;i++)for(const pair of pairs)pair.anim.update(1/60,state);
+    let otherStateError=0;
+    for(const gate of [{...state,guard:true},{...state,speed:5.6},{...state,onGround:false,vy:3},{...state,action:{clip:'slash1',stage:'active',t:.5,key:'same'}}]){
+      for(let frame=0;frame<18;frame++){
+        for(const pair of pairs)pair.anim.update(1/60,gate);
+        // Float32 动作关键帧的四元数可能略非单位；同值 angleTo 也会报告约0.04°，这里验证原分量。
+        otherStateError=Math.max(otherStateError,poseError(pairs[0],pairs[1]),poseError(pairs[0],pairs[2]));
+      }
+    }
+    check(otherStateError<1e-6,cls+': 起身退出后格挡/跑动/空中/攻击姿态一致');
+    metrics.otherStateError=otherStateError;metrics.productionError=productionError;
+    __metrics.push({cls,phaseKnots,timeKnots,...metrics});
+  }
+  check(sourceClip.duration===originalDuration&&originalTracks.every(({track,times,values})=>track.times.every((value,i)=>value===times[i])&&track.values.every((value,i)=>value===values[i])),'源片段时长与首尾/全部旋转关键帧原样保留');
+  document.querySelector('#result').textContent=__results.join('\n');
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

@@ -25,7 +25,10 @@ parser.add_argument('--forms',default='')
 parser.add_argument('--samples',default='',help='Comma-separated class:animation:normalized-time samples')
 parser.add_argument('--probes',default='',help='Comma-separated class:vertex-a:vertex-b:pose marked closeups')
 parser.add_argument('--component-probes',default='',help='Comma-separated class:vertex:pose connected-component highlights')
-parser.add_argument('--reaction-samples',default='',help='Comma-separated class:reaction:frames, after sixty real stance frames')
+parser.add_argument('--region-probes',default='',help='Comma-separated class:mesh-user-data-field:pose repair-region highlights')
+parser.add_argument('--reaction-samples',default='',help='Comma-separated class:reaction:frames, after sixty real stance frames and actual fallen pre-roll for getup')
+parser.add_argument('--reaction-probes',default='',help='Comma-separated class:vertex-a:vertex-b:reaction:frames marked actual reaction sequence')
+parser.add_argument('--robe-trial',action='store_true',help='Apply the isolated robe candidate only to audit world bodies; never changes game modules')
 parser.add_argument('--check-pages',default='',help='Comma-separated test HTML pages exposing __ready and __errors')
 parser.add_argument('--app-check',action='store_true',help='Verify the actual default asset-loading game path on desktop and phone')
 parser.add_argument('--app-accounts',default='yysf',help='Comma-separated real training accounts; two-handed accounts also verify world/FP grips and mirror rendering')
@@ -61,7 +64,8 @@ with sync_playwright() as pw:
     page.on('pageerror',lambda error: errors.append(str(error)))
     try:
         initial='/tools/anim-regression.html' if args.cpu_benchmark else '/tools/model-audit.html'
-        page.goto(args.url.rstrip('/')+initial,wait_until='networkidle',timeout=90000)
+        trial_query='&'.join(flag+'=1' for flag,enabled in [('robeTrial',args.robe_trial)] if enabled)
+        page.goto(args.url.rstrip('/')+initial+('?'+trial_query if trial_query else ''),wait_until='networkidle',timeout=90000)
         page.wait_for_function('window.__ready',timeout=90000,polling=100)
         if args.cpu_benchmark:
             if not args.benchmark_before:parser.error('--cpu-benchmark requires --benchmark-before')
@@ -94,10 +98,18 @@ with sync_playwright() as pw:
             cls,reaction,frames=sample.split(':')
             result=page.evaluate('([c,r,n])=>__audit(c,"reaction",null,{react:r,frames:n})',[cls,reaction,int(frames)])
             metrics.append(result);page.screenshot(path=str(output/f'{cls}-{reaction}-frame-{frames}.png'));log_metric(result)
+        for probe in filter(None,args.reaction_probes.split(',')):
+            cls,a,b,reaction,frames=probe.split(':')
+            result=page.evaluate('([c,a,b,r,n])=>__probe(c,a,b,"reaction",{react:r,frames:n})',[cls,int(a),int(b),reaction,int(frames)])
+            metrics.append(result);page.screenshot(path=str(output/f'{cls}-probe-{a}-{b}-{reaction}-frame-{frames}.png'));log_metric(result)
         for probe in filter(None,args.component_probes.split(',')):
             cls,vertex,pose=probe.split(':')
             result=page.evaluate('([c,i,p])=>__componentProbe(c,i,p)',[cls,int(vertex),pose])
             metrics.append(result);page.screenshot(path=str(output/f'{cls}-component-{vertex}-{pose}.png'));log_metric(result)
+        for probe in filter(None,args.region_probes.split(',')):
+            cls,field,pose=probe.split(':')
+            result=page.evaluate('([c,f,p])=>__regionProbe(c,f,p)',[cls,field,pose])
+            metrics.append(result);page.screenshot(path=str(output/f'{cls}-region-{field}-{pose}.png'));log_metric(result)
         errors.extend(page.evaluate('window.__errors'))
         for path in filter(None,args.check_pages.split(',')):
             page.goto(args.url.rstrip('/')+'/'+path,wait_until='networkidle',timeout=90000)

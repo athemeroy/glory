@@ -63,7 +63,7 @@ function skinNormals(mesh){
   return result;
 }
 function bindMetrics(body){
-  const vertex=new THREE.Vector3(),restPositions=new Map(),restNormals=new Map();
+  const vertex=new THREE.Vector3(),restPositions=new Map(),restNormals=new Map(),restIndices=new Map();
   let vertices=0,invalidWeights=0,rigidVertices=0,triangles=0;
   for(const mesh of body.meshes){
     mesh.skeleton.update();const {position,skinIndex:si,skinWeight:sw}=mesh.geometry.attributes;
@@ -75,9 +75,9 @@ function bindMetrics(body){
       if(invalid||Math.abs(sum-1)>0.01)invalidWeights++;
       if(max>0.98)rigidVertices++;
     }
-    restPositions.set(mesh,rest);restNormals.set(mesh,skinNormals(mesh));vertices+=position.count;triangles+=(mesh.geometry.index?.count||position.count)/3;
+    restPositions.set(mesh,rest);restNormals.set(mesh,skinNormals(mesh));restIndices.set(mesh,mesh.geometry.index?.array.slice()||null);vertices+=position.count;triangles+=(mesh.geometry.index?.count||position.count)/3;
   }
-  return {restPositions,restNormals,vertices,invalidWeights,rigidVertices,triangles};
+  return {restPositions,restNormals,restIndices,vertices,invalidWeights,rigidVertices,triangles};
 }
 function edgeMetrics(body,bind){
   const vertex=new THREE.Vector3();let edges=0,stretched=0,collapsed=0,extremeEdges5=0,extremeEdges10=0,faces=0,bindFaceFlips=0,faceFlips=0,newFaceFlips=0,maxStretch=1,worst=null;
@@ -138,7 +138,11 @@ window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
   let source=cache.get(clsId); if(!source){source=(await loader.loadAsync(`../assets/models/rigged/${clsId}.glb`)).scene;source.userData.gloryClass=clsId;cache.set(clsId,source);}
   const C=CLASSES[clsId]||MOBS[clsId]||(clsId==='boss'?BOSS:null);
   if(!C)throw Error('Missing audit character '+clsId);
-  const scene=lightScene(),body=createMocapBody(source); scene.add(body.model); analyzeImpacts(source);
+  const scene=lightScene(),body=createMocapBody(source);
+  if(new URLSearchParams(location.search).get('robeTrial')==='1'&&!body.robe){
+    const {repairRobeWeights}=await import('../src/game/robe.js');repairRobeWeights(body,clsId);
+  }
+  scene.add(body.model); analyzeImpacts(source);
   const bind=bindMetrics(body);
   const W=buildWeapon(C.weapon,C.weaponOpts||{});mountMocapWeapon(body,'Right',W.obj,weaponTilt(W.type));
   const left=W.makeLeft?.()||null;
@@ -146,6 +150,7 @@ window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
   const worldHands=installGripHands(body,{Right:handSocket(body,'Right'),Left:handSocket(body,'Left')},W.type);
   fitWorldGripHands(body,worldHands);
   if(form&&W.setForm)W.setForm(form,true);
+  const reactionFootProbe=sample?.react?new (await import('../src/game/ground-contact.js')).GroundReactionSupport(body,null,true):null;
   const proc=buildCharacter(C.look||{}),procAnim=new Animator(proc),anim=new MocapAnimator(body,proc);
   const action=pose==='attack'?{clip:C.chain?.[0]?.anim||'slash1',stage:'active',t:0.65,key:'qa'}:pose==='overhead'?{clip:'jumpslam',stage:'wind',t:1,key:'qa'}:null;
   const state={speed:pose==='run'?5.6:0,fwd:1,side:0,onGround:true,vy:0,stance:form?C.forms?.[form]?.stance||C.stance:C.stance,pitch:0,action,guard:pose==='guard',calm:pose==='idle',react:pose==='down'?{type:'down',t:0.8,dur:1}:null};
@@ -166,7 +171,7 @@ window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
     for(let i=0;i<frames;i++){
       const reactionState={...state,action:null,react:{type:sample.react,t:i/60,dur:sample.dur||(sample.react==='getup'?0.45:0.65)}};
       procAnim.update(1/60,reactionState);anim.update(1/60,reactionState);fitWorldGripHands(body,worldHands,W,left);fp.sync(proc,1/60,0);W.update?.(1/60);fp.update(1/60);
-      const foot=footSample(anim);reactionSamples.push({frame:i,t:i/60,...foot});
+      const foot=footSample(anim);reactionSamples.push({frame:i,t:i/60,fullFootMinY:reactionFootProbe.floor(reactionFootProbe.fullProbes),...foot});
     }
   }
   if(sample?.clip){
@@ -177,8 +182,8 @@ window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
     fitWorldGripHands(body,worldHands,W,left);
   }
   body.model.updateMatrixWorld(true);
-  const {restPositions,restNormals,...skin}=bind;
-  const metric={cls:clsId,pose,form,sample,weapon:C.weapon,bones:Object.keys(body.bones).length,bounds:bounds(body),skin,deformation:edgeMetrics(body,bind),cloth:body.cloth||null,attachment:body.attachment||null,sleeve:body.sleeve||null,clericWeights:body.clericWeights||null,rigCalibration:body.rigCalibration||null,clip:anim.curName,handSocket:body.sockets.get('Right')?.toArray(),handSockets:Object.fromEntries(['Left','Right'].map(side=>[side,body.sockets.get(side)?.toArray()]))};
+  const {restPositions,restNormals,restIndices,...skin}=bind;
+  const metric={cls:clsId,pose,form,sample,weapon:C.weapon,bones:Object.keys(body.bones).length,bounds:bounds(body),skin,deformation:edgeMetrics(body,bind),cloth:body.cloth||null,attachment:body.attachment||null,sleeve:body.sleeve||null,clericWeights:body.clericWeights||null,robe:body.robe||null,rigCalibration:body.rigCalibration||null,clip:anim.curName,handSocket:body.sockets.get('Right')?.toArray(),handSockets:Object.fromEntries(['Left','Right'].map(side=>[side,body.sockets.get(side)?.toArray()]))};
   if(reactionSamples.length)metric.reactionSamples=reactionSamples;
   if(W.offhandGrip&&!left){
     const grip=worldHands.find(hand=>hand.side==='Left'),B=body.bones;
@@ -225,11 +230,11 @@ window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
   }
   fp.root.traverse(o=>{if(o.isMesh&&o.visible)metric.fp.visibleMeshes++;});
   current.push({anim,fp,body,bind,scene,worldHands,roots:[scene,fpScene,proc.root]});
-  document.querySelector('#label').textContent=`${clsId} · ${pose}${form?' · '+form:''}${sample?.react?' · '+sample.react+' after '+sample.frames+' frames':sample?.clip?' · t='+sample.t:''}\nFront / Side / Hand closeup — First person below\nReal rigged body · ${anim.curName} · ${metric.bones} bones${sample?.clip?' · FPS keeps procedural stance':''}`;
+  document.querySelector('#label').textContent=`${clsId} · ${pose}${form?' · '+form:''}${sample?.react?' · '+sample.react+' after '+sample.frames+' frames':sample?.clip?' · t='+sample.t:''}\nFront / Side / Hand closeup — First person below\nReal rigged body · ${anim.curName} · ${metric.bones} bones${sample?.clip?' · FPS keeps procedural stance':''}${body.robe?' · repaired robe weights':''}`;
   window.__lastMetric=metric;return metric;
 };
-window.__probe=async(clsId,a,b,pose='bind')=>{
-  const metric=await __audit(clsId,pose),{body,bind,scene}=current[0],mesh=body.meshes[0];
+window.__probe=async(clsId,a,b,pose='bind',sample=null)=>{
+  const metric=await __audit(clsId,pose,null,sample),{body,bind,scene}=current[0],mesh=body.meshes[0];
   const point=new THREE.Vector3(),rest=bind.restPositions.get(mesh),originA=new THREE.Vector3().fromArray(rest,a*3),originB=new THREE.Vector3().fromArray(rest,b*3),positions=[];
   mesh.skeleton.update();
   for(let i=0;i<mesh.geometry.attributes.position.count;i++){
@@ -242,19 +247,19 @@ window.__probe=async(clsId,a,b,pose='bind')=>{
     const p=mesh.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(mesh.matrixWorld);
     const marker=new THREE.Mesh(new THREE.SphereGeometry(0.0028,12,8),new THREE.MeshBasicMaterial({color:k?'#30ff70':'#ff355c',depthTest:false}));marker.position.copy(p);marker.renderOrder=10;scene.add(marker);return p;
   });
-  const center=points[0].clone().add(points[1]).multiplyScalar(0.5),width=innerWidth/3,height=innerHeight/2;
+  const center=points[0].clone().add(points[1]).multiplyScalar(0.5),width=innerWidth/3,height=innerHeight/2,distance=Math.max(0.55,points[0].distanceTo(points[1])*1.9);
   renderer.autoClear=true;
   for(const [i,offset]of [[0,new THREE.Vector3(0,0,0.55)],[1,new THREE.Vector3(0.55,0,0)],[2,new THREE.Vector3(-0.2,0.03,-0.5)]]){
-    const camera=new THREE.PerspectiveCamera(40,1,0.002,50);camera.position.copy(center).add(offset);camera.lookAt(center);draw(scene,camera,i*width,height,width,height);
+    const camera=new THREE.PerspectiveCamera(40,1,0.002,50);camera.position.copy(center).addScaledVector(offset.normalize(),distance);camera.lookAt(center);draw(scene,camera,i*width,height,width,height);
   }
   const influences=i=>Array.from({length:4},(_,k)=>({bone:mesh.skeleton.bones[mesh.geometry.attributes.skinIndex.getComponent(i,k)]?.name,weight:mesh.geometry.attributes.skinWeight.getComponent(i,k)})).filter(v=>v.weight>0.01);
   metric.probe={a,b,restA:originA.toArray(),restB:originB.toArray(),posedA:points[0].toArray(),posedB:points[1].toArray(),weightsA:influences(a),weightsB:influences(b),neighborhoodVertices:positions.length/3};
-  document.querySelector('#label').textContent=`${clsId} · ${pose} · precise bind-weight probe\nA ${a} red / B ${b} green / 15 mm neighborhood yellow\nFront / Side / Rear closeups — First person below`;
+  document.querySelector('#label').textContent=`${clsId} · ${pose}${sample?.react?' · '+sample.react+' after '+sample.frames+' frames':''} · precise bind-weight probe\nA ${a} red / B ${b} green / 15 mm neighborhood yellow\nFront / Side / Rear closeups — First person below`;
   return metric;
 };
 window.__componentProbe=async(clsId,vertex,pose='bind')=>{
   const metric=await __audit(clsId,pose),{body,bind,scene}=current[0],mesh=body.meshes[0];
-  const rest=bind.restPositions.get(mesh),count=mesh.geometry.attributes.position.count,index=mesh.geometry.index;
+  const rest=bind.restPositions.get(mesh),count=mesh.geometry.attributes.position.count,index=bind.restIndices.get(mesh);
   if(!Number.isInteger(vertex)||vertex<0||vertex>=count)throw Error('Invalid component vertex '+vertex);
   const cells=new Map(),parent=[],welded=[];
   for(let i=0;i<count;i++){
@@ -262,8 +267,8 @@ window.__componentProbe=async(clsId,vertex,pose='bind')=>{
     if(!cells.has(key)){cells.set(key,parent.length);parent.push(parent.length);}welded.push(cells.get(key));
   }
   const root=id=>{while(parent[id]!==id){parent[id]=parent[parent[id]];id=parent[id];}return id;};
-  const at=i=>index?index.getX(i):i;
-  for(let i=0;i<(index?.count||count);i+=3){const a=root(welded[at(i)]),b=root(welded[at(i+1)]),c=root(welded[at(i+2)]);parent[b]=a;parent[c]=a;}
+  const at=i=>index?index[i]:i;
+  for(let i=0;i<(index?.length||count);i+=3){const a=root(welded[at(i)]),b=root(welded[at(i+1)]),c=root(welded[at(i+2)]);parent[b]=a;parent[c]=a;}
   const component=root(welded[vertex]),members=[],triangles=[],posed=new Float32Array(count*3),point=new THREE.Vector3(),restBox=new THREE.Box3(),posedBox=new THREE.Box3(),weights={};
   mesh.skeleton.update();
   for(let i=0;i<count;i++){
@@ -272,7 +277,7 @@ window.__componentProbe=async(clsId,vertex,pose='bind')=>{
     members.push(i);restBox.expandByPoint(new THREE.Vector3().fromArray(rest,i*3));posedBox.expandByPoint(point);
     for(let k=0;k<4;k++){const name=mesh.skeleton.bones[mesh.geometry.attributes.skinIndex.getComponent(i,k)]?.name,weight=mesh.geometry.attributes.skinWeight.getComponent(i,k);if(weight)weights[name]=(weights[name]||0)+weight;}
   }
-  for(let i=0;i<(index?.count||count);i+=3)if(root(welded[at(i)])===component)triangles.push(at(i),at(i+1),at(i+2));
+  for(let i=0;i<(index?.length||count);i+=3)if(root(welded[at(i)])===component)triangles.push(at(i),at(i+1),at(i+2));
   const geometry=new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(posed,3)).setIndex(triangles);
   const overlay=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({color:'#00d5ff',side:THREE.DoubleSide,transparent:true,opacity:0.55,depthTest:false,depthWrite:false}));overlay.renderOrder=20;scene.add(overlay);
   const center=posedBox.getCenter(new THREE.Vector3()),size=posedBox.getSize(new THREE.Vector3()),distance=Math.max(0.5,Math.max(size.x,size.y,size.z)*1.9),width=innerWidth/3,height=innerHeight/2;
@@ -282,6 +287,31 @@ window.__componentProbe=async(clsId,vertex,pose='bind')=>{
   }
   metric.component={vertex,vertices:members.length,triangles:triangles.length/3,restBounds:{min:restBox.min.toArray(),max:restBox.max.toArray()},posedBounds:{min:posedBox.min.toArray(),max:posedBox.max.toArray()},weights};
   document.querySelector('#label').textContent=`${clsId} · ${pose} · connected component at ${vertex}\n${members.length} vertices / ${triangles.length/3} triangles · cyan translucent highlight\nFront / Side / Rear — First person below`;
+  return metric;
+};
+window.__regionProbe=async(clsId,field,pose='bind')=>{
+  const metric=await __audit(clsId,pose),{body,bind,scene}=current[0],posedBox=new THREE.Box3(),restBox=new THREE.Box3();
+  let vertices=0,triangles=0;
+  for(const mesh of body.meshes){
+    const strength=mesh.userData[field];if(!strength)continue;
+    const count=mesh.geometry.attributes.position.count,index=bind.restIndices.get(mesh),at=i=>index?index[i]:i,positions=new Float32Array(count*3),selected=[],point=new THREE.Vector3(),rest=bind.restPositions.get(mesh);
+    mesh.skeleton.update();
+    for(let i=0;i<count;i++){
+      mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld).toArray(positions,i*3);
+      if(strength[i]>1e-6){vertices++;posedBox.expandByPoint(point);restBox.expandByPoint(new THREE.Vector3().fromArray(rest,i*3));}
+    }
+    for(let i=0;i<(index?.length||count);i+=3)if([at(i),at(i+1),at(i+2)].some(v=>strength[v]>1e-6)){selected.push(at(i),at(i+1),at(i+2));triangles++;}
+    const geometry=new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(positions,3)).setIndex(selected);
+    const overlay=new THREE.Mesh(geometry,new THREE.MeshBasicMaterial({color:'#00d5ff',side:THREE.DoubleSide,transparent:true,opacity:0.55,depthTest:false,depthWrite:false}));overlay.renderOrder=20;scene.add(overlay);
+  }
+  if(!vertices)throw Error('No audit repair region '+field+' for '+clsId);
+  const center=posedBox.getCenter(new THREE.Vector3()),size=posedBox.getSize(new THREE.Vector3()),distance=Math.max(0.5,Math.max(size.x,size.y,size.z)*1.9),width=innerWidth/3,height=innerHeight/2;
+  renderer.autoClear=true;
+  for(const [i,axis]of [[0,new THREE.Vector3(0,0,1)],[1,new THREE.Vector3(1,0,0)],[2,new THREE.Vector3(-0.35,0.08,-1).normalize()]]){
+    const camera=new THREE.PerspectiveCamera(40,1,0.002,50);camera.position.copy(center).addScaledVector(axis,distance);camera.lookAt(center);draw(scene,camera,i*width,height,width,height);
+  }
+  metric.region={field,vertices,triangles,restBounds:{min:restBox.min.toArray(),max:restBox.max.toArray()},posedBounds:{min:posedBox.min.toArray(),max:posedBox.max.toArray()}};
+  document.querySelector('#label').textContent=`${clsId} · ${pose} · repair region ${field}\n${vertices} modified vertices / ${triangles} touching triangles · cyan translucent highlight\nFront / Side / Rear — First person retains production weights`;
   return metric;
 };
 await __audit(new URLSearchParams(location.search).get('cls')||'swordmaster');

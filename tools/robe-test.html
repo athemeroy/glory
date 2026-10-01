@@ -1,0 +1,67 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查战斗法师外袍…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+import { repairRobeWeights } from '../src/game/robe.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+import { CLASSES } from '../src/data/classes.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,label)=>{if(!ok)throw Error(label);__results.push(label)};
+const snapshot=geometry=>JSON.stringify(['skinIndex','skinWeight'].map(name=>Array.from(geometry.attributes[name].array)));
+const point=(mesh,i)=>mesh.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(mesh.matrixWorld);
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');
+  const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/battlemage.glb')).scene;
+  let sourceMesh;source.traverse(object=>{if(object.isSkinnedMesh&&!sourceMesh)sourceMesh=object});
+  const sourceGeometry=sourceMesh.geometry,saved=snapshot(sourceGeometry),before=createMocapBody(source);
+  source.userData.gloryClass='battlemage';const started=performance.now(),after=createMocapBody(source);if(!after.robe)repairRobeWeights(after,'battlemage');const prepareMs=performance.now()-started;
+  check(!!after.robe,'识别已审计的战斗法师局部外袍');
+  const old=before.meshes[0],fixed=after.meshes[0],si=fixed.geometry.attributes.skinIndex,sw=fixed.geometry.attributes.skinWeight,oi=old.geometry.attributes.skinIndex,ow=old.geometry.attributes.skinWeight,names=fixed.skeleton.bones.map(bone=>bone.name),mask=fixed.userData.robeStrength;
+  check(sourceMesh.geometry===sourceGeometry&&snapshot(sourceGeometry)===saved,'源 geometry 与权重原样');
+  for(const name of ['position','normal','uv'])check(fixed.geometry.attributes[name]===sourceGeometry.attributes[name],name+' 属性保留');
+  check(fixed.geometry.index===sourceGeometry.index,'原三角面索引保留');
+  before.model.updateMatrixWorld(true);after.model.updateMatrixWorld(true);old.skeleton.update();fixed.skeleton.update();
+  const segments=[];for(const side of ['Left','Right'])for(const [a,b]of [['Arm','ForeArm'],['ForeArm','Hand'],['UpLeg','Leg'],['Leg','Foot'],['Foot','ToeBase']])segments.push(new THREE.Line3(before.bones[side+a].getWorldPosition(new THREE.Vector3()),before.bones[side+b].getWorldPosition(new THREE.Vector3())));
+  let bindError=0,unchanged=0,limbs=0,arms=0,upper=0,modified=0;const near=new THREE.Vector3(),hipY=before.bones.Hips.getWorldPosition(new THREE.Vector3()).y;
+  for(let i=0;i<si.count;i++){
+    const p=point(old,i);let sum=0,armWeight=0,distance=Infinity;
+    for(const segment of segments){segment.closestPointToPoint(p,true,near);distance=Math.min(distance,p.distanceTo(near))}
+    for(let k=0;k<4;k++){
+      const bone=si.getComponent(i,k),weight=sw.getComponent(i,k);sum+=weight;
+      if(!Number.isFinite(weight)||weight<0||bone>=names.length)throw Error('无效权重 '+i);
+      if(/(Arm|Hand|Shoulder)$/.test(names[oi.getComponent(i,k)]))armWeight+=ow.getComponent(i,k);
+      if(!mask[i]&&(bone!==oi.getComponent(i,k)||weight!==ow.getComponent(i,k)))throw Error('非目标权重改变 '+i);
+    }
+    if(Math.abs(sum-1)>1e-5)throw Error('非归一权重 '+i);
+    if(distance<=.13){limbs++;if(mask[i])throw Error('真实13cm肢段范围改变 '+i)}
+    if(armWeight>.05){arms++;if(mask[i])throw Error('手/臂原绑定改变 '+i)}
+    if(p.y>=hipY+.04||p.y<=.06){upper++;if(mask[i])throw Error('头上身/鞋底被改动 '+i)}
+    bindError=Math.max(bindError,p.distanceTo(point(fixed,i)));if(mask[i])modified++;else unchanged++;
+  }
+  check(modified===after.robe.changed&&modified>50&&modified<5000,'仅修改外侧低袍域');
+  check(bindError<1e-5,'全部26925点绑定外形保持');
+  __metrics.push({...after.robe,unchanged,limbs,arms,upper,bindError,prepareMs});
+  check(limbs>5000&&arms>2000&&upper>5000,'真实肢段、长手指/袖口与头上身完整保护');
+  check(unchanged===si.count-after.robe.changed,'所有非目标顶点逐项保持');
+  const shared=createMocapBody(source);if(!shared.robe)repairRobeWeights(shared,'battlemage');check(shared.meshes[0].geometry===fixed.geometry,'修复 geometry 只读缓存复用');
+  const stats=after.robe,geometry=fixed.geometry,weights=snapshot(geometry);
+  const C=CLASSES.battlemage,pairs=[before,after].map(body=>{const rig=buildCharacter(C.look),proc=new Animator(rig);proc.breath=0;return {body,rig,proc,anim:new MocapAnimator(body,rig)}});
+  const a=10218,b=10221,rest=point(old,a).distanceTo(point(old,b));
+  for(const pose of ['stance','run','attack','overhead','down']){
+    const state={speed:pose==='run'?5.6:0,fwd:1,onGround:true,stance:C.stance,pitch:0,react:pose==='down'?{type:'down',t:.8,dur:1}:null,action:pose==='attack'?{clip:C.chain[0].anim,stage:'active',t:.65,key:'proof'}:pose==='overhead'?{clip:'jumpslam',stage:'wind',t:1,key:'proof'}:null};
+    for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,state);pair.anim.update(1/60,state)}
+    for(const pair of pairs){pair.body.model.updateMatrixWorld(true);pair.body.meshes[0].skeleton.update()}
+    const original=point(old,a).distanceTo(point(old,b)),repaired=point(fixed,a).distanceTo(point(fixed,b));
+    __metrics.push({pose,rest,before:original,after:repaired});check(repaired<original,'已标记下袍边在 '+pose+' 下改善');
+  }
+  check(repairRobeWeights(after,'battlemage')===stats&&snapshot(geometry)===weights,'动画后重复修复仍幂等，不用动画位置重算域');
+  let disposed=0;geometry.addEventListener('dispose',()=>disposed++);
+  for(const pair of pairs){pair.anim.mixer.stopAllAction();disposeRig({root:pair.body.model},{sharedRoots:[source]});disposeRig(pair.rig)}
+  check(disposed===0&&snapshot(geometry)===weights,'释放实例保留缓存权重与共享缓冲');
+  disposeRig({root:shared.model},{sharedRoots:[source]});check(repairRobeWeights({meshes:[]},'cleric')===null,'其他职业不进入外袍修复');
+  __metrics.push({...stats,unchanged,limbs,arms,upper,bindError});document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

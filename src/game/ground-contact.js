@@ -53,7 +53,7 @@ export class GroundReactionSupport {
       const groups = new Map();
       for (const candidate of candidates) {
         const i = candidate.index;
-        if (mesh.userData.clothStrength?.[i] > 0 || mesh.userData.attachmentComponent?.[i] || mesh.userData.sleeveComponent?.[i]) continue;
+        if (mesh.userData.clothStrength?.[i] > 0 || mesh.userData.attachmentComponent?.[i] || mesh.userData.sleeveComponent?.[i] || mesh.userData.robeStrength?.[i] > 0) continue;
         const { x, y, z } = candidate;
         const t = THREE.MathUtils.clamp(((x - start.x) * axis.x + (y - start.y) * axis.y + (z - start.z) * axis.z) / lengthSquared, 0, 1);
         if (Math.hypot(x - start.x - axis.x * t, y - start.y - axis.y * t, z - start.z - axis.z * t) > 0.18) continue;

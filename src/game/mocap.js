@@ -10,6 +10,7 @@ import { calibrateRig } from './rig-calibration.js';
 import { GroundReactionSupport, reactionGroundOffset } from './ground-contact.js';
 import { repairClericWeights } from './cleric-weights.js';
 import { repairSleeveWeights } from './sleeve.js';
+import { repairRobeWeights } from './robe.js';
 
 const loader = new GLTFLoader();
 let clipLib = null;      // name -> AnimationClip（已去掉水平根位移）
@@ -106,6 +107,24 @@ export function analyzeImpacts(riggedScene) {
 
 function pickClip(names) { for (const n of names) if (clipLib && clipLib.has(n)) return n; return null; }
 
+// Stand_Up1 的 8.3s 原片段含很长的趴卧等待。保留转身、撑起和收势，
+// 将真正的髋部上升分配到反应时长的 60%，战斗反应计时仍由调用方控制。
+const GETUP_SOURCE_DURATION = 8.3;
+const GETUP_PHASE_KNOTS = [0, 0.30, 0.90, 1];
+const GETUP_TIME_KNOTS = [1.2, 4.4666667, 5.9666667, 7.0];
+export function getupClipPhase(name, phase, duration) {
+  phase = clamp(phase, 0, 1);
+  // 换动作库或使用 Arise 时不能沿用针对 Stand_Up1 认证的时间窗。
+  if (name !== 'Stand_Up1' || !Number.isFinite(duration) || Math.abs(duration - GETUP_SOURCE_DURATION) > 1e-5) return phase;
+  for (let i = 1; i < GETUP_PHASE_KNOTS.length; i++) {
+    if (phase <= GETUP_PHASE_KNOTS[i]) {
+      const t = (phase - GETUP_PHASE_KNOTS[i - 1]) / (GETUP_PHASE_KNOTS[i] - GETUP_PHASE_KNOTS[i - 1]);
+      return (GETUP_TIME_KNOTS[i - 1] + (GETUP_TIME_KNOTS[i] - GETUP_TIME_KNOTS[i - 1]) * t) / duration;
+    }
+  }
+  return phase;
+}
+
 // 从 Meshy 绑定模型创建身体实例
 export function createMocapBody(riggedScene) {
   const model = SkeletonUtils.clone(riggedScene);
@@ -136,6 +155,7 @@ export function createMocapBody(riggedScene) {
   repairAttachmentWeights(body, riggedScene.userData.gloryClass);
   repairClericWeights(body, riggedScene.userData.gloryClass);
   repairSleeveWeights(body, riggedScene.userData.gloryClass);
+  repairRobeWeights(body, riggedScene.userData.gloryClass);
   return body;
 }
 
@@ -486,7 +506,8 @@ export class MocapAnimator {
         case 'stun': clip = pickClip(['Hit_Reaction_to_Waist', 'Hit_Reaction']); t01 = 0.35 + 0.05 * Math.sin(r.t * 6); break;
         case 'air': clip = pickClip(['BeHit_FlyUp']); t01 = clamp(r.t / 0.9, 0, 0.62); fade = 0.08; break;
         case 'down': clip = pickClip(['Knock_Down', 'BeHit_FlyUp']); t01 = clamp(0.72 + r.t * 0.3, 0, 0.98); fade = 0.12; break;
-        case 'getup': clip = pickClip(['Stand_Up1', 'Arise']); t01 = clamp(r.t / Math.max(0.2, r.dur), 0, 1); fade = 0.08; break;
+        case 'getup': clip = pickClip(['Stand_Up1', 'Arise']);
+          t01 = getupClipPhase(clip, r.t / Math.max(0.2, r.dur), clipLib?.get(clip)?.duration); fade = 0.08; break;
         case 'tech': clip = pickClip(['Roll_Dodge', 'Stand_Dodge']); t01 = clamp(r.t / Math.max(0.2, r.dur), 0, 1); fade = 0.05; break;
         case 'dead': clip = pickClip(r.back < -0.3 ? ['Shot_in_the_Back_and_Fall', 'dying_backwards'] : ['dying_backwards', 'Dead', 'Knock_Down']); t01 = clamp(r.t / 1.4, 0, 0.99); fade = 0.1; break;
         case 'cheer': clip = pickClip(/fist|great|brick|boss|hammer/.test(st.stance || '') ? ['Chest_Pound_Taunt', 'Victory_Cheer'] : ['Victory_Cheer', 'Sword_Shout']); loop = true; break;
