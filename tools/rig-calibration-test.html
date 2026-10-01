@@ -1,0 +1,63 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Rig calibration proof</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody } from '../src/game/mocap.js';
+import { calibrateRig } from '../src/game/rig-calibration.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,message)=>{if(!ok)throw Error(message);__results.push(message)};
+const transforms=scene=>{const values=[];scene.traverse(o=>values.push([o.uuid,...o.position.toArray(),...o.quaternion.toArray(),...o.scale.toArray()]));return JSON.stringify(values)};
+const matrices=skeleton=>JSON.stringify(skeleton.boneInverses.map(matrix=>matrix.toArray()));
+const vertices=body=>{body.model.updateMatrixWorld(true);const point=new THREE.Vector3();return body.meshes.map(mesh=>{mesh.skeleton.update();const points=new Float32Array(mesh.geometry.attributes.position.count*3);for(let i=0;i<points.length/3;i++)mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld).toArray(points,i*3);return points})};
+try {
+  const loader=new GLTFLoader(),source=(await loader.loadAsync('../assets/models/rigged/cleric.glb')).scene;
+  source.updateMatrixWorld(true);const sourceMeshes=[];source.traverse(o=>{if(o.isSkinnedMesh)sourceMeshes.push(o)});
+  const sourceTransforms=transforms(source),sourceInverse=sourceMeshes.map(mesh=>matrices(mesh.skeleton));
+  for(const transformed of [false,true]) {
+    const body=createMocapBody(source);
+    if(transformed){body.model.position.set(3,.8,-4);body.model.rotation.y=.7;body.model.scale.setScalar(1.17)}
+    body.model.updateMatrixWorld(true);
+    const before=vertices(body),savedHand=body.bones.RightHand.matrixWorld.clone(),oldPalette=body.meshes.map(mesh=>mesh.skeleton.bones.map((bone,i)=>new THREE.Matrix4().multiplyMatrices(bone.matrixWorld,mesh.skeleton.boneInverses[i])));
+    const inverseModel=body.model.matrixWorld.clone().invert(),localBone=bone=>new THREE.Vector3().setFromMatrixPosition(bone.matrixWorld).applyMatrix4(inverseModel);
+    const marker=index=>body.meshes[0].getVertexPosition(index,new THREE.Vector3()).applyMatrix4(body.meshes[0].matrixWorld).applyMatrix4(inverseModel);
+    const rightMarker=marker(2815),leftMarker=marker(18979),oldElbow=localBone(body.bones.RightForeArm);
+    const oldElbowSurfaceDistance=oldElbow.distanceTo(rightMarker),leftElbowSurfaceDistance=localBone(body.bones.LeftForeArm).distanceTo(leftMarker);
+    check(body.meshes[0].skeleton.boneInverses===sourceMeshes[0].skeleton.boneInverses,'复现 SkeletonUtils.clone 的源 inverse 数组共享');
+    const result=calibrateRig(body,'cleric');check(!!result,'仅已审计异常右肘进入校准');
+    check(result.handWorldError<1e-10,'右手原世界矩阵保持不变');
+    check(result.rightLengths.every((length,i)=>Math.abs(length/result.oldLeftLengths[i]-1)<.03),'右臂两段长度恢复与左侧接近');
+    const after=vertices(body);let bindError=0,paletteError=0,nonTargetInversesUnchanged=true;
+    for(let m=0;m<body.meshes.length;m++) {
+      const mesh=body.meshes[m],skeleton=mesh.skeleton;
+      check(skeleton.boneInverses!==sourceMeshes[m].skeleton.boneInverses&&skeleton.boneInverses.every((matrix,i)=>matrix!==sourceMeshes[m].skeleton.boneInverses[i]),'每个 inverse 数组和 Matrix4 都与源独立');
+      for(let i=0;i<before[m].length;i+=3)bindError=Math.max(bindError,Math.hypot(before[m][i]-after[m][i],before[m][i+1]-after[m][i+1],before[m][i+2]-after[m][i+2]));
+      for(let i=0;i<skeleton.bones.length;i++){
+        const palette=new THREE.Matrix4().multiplyMatrices(skeleton.bones[i].matrixWorld,skeleton.boneInverses[i]);
+        for(let k=0;k<16;k++)paletteError=Math.max(paletteError,Math.abs(palette.elements[k]-oldPalette[m][i].elements[k]));
+        if(skeleton.bones[i]!==body.bones.RightForeArm)nonTargetInversesUnchanged&&=JSON.stringify(skeleton.boneInverses[i].toArray())===JSON.stringify(sourceMeshes[m].skeleton.boneInverses[i].toArray());
+      }
+      check(mesh.geometry===sourceMeshes[m].geometry,'位置/法线/UV/权重及原网格 geometry 保持共享只读');
+    }
+    check(nonTargetInversesUnchanged,'全部非目标关节 inverse 原值保持');
+    check(bindError<1e-5,'全27026顶点绑定外形保持（最大误差 '+bindError.toExponential(2)+' m）');
+    check(paletteError<1e-10,'全部骨骼 bind palette 保持（最大误差 '+paletteError.toExponential(2)+'）');
+    const pose=transforms(body.model),inverses=body.meshes.map(mesh=>matrices(mesh.skeleton));
+    check(calibrateRig(body,'cleric')===result&&transforms(body.model)===pose&&body.meshes.every((mesh,i)=>matrices(mesh.skeleton)===inverses[i]),'重复校准保持幂等，不重写关节');
+    check(transforms(source)===sourceTransforms&&sourceMeshes.every((mesh,i)=>matrices(mesh.skeleton)===sourceInverse[i]),'源 GLB 的全部节点及 inverse 保持原样');
+    check(new THREE.Vector3().setFromMatrixPosition(body.bones.RightHand.matrixWorld).distanceTo(new THREE.Vector3().setFromMatrixPosition(savedHand))<1e-10,'原右腕位置精确保持');
+    const newElbow=localBone(body.bones.RightForeArm),elbowSurfaceDistance=newElbow.distanceTo(rightMarker);
+    check(elbowSurfaceDistance<.07&&elbowSurfaceDistance<oldElbowSurfaceDistance*.25,'右肘恢复至已标点袖口附近，与左肘位置吻合');
+    __metrics.push({transformed,...result,bindError,paletteError,oldElbow:oldElbow.toArray(),elbow:newElbow.toArray(),rightMarker:rightMarker.toArray(),oldElbowSurfaceDistance,elbowSurfaceDistance,leftElbowSurfaceDistance});
+  }
+  const first=createMocapBody(source),second=createMocapBody(source);calibrateRig(first,'cleric');calibrateRig(second,'cleric');
+  check(first.meshes[0].skeleton.boneInverses!==second.meshes[0].skeleton.boneInverses&&first.meshes[0].skeleton.boneInverses.every((matrix,i)=>matrix!==second.meshes[0].skeleton.boneInverses[i]),'不同实例的校准 inverse 完全独立');
+  const skipped=createMocapBody(source);check(!calibrateRig(skipped,'swordmaster'),'未审计职业不进行关节校准');
+  source.userData.gloryClass='cleric';const integrated=createMocapBody(source);
+  check(!!integrated.rigCalibration,'真实 createMocapBody 统一入口在采样前校准');
+  check(integrated.rest.get('RightForeArm').world.angleTo(integrated.bones.RightForeArm.getWorldQuaternion(new THREE.Quaternion()))<1e-6,'rest 记录采用校准完成后的骨架');
+  __metrics.push({integrated:true,...integrated.rigCalibration});
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

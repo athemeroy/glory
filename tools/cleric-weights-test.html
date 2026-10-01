@@ -1,0 +1,69 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查牧师绑定…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, handSocket, splitForFirstPerson } from '../src/game/mocap.js';
+import { repairClericWeights } from '../src/game/cleric-weights.js';
+import { disposeRig } from '../src/game/model.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,message)=>{if(!ok)throw Error(message);__results.push(message)};
+const snapshot=geometry=>JSON.stringify(['skinIndex','skinWeight'].map(name=>Array.from(geometry.attributes[name].array)));
+try {
+  const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/cleric.glb')).scene;
+  let sourceMesh;source.traverse(object=>{if(object.isSkinnedMesh&&!sourceMesh)sourceMesh=object});
+  const sourceGeometry=sourceMesh.geometry,sourceWeights=snapshot(sourceGeometry);
+  const baseline=createMocapBody(source);source.userData.gloryClass='cleric';const body=createMocapBody(source);
+  if(!body.clericWeights)repairClericWeights(body,'cleric');
+  check(!!body.rigCalibration,'衣装修复采用已校准的右肘');__metrics.push({...body.clericWeights});
+  const old=baseline.meshes[0],mesh=body.meshes[0],geometry=mesh.geometry,si=geometry.attributes.skinIndex,sw=geometry.attributes.skinWeight;
+  const oi=old.geometry.attributes.skinIndex,ow=old.geometry.attributes.skinWeight,names=mesh.skeleton.bones.map(bone=>bone.name),mask=mesh.userData.clericWeightMask;
+  check(body.clericWeights.mainChanged>4000&&body.clericWeights.mainChanged<6000,'重建已认证主衣装的躯干与袖面');
+  check(body.clericWeights.ornamentChanged===967,'胸前两条独立饰条与42点腰扣完整修复');
+  check(sourceMesh.geometry===sourceGeometry&&snapshot(sourceGeometry)===sourceWeights,'源 GLB geometry 和权重保持原样');
+  for(const name of ['position','normal','uv'])check(geometry.attributes[name]===sourceGeometry.attributes[name],name+' 属性保留原网格');
+  check(geometry.index===sourceGeometry.index,'原三角面索引保持原样');
+  body.model.updateMatrixWorld(true);baseline.model.updateMatrixWorld(true);mesh.skeleton.update();old.skeleton.update();
+  const point=new THREE.Vector3(),other=new THREE.Vector3(),points=[];let bindError=0,untouched=0,protectedHead=0,torsoVertices=0;
+  for(let i=0;i<si.count;i++) {
+    let sum=0,torso=0;
+    for(let k=0;k<4;k++) {
+      const weight=sw.getComponent(i,k),index=si.getComponent(i,k);sum+=weight;
+      if(!Number.isFinite(weight)||weight<0||index>=names.length)throw Error('无效权重 '+i);
+      if(/^Spine/.test(names[index]))torso+=weight;
+      if(!mask[i]&&(index!==oi.getComponent(i,k)||weight!==ow.getComponent(i,k)))throw Error('非目标权重改变 '+i);
+    }
+    if(Math.abs(sum-1)>1e-5)throw Error('非归一权重 '+i);
+    if(!mask[i])untouched++;if(torso>.2)torsoVertices++;
+    old.getVertexPosition(i,point).applyMatrix4(old.matrixWorld);points.push(point.clone());
+    mesh.getVertexPosition(i,other).applyMatrix4(mesh.matrixWorld);bindError=Math.max(bindError,point.distanceTo(other));
+    if(point.y>1.54){protectedHead++;if(mask[i])throw Error('脸/发型被重绑 '+i)}
+  }
+  check(bindError<1e-5,'全部27026顶点的绑定外形保持');
+  check(torsoVertices>1500,'原来完全缺失的脊柱权重恢复到衣装');
+  check(protectedHead>1500,'脸与发型区域保留原权重');
+  check(untouched===si.count-body.clericWeights.changed,'全部非目标顶点逐项保持原绑定');
+  const cells=new Map(),parent=[],welded=points.map(p=>{const key=[p.x,p.y,p.z].map(v=>Math.round(v/.00005)).join(',');let id=cells.get(key);if(id===undefined){id=parent.length;parent.push(id);cells.set(key,id)}return id});
+  const root=id=>{while(parent[id]!==id){parent[id]=parent[parent[id]];id=parent[id]}return id};
+  const index=geometry.index;for(let at=0;at<index.count;at+=3){const a=root(welded[index.getX(at)]),b=root(welded[index.getX(at+1)]),c=root(welded[index.getX(at+2)]);parent[b]=a;parent[c]=a}
+  const components=new Map();for(let i=0;i<si.count;i++){const id=root(welded[i]);if(!components.has(id))components.set(id,[]);components.get(id).push(i)}
+  for(const count of [1135,1096,1115,1148]) {
+    const candidates=[...components.values()].filter(vertices=>vertices.length===count);check(candidates.length===1,'识别真实手脚组件 '+count);
+    for(const i of candidates[0])if(mask[i])throw Error('真实手脚被改动 '+i);
+    check(true,'真实组件 '+count+' 全权重保持原样');
+  }
+  const cache=createMocapBody(source);if(!cache.clericWeights)repairClericWeights(cache,'cleric');
+  check(cache.meshes[0].geometry===geometry,'相同绑定坐标的实例共享只读修复 geometry');
+  const saved=snapshot(geometry),stats=body.clericWeights;
+  check(repairClericWeights(body,'cleric')===stats&&snapshot(geometry)===saved,'重复修复幂等');
+  for(const side of ['Left','Right']){const socket=handSocket(body,side);check(socket&&socket.toArray().every(Number.isFinite),side+' 手部握点有效')}
+  const partitions=splitForFirstPerson(body);check(partitions.arms.length>0,'修复后存在第一视角袖面');
+  let disposed=0;geometry.addEventListener('dispose',()=>disposed++);
+  disposeRig({root:body.model},{sharedRoots:[source]});
+  check(disposed===0&&snapshot(geometry)===saved,'释放实例保留缓存权重与共享缓冲');
+  disposeRig({root:baseline.model},{sharedRoots:[source]});disposeRig({root:cache.model},{sharedRoots:[source]});
+  check(repairClericWeights({meshes:[]},'swordmaster')===null,'未审计职业不进入牧师修复');
+  __metrics.push({...stats,bindError,untouched,protectedHead,torsoVertices});
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

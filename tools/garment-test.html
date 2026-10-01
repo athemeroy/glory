@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { loadClipLibrary, createMocapBody, MocapAnimator, splitForFirstPerson } from '../src/game/mocap.js';
 import { repairClothWeights } from '../src/game/cloth.js';
+import { repairAttachmentWeights } from '../src/game/attachment.js';
 import { disposeRig } from '../src/game/model.js';
 import { CLASSES } from '../src/data/classes.js';
 import { MOBS } from '../src/data/enemies.js';
@@ -12,15 +13,20 @@ const check=(ok,label)=>{if(!ok)throw Error(label);__results.push(label)};
 const weights=geometry=>Array.from({length:geometry.attributes.skinIndex.count*4},(_,i)=>[geometry.attributes.skinIndex.getComponent(Math.floor(i/4),i%4),geometry.attributes.skinWeight.getComponent(Math.floor(i/4),i%4)]);
 const point=(mesh,i)=>mesh.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(mesh.matrixWorld);
 const update=(body,anim,state)=>{for(let i=0;i<60;i++)anim.update(1/60,state);body.model.updateMatrixWorld(true);for(const mesh of body.meshes)mesh.skeleton.update()};
+const garmentBody=(source,cls)=>{const tag=source.userData.gloryClass;delete source.userData.gloryClass;const body=createMocapBody(source);if(tag!==undefined)source.userData.gloryClass=tag;repairClothWeights(body,cls);repairAttachmentWeights(body,cls);return body};
 try {
   await loadClipLibrary('../assets/anim/anims.glb');const loader=new GLTFLoader();
   for(const cls of ['berserker','warlock','frostcaster']) {
     const source=(await loader.loadAsync(`../assets/models/rigged/${cls}.glb`)).scene;
     let sourceMesh;source.traverse(object=>{if(object.isSkinnedMesh&&!sourceMesh)sourceMesh=object});const sourceGeometry=sourceMesh.geometry,original=JSON.stringify(weights(sourceGeometry));
     const baseline=createMocapBody(source);repairClothWeights(baseline,cls);
-    source.userData.gloryClass=cls;const fixed=createMocapBody(source),before=baseline.meshes[0],after=fixed.meshes[0],si=before.geometry.attributes.skinIndex,sw=before.geometry.attributes.skinWeight,ai=after.geometry.attributes.skinIndex,aw=after.geometry.attributes.skinWeight,mask=after.userData.attachmentComponent;
+    const fixed=garmentBody(source,cls);source.userData.gloryClass=cls;
+    const integrated=createMocapBody(source),before=baseline.meshes[0],after=fixed.meshes[0],si=before.geometry.attributes.skinIndex,sw=before.geometry.attributes.skinWeight,ai=after.geometry.attributes.skinIndex,aw=after.geometry.attributes.skinWeight,mask=after.userData.attachmentComponent;
     const expected=cls==='berserker'?294:cls==='warlock'?855:fixed.attachment?.targetVertices;
     check(cls==='frostcaster'?expected>1000&&expected<4000:fixed.attachment?.targetVertices===expected,cls+': 只识别已审计服饰区域');
+    const integratedMesh=integrated.meshes[0],upperMask=integratedMesh.userData.sleeveComponent;
+    for(let i=0;i<ai.count;i++)if(!upperMask?.[i])for(let k=0;k<4;k++)if(ai.getComponent(i,k)!==integratedMesh.geometry.attributes.skinIndex.getComponent(i,k)||aw.getComponent(i,k)!==integratedMesh.geometry.attributes.skinWeight.getComponent(i,k))throw Error(cls+': 统一入口的非袖服饰权重不一致 '+i);
+    check(integrated.attachment?.targetVertices===expected,cls+': 统一入口保留服饰修复，非袖区域逐点一致');
     check(sourceMesh.geometry===sourceGeometry&&JSON.stringify(weights(sourceGeometry))===original,cls+': GLB源geometry与权重不变');
     let protectedVertices=0,invalid=0,bindError=0;const names=after.skeleton.bones.map(bone=>bone.name),bindPositions=[],segments=[];
     if(cls==='frostcaster')for(const side of ['Left','Right'])for(const [a,b]of [['Arm','ForeArm'],['ForeArm','Hand'],['UpLeg','Leg'],['Leg','Foot'],['Foot','ToeBase']]) {
@@ -62,7 +68,7 @@ try {
       check(feet===2647,'frostcaster: 整个2647顶点真实腿脚片保持原绑定');
       check(protectedNear>2000,'frostcaster: 非外袍13cm人体肢段逐顶点完全保护');
     }
-    const shared=createMocapBody(source);check(shared.meshes[0].geometry===after.geometry,cls+': 服饰修复缓存只读复用');
+    const shared=garmentBody(source,cls);check(shared.meshes[0].geometry===after.geometry,cls+': 服饰修复缓存只读复用');
     const edges=cls==='berserker'?[[1572,1561],[1663,1662]]:cls==='warlock'?[[611,612]]:[[13172,13191],[20,1],[13283,13188]],rest=new Map(edges.map(([a,b])=>[a,point(before,a).distanceTo(point(before,b))])),ba=new MocapAnimator(baseline),fa=new MocapAnimator(fixed);
     for(const pose of ['stance','run','attack','overhead','down']) {
       const state={speed:pose==='run'?5.6:0,fwd:1,onGround:true,stance:(CLASSES[cls]||MOBS[cls]).stance,pitch:0,react:pose==='down'?{type:'down',t:.8,dur:1}:null,action:pose==='attack'?{clip:'slash1',stage:'active',t:.65,key:'proof'}:pose==='overhead'?{clip:'jumpslam',stage:'wind',t:1,key:'proof'}:null};
@@ -76,7 +82,7 @@ try {
     ba.mixer.stopAllAction();fa.mixer.stopAllAction();const geo=after.geometry,skinWeight=geo.attributes.skinWeight;let disposed=0;geo.addEventListener('dispose',()=>disposed++);
     splitForFirstPerson(fixed);const splitGeometry=fixed.meshes.find(mesh=>mesh.geometry.attributes.skinWeight===skinWeight).geometry;let retained=false;splitGeometry.addEventListener('dispose',()=>{retained=!Object.values(splitGeometry.attributes).includes(skinWeight)});
     disposeRig({root:fixed.model},{sharedRoots:[source]});check(disposed===0&&retained&&splitGeometry.attributes.skinWeight===skinWeight,cls+': 释放实例保护缓存与共享GPU缓冲');
-    disposeRig({root:baseline.model},{sharedRoots:[source]});disposeRig({root:shared.model},{sharedRoots:[source]});
+    disposeRig({root:baseline.model},{sharedRoots:[source]});disposeRig({root:shared.model},{sharedRoots:[source]});disposeRig({root:integrated.model},{sharedRoots:[source]});
   }
   document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
 }catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}

@@ -24,6 +24,8 @@ parser.add_argument('--poses',default='stance,attack,overhead')
 parser.add_argument('--forms',default='')
 parser.add_argument('--samples',default='',help='Comma-separated class:animation:normalized-time samples')
 parser.add_argument('--probes',default='',help='Comma-separated class:vertex-a:vertex-b:pose marked closeups')
+parser.add_argument('--component-probes',default='',help='Comma-separated class:vertex:pose connected-component highlights')
+parser.add_argument('--reaction-samples',default='',help='Comma-separated class:reaction:frames, after sixty real stance frames')
 parser.add_argument('--check-pages',default='',help='Comma-separated test HTML pages exposing __ready and __errors')
 parser.add_argument('--app-check',action='store_true',help='Verify the actual default asset-loading game path on desktop and phone')
 parser.add_argument('--app-accounts',default='yysf',help='Comma-separated real training accounts; two-handed accounts also verify world/FP grips and mirror rendering')
@@ -88,6 +90,14 @@ with sync_playwright() as pw:
             result=page.evaluate('([c,a,b,p])=>__probe(c,a,b,p)',[cls,int(a),int(b),pose])
             metrics.append(result);page.screenshot(path=str(output/f'{cls}-probe-{a}-{b}-{pose}.png'))
             log_metric(result)
+        for sample in filter(None,args.reaction_samples.split(',')):
+            cls,reaction,frames=sample.split(':')
+            result=page.evaluate('([c,r,n])=>__audit(c,"reaction",null,{react:r,frames:n})',[cls,reaction,int(frames)])
+            metrics.append(result);page.screenshot(path=str(output/f'{cls}-{reaction}-frame-{frames}.png'));log_metric(result)
+        for probe in filter(None,args.component_probes.split(',')):
+            cls,vertex,pose=probe.split(':')
+            result=page.evaluate('([c,i,p])=>__componentProbe(c,i,p)',[cls,int(vertex),pose])
+            metrics.append(result);page.screenshot(path=str(output/f'{cls}-component-{vertex}-{pose}.png'));log_metric(result)
         errors.extend(page.evaluate('window.__errors'))
         for path in filter(None,args.check_pages.split(',')):
             page.goto(args.url.rstrip('/')+'/'+path,wait_until='networkidle',timeout=90000)

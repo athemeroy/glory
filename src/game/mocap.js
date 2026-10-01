@@ -6,6 +6,9 @@ import * as SkeletonUtils from '../../vendor/SkeletonUtils.js';
 import { clamp } from '../engine/util.js';
 import { repairClothWeights } from './cloth.js';
 import { repairAttachmentWeights } from './attachment.js';
+import { calibrateRig } from './rig-calibration.js';
+import { repairClericWeights } from './cleric-weights.js';
+import { repairSleeveWeights } from './sleeve.js';
 
 const loader = new GLTFLoader();
 let clipLib = null;      // name -> AnimationClip（已去掉水平根位移）
@@ -112,6 +115,8 @@ export function createMocapBody(riggedScene) {
     if (o.isSkinnedMesh) { o.castShadow = true; o.frustumCulled = false; meshes.push(o); }
   });
   model.updateMatrixWorld(true);
+  const body = { model, bones, meshes, sockets: new Map() };
+  calibrateRig(body, riggedScene.userData.gloryClass);
   const rest = new Map();
   for (const [name, bone] of Object.entries(bones)) rest.set(name, {
     world: bone.getWorldQuaternion(new THREE.Quaternion()),
@@ -125,9 +130,11 @@ export function createMocapBody(riggedScene) {
     cache = { frameKey, clips: new WeakMap() };
     bodyClipCaches.set(riggedScene, cache);
   }
-  const body = { model, bones, meshes, rest, sockets: new Map(), retargetedClips: cache.clips };
+  body.rest = rest; body.retargetedClips = cache.clips;
   repairClothWeights(body, riggedScene.userData.gloryClass);
   repairAttachmentWeights(body, riggedScene.userData.gloryClass);
+  repairClericWeights(body, riggedScene.userData.gloryClass);
+  repairSleeveWeights(body, riggedScene.userData.gloryClass);
   return body;
 }
 
