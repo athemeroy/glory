@@ -2,7 +2,7 @@
 """宣传片素材录制（在 Mini 上跑）：每个镜头逐帧确定性推进 + 截图，编码成 clips/<镜头>.mp4；
 同时记录游戏发出的音效/喊招事件，用 mix.html 离线渲染成 sfx/<镜头>.wav，再渲染整段配乐 music.wav。
 字幕、转场、标题卡、旁白与混音由 remotion/ 合成（见 remotion/src/data.js）。
-用法：promo.py BASE_URL 输出目录      例：promo.py http://192.168.31.6:8780/ remotion/public/rec
+用法：promo.py BASE_URL 输出目录      例：promo.py http://localhost:8780/ remotion/public/rec（先运行 node server/server.mjs）
 环境变量：ONLY=镜头名,...（只重录部分）  RW/RH 分辨率（默认 1920x1080）"""
 import sys, os, json, time, shutil, base64, subprocess
 from playwright.sync_api import sync_playwright

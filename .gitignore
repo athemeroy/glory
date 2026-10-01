@@ -18,3 +18,8 @@ tools/promo/remotion/out/
 # Vercel 部署目录（tools/vercel/build.sh 生成）
 dist/
 .vercel/
+
+# 作者自用的部署配置（NAS 静态站、Vercel 项目关联），不随开源仓库发布
+site/deploy.sh
+site/nas/
+tools/vercel/link/

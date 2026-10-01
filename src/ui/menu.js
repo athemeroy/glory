@@ -40,7 +40,7 @@ export class Menu {
         <div class="logo-en">GLORY · 第一人称动作网游</div>
         <div class="tagline">操作、意识、手速——在第一人称里重现荣耀。越肩、第三人称随时切换。</div>
         <button class="btn primary big" id="enter">进入荣耀</button>
-        <div class="fine">同人作品 · 灵感来自《全职高手》。所有模型、音效由程序实时生成。<br>需要键盘和鼠标；推荐 Chrome / Edge 浏览器。</div>
+        <div class="fine">《全职高手》（蝴蝶蓝 著）粉丝同人作品，非官方，无任何商业利益。角色账号名、招式名归原著权利人所有，如有侵权请联系，我们会立即下线。<br>需要键盘和鼠标；推荐 Chrome / Edge 浏览器。</div>
       </div>`;
     click(s.querySelector('#enter'), () => { audio.init(); audio.music(true); this.main(); this.app.startAttract(); });
   }
@@ -161,9 +161,8 @@ export class Menu {
     this.clear();
     const s = el('div', 'screen pause-screen', this.root);
     const box = el('div', 'panel help-box', s, `<h2>联机对战</h2>
-      <p>当前页面不是由联机服务器提供的，无法连接房间。</p>
-      <p>在游戏目录运行：<kbd>node server/server.mjs</kbd>（需要 Node 18+，无需安装依赖），终端会显示局域网地址，例如 <b>http://192.168.x.x:8780/</b>。</p>
-      <p>两台电脑都用浏览器打开这个地址，一人“创建房间”，另一人在列表里“加入”。</p>`);
+      <p>这个浏览器不支持 WebRTC 直连，无法联机。</p>
+      <p>请换用新版 Chrome 或 Edge 再打开本页。</p>`);
     click(el('button', 'btn primary', box, '返回'), () => this.main());
   }
   netLobby(net) {
