@@ -81,7 +81,7 @@
 
 ## 宣传首页
 
-`site/`：宣传首页（宣传片、特色、十二张账号卡、试玩与联机说明）。`tools/vercel/build.sh` 把首页、`/play/` 游戏和 `/api/sig` 组装到 `dist/`，用 `vercel deploy dist --prod` 发布。
+`site/`：宣传首页（宣传片、特色、十二张账号卡、试玩与联机说明）。`tools/vercel/build.sh` 把首页、`/play/` 游戏和 `/api/sig` 组装到 `dist/`，用 `vercel deploy dist --prod` 发布。宣传视频不在Git中；没有本地视频时自动使用已有海报，干净检出也能构建。
 
 ## 美术资源与费用
 

@@ -39,7 +39,7 @@ export class TouchControls {
     });
     window.addEventListener('pointermove', (e) => this.move(e), { passive: false });
     for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-      document.addEventListener(event, (e) => this.up(e.pointerId));
+      document.addEventListener(event, (e) => this.up(e.pointerId, event !== 'pointerup'));
     }
     window.addEventListener('resize', () => this.reset());
     document.addEventListener('click', (e) => {
@@ -117,15 +117,20 @@ export class TouchControls {
     this.knob.style.transform = `translate(${x * p.radius}px, ${y * p.radius}px)`;
   }
 
-  up(id) {
+  up(id, cancelled = false) {
     const p = this.pointers.get(id);
     if (!p) return;
     this.pointers.delete(id);
     if (p.el.hasPointerCapture(id)) p.el.releasePointerCapture(id);
     if (p.kind === 'stick') { input.touchMove = [0, 0]; this.knob.style.transform = ''; p.el.classList.remove('touch-held'); }
+    if (p.kind === 'look' && cancelled) { input.mouseDX = 0; input.mouseDY = 0; }
     if (p.kind === 'action') {
       if (![...this.pointers.values()].some((other) => other.el === p.el)) p.el.classList.remove('touch-held');
-      if (![...this.pointers.values()].some((other) => other.action === p.action)) input.touchHold(p.action, false);
+      if (![...this.pointers.values()].some((other) => other.action === p.action)) {
+        // 系统取消手势不能留下待触发的技能；正常松手仍保留点按缓冲。
+        if (cancelled) input.touchPressedAt.delete(p.action);
+        input.touchHold(p.action, false);
+      }
     }
   }
 

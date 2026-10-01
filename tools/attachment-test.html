@@ -17,27 +17,29 @@ try {
   const baseline=createMocapBody(source);repairClothWeights(baseline,'skeleton');
   source.userData.gloryClass='skeleton';const fixed=createMocapBody(source);if(!fixed.attachment)repairAttachmentWeights(fixed,'skeleton');
   const before=baseline.meshes[0],after=fixed.meshes[0],si=before.geometry.attributes.skinIndex,sw=before.geometry.attributes.skinWeight,ai=after.geometry.attributes.skinIndex,aw=after.geometry.attributes.skinWeight,mask=after.userData.attachmentComponent;
-  check(fixed.attachment?.changed>0,'只识别骸骨卫兵已审计的独立后侧头饰');
-  check(fixed.attachment.targetVertices>2000&&fixed.attachment.targetVertices<3000,'目标连通片约2743顶点，真实头颈与肩甲不在该片');
+  check(fixed.attachment?.changed>0,'只识别骸骨卫兵已审计的独立后侧头饰与破裙');
+  check(fixed.attachment.targetVertices===2743+1860,'目标严格为2743头饰点与1860破裙点，真实头颈与腿脚在其他片');
   check(sourceMesh.geometry===sourceGeometry&&JSON.stringify(weights(sourceGeometry))===sourceWeights,'原始 GLB geometry 和权重保持不变');
-  let invalid=0,protectedVertices=0,headProtected=0,bindError=0;
-  const names=after.skeleton.bones.map(bone=>bone.name),head=names.indexOf('Head'),neck=names.indexOf('neck'),pollution=new Set(['LeftShoulder','RightShoulder','LeftArm','RightArm','LeftForeArm','RightForeArm','LeftHand','RightHand']);
+  let invalid=0,protectedVertices=0,headProtected=0,skirtVertices=0,bindError=0;
+  const names=after.skeleton.bones.map(bone=>bone.name),head=names.indexOf('Head'),neck=names.indexOf('neck'),hips=names.indexOf('Hips'),pollution=new Set(['LeftShoulder','RightShoulder','LeftArm','RightArm','LeftForeArm','RightForeArm','LeftHand','RightHand']);
   before.skeleton.update();after.skeleton.update();
   for(let i=0;i<ai.count;i++) {
-    let sum=0,oldNeck=0,newNeck=0,oldHead=0;
+    let sum=0,oldNeck=0,newNeck=0,oldHead=0,hipWeight=0;
     for(let k=0;k<4;k++) {
       const weight=aw.getComponent(i,k),index=ai.getComponent(i,k);sum+=weight;
       if(!Number.isFinite(weight)||weight<0||index>=names.length)invalid++;
       if(si.getComponent(i,k)===neck)oldNeck+=sw.getComponent(i,k);if(index===neck)newNeck+=weight;if(si.getComponent(i,k)===head)oldHead+=sw.getComponent(i,k);
+      if(index===hips)hipWeight+=weight;
       if(!mask[i]&&(index!==si.getComponent(i,k)||weight!==sw.getComponent(i,k)))throw Error('非目标连通片权重意外改变 '+i);
       if(mask[i]&&pollution.has(names[index])&&weight>1e-6)throw Error('目标头饰仍受肩臂影响 '+i);
     }
     if(Math.abs(sum-1)>1e-5||Math.abs(oldNeck-newNeck)>1e-5)invalid++;
     if(!mask[i]){protectedVertices++;if(oldHead>.5)headProtected++;}
+    else if(hipWeight>.99999)skirtVertices++;
     bindError=Math.max(bindError,point(before,i).distanceTo(point(after,i)));
   }
   check(invalid===0,'归一化权重有效、原有 neck 过渡逐项保持');
-  check(protectedVertices>ai.count*.85&&headProtected>2000,'真实头颈、肩甲及全部非目标连通片保持原权重');
+  check(protectedVertices===ai.count-4603&&headProtected>2000&&skirtVertices===1860,'全部22812非目标点原样，真头颈/肩甲保留，且仅1860裙点随Hips');
   check(bindError<1e-5,'绑定姿态形状保持不变');
   const shared=createMocapBody(source);check(shared.meshes[0].geometry===after.geometry,'实例复用只读头饰修复缓存');
   const ba=new MocapAnimator(baseline),fa=new MocapAnimator(fixed);

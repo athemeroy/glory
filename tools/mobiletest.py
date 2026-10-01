@@ -168,6 +168,7 @@ with sync_playwright() as pw:
         print('PASS touch rotates camera', flush=True)
         fingers.cancel()
         check(page, 'testInput.touchDown.size === 0 && testInput.moveAxes().every(v => v === 0)', 'pointer cancellation releases all holds')
+        check(page, 'testInput.touchPressedAt.size === 0 && testInput.mouseDX === 0 && testInput.mouseDY === 0', 'pointer cancellation clears buffered skills and look deltas')
 
         # 每个屏幕动作都写入原有消费缓冲；技能名、形态和大招都覆盖。
         for action in ['jump', 'dash', 'lockon', 'interact', 's1', 's2', 's3', 's4', 's5', 's6', 'ult', 'form1', 'form2', 'form3', 'form4']:

@@ -50,7 +50,7 @@ a { color: var(--gold2); }
 .sub { margin: 10px auto 0; color: var(--mute); font-size: 16px; }
 
 .player { margin: 28px auto 0; max-width: 960px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #000; box-shadow: 0 24px 60px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 0, 0, .6); }
-.player video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.player video, .player img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; background: #000; }
 .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 18px; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 0 20px; border-radius: 10px; font-size: 16px; text-decoration: none; border: 1px solid var(--line); color: var(--ink); background: rgba(255, 255, 255, .03); }
 .btn.primary { background: linear-gradient(180deg, #e8b75a, #c48f3a); color: #1a140a; border-color: transparent; font-weight: 600; }

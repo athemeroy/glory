@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="../style.css"></head><body>
+<canvas id="game"></canvas><div id="hud"><div class="skill-bar"><button type="button" class="slot" data-action="attack" aria-label="测试普攻">普攻</button><button type="button" class="slot" data-action="special" aria-label="测试格挡">格挡</button></div></div>
+<script type="module">
+import { TouchControls } from '../src/ui/touch.js';
+import { input } from '../src/engine/input.js';
+window.__errors=[];window.addEventListener('error',e=>__errors.push(e.message));
+const canvas=document.querySelector('#game');input.attach(canvas);
+const app={canvas,hud:{showStats(){}},game:{}};
+window.__touchTest={input,touch:new TouchControls(app)};input.setTouchMode(true);input.enabled=true;
+window.__ready=true;
+</script></body></html>

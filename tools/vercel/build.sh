@@ -13,7 +13,21 @@ printf '.env*\n.vercel\n' > dist/.vercelignore
 rsync -a site/img site/fonts dist/
 # 首页：去掉 1080p 下载按钮（大文件不放 Vercel）
 sed -e '/glory-promo-1080p\.mp4/d' site/index.html > dist/index.html
-cp media/glory-promo-small.mp4 dist/media/glory-promo.mp4
+if [ -f media/glory-promo-small.mp4 ]; then
+  cp media/glory-promo-small.mp4 dist/media/glory-promo.mp4
+else
+  # 视频只随NAS同步；干净检出用已有海报，首页与游戏仍可独立构建。
+  awk '
+    /<video[ >]/ { print "        <img src=\"img/poster.jpg\" alt=\"荣耀第一人称战斗画面\" width=\"1280\" height=\"720\">"; skip=1 }
+    /<\/video>/ { skip=0; next }
+    !skip {
+      gsub(">宣传片</a>", ">游戏画面</a>")
+      sub("宣传片约 1 分钟，全部是第一人称的游戏画面与原声。", "")
+      print
+    }
+  ' dist/index.html > dist/index.html.tmp
+  mv dist/index.html.tmp dist/index.html
+fi
 rsync -a index.html style.css src vendor assets dist/play/
 cp api/sig.js dist/api/ && cp server/sig-core.mjs dist/server/
 cp tools/vercel/vercel.json dist/

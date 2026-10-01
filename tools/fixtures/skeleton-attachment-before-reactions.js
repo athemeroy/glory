@@ -1,6 +1,7 @@
+// 603f4c9 冻结夹具：只由骸骨反应回归页引用，保留已修复前的独立旧场。
 // 修复已审计服饰连通片的错绑，所有非目标人体网格保持原绑定。
 import * as THREE from 'three';
-import { markSharedResource } from './model.js';
+import { markSharedResource } from '../../src/game/model.js';
 
 const prepared = new WeakMap();
 const classes = new Set(['skeleton', 'berserker', 'warlock', 'frostcaster', 'thug']);
@@ -60,18 +61,10 @@ function prepare(mesh, body, classId) {
     component.minY = Math.min(component.minY, points[i * 3 + 1]); component.maxY = Math.max(component.maxY, points[i * 3 + 1]);
     component.minZ = Math.min(component.minZ, points[i * 3 + 2]); component.maxZ = Math.max(component.maxZ, points[i * 3 + 2]);
   }
-  const selectedComponents = new Set(), skirtComponents = new Set();
+  const selectedComponents = new Set();
   for (const [id, component] of components) {
     // 骸骨卫兵的后侧羽缨是独立、平均 Head>90% 的头饰片；头颈与肩甲不满足这些条件。
     if (classId === 'skeleton' && component.count > 100 && component.headWeight / component.count > .90 && component.minY > neck.y + .01 && component.maxY > head.y + .15 && component.maxZ < head.z - .025 && component.minZ < head.z - .18) selectedComponents.add(id);
-    // 骸骨卫兵的灰蓝破裙与棕色后摆是独立1860点片，已认证不包含真腿/脚。
-    // 原cloth中轴/骨距门槛让同一裙边相邻点分别随腿和腰，起身会拉出70cm尖面。
-    if (classId === 'skeleton' && si.count === 27415 && component.count === 1860 &&
-        Math.abs(component.minX + .3151468) < .003 && Math.abs(component.maxX - .3668103) < .003 &&
-        Math.abs(component.minY - .1515451) < .003 && Math.abs(component.maxY - 1.0608220) < .003 &&
-        Math.abs(component.minZ - .0774960) < .003 && Math.abs(component.maxZ - .4976900) < .003) {
-      selectedComponents.add(id); skirtComponents.add(id);
-    }
     // 狂战士前腰白色挂布是独立 294 顶点片；不可能的低处 Head 权重与腰带边界共同确认它。
     if (classId === 'berserker' && component.count > 200 && component.count < 400 && component.lowHeadVertices > 10 && component.minY > hips.y - .60 && component.minY < hips.y - .35 && component.maxY > hips.y && component.maxY < hips.y + .12 && component.minZ > hips.z + .06 && component.maxZ < hips.z + .25 && component.minX < hips.x && component.maxX > hips.x && component.maxX - component.minX < .40) selectedComponents.add(id);
     // 术士腰带挂下的独立 855 顶点中央袍片跨两腿，真实腿脚位于其他连通片。
@@ -100,10 +93,6 @@ function prepare(mesh, body, classId) {
       if (amount <= 1e-6) continue;
     }
     componentMask[i] = 1; targetVertices++;
-    if (skirtComponents.has(root(welded[i]))) {
-      indices.set([hipIndex, 0, 0, 0], i * 4); weights.set([1, 0, 0, 0], i * 4);
-      strength[i] = 1; changed++; continue;
-    }
     if (classId === 'thug') {
       const component = components.get(root(welded[i])), total = component.rightLegWeight + component.rightUpLegWeight;
       indices.set([rightLegIndex, rightUpLegIndex, 0, 0], i * 4); weights.set([component.rightLegWeight / total, component.rightUpLegWeight / total, 0, 0], i * 4);

@@ -1,0 +1,94 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Skeleton reaction cloth trial</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">独立验证骸骨卫兵长手指与整片破裙候选…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+import { MOBS } from '../src/data/enemies.js';
+import { trialSkeletonWeights } from './skeleton-reaction-trial.js';
+import { repairClothWeights as repairOldClothWeights } from './fixtures/skeleton-cloth-before-reactions.js';
+import { repairAttachmentWeights as repairOldAttachmentWeights } from './fixtures/skeleton-attachment-before-reactions.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label);
+const point=new THREE.Vector3(),normal=new THREE.Vector3(),part=new THREE.Vector3();
+function samples(body){
+  body.model.updateMatrixWorld(true);const mesh=body.meshes[0],g=mesh.geometry;mesh.skeleton.update();
+  const transforms=mesh.skeleton.bones.map((_,i)=>new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().fromArray(mesh.skeleton.boneMatrices,i*16)));
+  const bind=new THREE.Matrix3().setFromMatrix4(mesh.bindMatrix),inverse=new THREE.Matrix3().setFromMatrix4(mesh.bindMatrixInverse),world=new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
+  const points=new Float32Array(g.attributes.position.count*3),normals=new Float32Array(points.length),si=g.attributes.skinIndex,sw=g.attributes.skinWeight;
+  for(let i=0;i<si.count;i++){
+    mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld).toArray(points,i*3);
+    point.fromBufferAttribute(g.attributes.normal,i).applyMatrix3(bind);normal.set(0,0,0);
+    for(let k=0;k<4;k++){const weight=sw.getComponent(i,k);if(weight)normal.addScaledVector(part.copy(point).applyMatrix3(transforms[si.getComponent(i,k)]),weight)}
+    normal.applyMatrix3(inverse).applyMatrix3(world).normalize().toArray(normals,i*3);
+  }
+  return {points,normals};
+}
+const distance=(p,a,b)=>Math.hypot(p[a*3]-p[b*3],p[a*3+1]-p[b*3+1],p[a*3+2]-p[b*3+2]);
+function face(p,a,b,c){
+  const ax=p[b*3]-p[a*3],ay=p[b*3+1]-p[a*3+1],az=p[b*3+2]-p[a*3+2],bx=p[c*3]-p[a*3],by=p[c*3+1]-p[a*3+1],bz=p[c*3+2]-p[a*3+2];
+  return normal.set(ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx);
+}
+function faceValue(sample,tri){
+  face(sample.points,tri.a,tri.b,tri.c);const area=normal.length(),p=sample.normals;
+  point.set(p[tri.a*3]+p[tri.b*3]+p[tri.c*3],p[tri.a*3+1]+p[tri.b*3+1]+p[tri.c*3+1],p[tri.a*3+2]+p[tri.b*3+2]+p[tri.c*3+2]).normalize();
+  return {ratio:area/tri.area,dot:area>1e-12?normal.divideScalar(area).dot(point)*tri.sign:0};
+}
+
+try{
+  await loadClipLibrary('../assets/anim/anims.glb');const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/skeleton.glb')).scene;
+  const original=createMocapBody(source),sourceGeometry=original.meshes[0].geometry,sourceIndices=sourceGeometry.attributes.skinIndex.array.slice(),sourceWeights=sourceGeometry.attributes.skinWeight.array.slice(),bind=samples(original);
+  const current=createMocapBody(source);repairOldClothWeights(current,'skeleton');repairOldAttachmentWeights(current,'skeleton');
+  const referenceGeometry=current.meshes[0].geometry,oldIndices=referenceGeometry.attributes.skinIndex.array.slice(),oldWeights=referenceGeometry.attributes.skinWeight.array.slice();
+  // 独立候选只生成预期权重，随后还原旧参考网格。真正动画比较使用raw/旧场/新生产三实例。
+  current.model.userData.gloryClass='skeleton';const trial=trialSkeletonWeights(original,current,bind),expected=current.meshes[0].geometry;
+  current.meshes[0].geometry=referenceGeometry;delete current.meshes[0].userData.reactionTrial;
+  source.userData.gloryClass='skeleton';const candidate=createMocapBody(source),fixed=candidate.meshes[0].geometry;
+  check(trial.hands.length===1832,'源Hand>=98%且距腕22cm内的1832长手指点恢复原绑定');
+  check(trial.skirt.length===1860,'仅已认证1860顶点独立破裙片统一随Hips');
+  let untouched=true,handExact=true,productionExact=true,bindError=0;const candidateBind=samples(candidate);
+  for(let i=0;i<trial.target.length;i++){
+    bindError=Math.max(bindError,Math.hypot(bind.points[i*3]-candidateBind.points[i*3],bind.points[i*3+1]-candidateBind.points[i*3+1],bind.points[i*3+2]-candidateBind.points[i*3+2]));
+    for(let k=0;k<4;k++){
+      const at=i*4+k;if(!trial.target[i]&&(fixed.attributes.skinIndex.array[at]!==oldIndices[at]||fixed.attributes.skinWeight.array[at]!==oldWeights[at]))untouched=false;
+      if(fixed.attributes.skinIndex.getComponent(i,k)!==expected.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==expected.attributes.skinWeight.getComponent(i,k))productionExact=false;
+      // GLB 原属性是 stride52 的交错缓冲；按 getComponent 读取语义值，不能用原 array[i*4+k]。
+      if(trial.target[i]===1&&(fixed.attributes.skinIndex.getComponent(i,k)!==sourceGeometry.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==sourceGeometry.attributes.skinWeight.getComponent(i,k)))handExact=false;
+    }
+  }
+  check(untouched&&productionExact,'新生产逐分量等于独立候选，其他身体/披风/头饰保持旧场参考值');check(handExact,'目标真实手指权重逐分量等于原GLB');check(bindError<1e-5,'全顶点绑定形状误差小于0.01mm');
+  check(fixed.index===sourceGeometry.index&&fixed.attributes.position===sourceGeometry.attributes.position&&fixed.attributes.normal===sourceGeometry.attributes.normal,'原三角索引/位置/法线保持共享原数据');
+  const index=sourceGeometry.index,edges=[],triangles=[],seen=new Set();
+  for(let i=0;i<index.count;i+=3){
+    const a=index.getX(i),b=index.getX(i+1),c=index.getX(i+2);
+    for(const[x,y]of[[a,b],[b,c],[c,a]]){const key=Math.min(x,y)+':'+Math.max(x,y);if(!seen.has(key)){seen.add(key);const rest=distance(bind.points,x,y);if(rest>=.005)edges.push({a:x,b:y,rest})}}
+    const area=face(bind.points,a,b,c).length();if(area<1e-8)continue;
+    const tri={a,b,c,area,sign:1};const value=faceValue(bind,tri);tri.sign=value.dot<0?-1:1;tri.orientationReliable=Math.abs(value.dot)>.05;triangles.push(tri);
+  }
+  const pairs=[original,current,candidate].map(body=>({body,anim:new MocapAnimator(body)})),C=MOBS.skeleton,state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0};
+  const known=[[2025,1997],[13850,604],[44,34],[13648,13650]];
+  function compare(pose){
+    const raw=samples(original),before=samples(current),after=samples(candidate),newSpikes=[],newFolds=[],newCollapsed=[],counts={beforeFolded:0,afterFolded:0};
+    let maxBefore=1,maxAfter=1;
+    for(const edge of edges){const oldLength=distance(before.points,edge.a,edge.b),newLength=distance(after.points,edge.a,edge.b);maxBefore=Math.max(maxBefore,oldLength/edge.rest);maxAfter=Math.max(maxAfter,newLength/edge.rest);if(newLength>oldLength+.1&&newLength>edge.rest*1.8)newSpikes.push({...edge,before:oldLength,after:newLength})}
+    for(const tri of triangles){
+      const old=faceValue(before,tri),next=faceValue(after,tri);if(!Number.isFinite(next.ratio)||!Number.isFinite(next.dot))throw Error('非有限面 '+tri.a);
+      if(tri.orientationReliable&&old.dot<-.1&&old.ratio>=.05)counts.beforeFolded++;if(tri.orientationReliable&&next.dot<-.1&&next.ratio>=.05)counts.afterFolded++;
+      if(tri.orientationReliable&&next.dot<-.1&&next.ratio>=.05&&old.dot>=-.1)newFolds.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
+      if(next.ratio<.05&&old.ratio>=.05)newCollapsed.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
+    }
+    const metric={pose,edges:edges.length,faces:triangles.length,maxBefore,maxAfter,newSpikes:newSpikes.length,newFolds:newFolds.length,newCollapsed:newCollapsed.length,counts,known:known.map(([a,b])=>({a,b,rest:distance(bind.points,a,b),source:distance(raw.points,a,b),before:distance(before.points,a,b),after:distance(after.points,a,b)})),worstNew:newSpikes.slice(0,10),worstFold:newFolds.slice(0,10),worstCollapsed:newCollapsed.slice(0,10)};__metrics.push(metric);
+    check(!newSpikes.length,pose+': 全网格无新增>10cm拉伸边');check(!newFolds.length&&!newCollapsed.length,pose+': 相同原三角集合无新增折返/压扁');
+  }
+  for(let i=0;i<60;i++)for(const pair of pairs)pair.anim.update(1/60,state);
+  compare('stance');
+  for(const[phase,frames,duration]of[['down',39,.65],['getup',27,.45]])for(let frame=1;frame<=frames;frame++){
+    const st={...state,react:{type:phase,t:(frame-1)/60,dur:duration}};for(const pair of pairs)pair.anim.update(1/60,st);
+    compare(phase+'-'+frame);
+  }
+  for(const[pose,st]of[['run',{...state,speed:5.6}],['attack',{...state,action:{clip:C.chain[0].anim,stage:'active',t:.65,key:'trial'}}],['overhead',{...state,action:{clip:'jumpslam',stage:'wind',t:1,key:'trial'}}],['down-held',{...state,react:{type:'down',t:.8,dur:1}}]]){for(let i=0;i<60;i++)for(const pair of pairs)pair.anim.update(1/60,st);compare(pose)}
+  check(sourceGeometry.attributes.skinIndex.array.every((v,i)=>v===sourceIndices[i])&&sourceGeometry.attributes.skinWeight.array.every((v,i)=>v===sourceWeights[i]),'原GLB蒙皮数据与所有缓存实例未被试验覆盖');
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

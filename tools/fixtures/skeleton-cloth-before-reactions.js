@@ -1,10 +1,11 @@
+// 603f4c9 冻结夹具：只由骸骨反应回归页引用，保留已修复前的独立旧场。
 // 修复已审计角色的披风/裙摆错绑：保留人体关节，仅重绑远离肢体的布面。
 import * as THREE from 'three';
-import { markSharedResource } from './model.js';
+import { markSharedResource } from '../../src/game/model.js';
 
 const profiles = {
   berserker: { rear: [0.02, -0.08], front: [0.28, 0.40] },
-  skeleton: { rear: [-0.08, -0.18], front: [0.28, 0.40], center: [0.04, 0.12], protectHands: true },
+  skeleton: { rear: [-0.08, -0.18], front: [0.28, 0.40], center: [0.04, 0.12] },
 };
 const prepared = new WeakMap();
 const smooth = (a, b, value) => {
@@ -30,24 +31,12 @@ function prepare(mesh, body, profile) {
   if (hip < 0 || spine < 0) return null;
   const hips = body.bones.Hips.getWorldPosition(new THREE.Vector3()), hipY = hips.y;
   const segments = limbSegments(body), point = new THREE.Vector3(), nearest = new THREE.Vector3();
-  // 24 骨模型没有指骨；真实长手指能离腕超过13cm，不能把它们当成低处衣摆。
-  const hands = profile.protectHands ? ['Left', 'Right'].map(side => {
-    const index = names.indexOf(side + 'Hand');
-    return index >= 0 ? { index, position: mesh.skeleton.bones[index].getWorldPosition(new THREE.Vector3()) } : null;
-  }).filter(Boolean) : [];
   const indices = new Uint16Array(si.count * 4), weights = new Float32Array(sw.count * 4), strength = new Float32Array(si.count);
   let changed = 0, protectedLimbVertices = 0;
   mesh.skeleton.update();
   for (let i = 0; i < si.count; i++) {
     for (let k = 0; k < 4; k++) { indices[i * 4 + k] = si.getComponent(i, k); weights[i * 4 + k] = sw.getComponent(i, k); }
     mesh.getVertexPosition(i, point).applyMatrix4(mesh.matrixWorld);
-    let protectedHand = false;
-    for (const hand of hands) {
-      let weight = 0;
-      for (let k = 0; k < 4; k++) if (indices[i * 4 + k] === hand.index) weight += weights[i * 4 + k];
-      if (weight >= 0.98 && point.distanceTo(hand.position) <= 0.22) { protectedHand = true; break; }
-    }
-    if (protectedHand) { protectedLimbVertices++; continue; }
     let distance = Infinity;
     for (const segment of segments) { segment.closestPointToPoint(point, true, nearest); distance = Math.min(distance, point.distanceTo(nearest)); }
     // 距骨段 13cm 内的实际手臂、肘、膝与腿完全不改。
