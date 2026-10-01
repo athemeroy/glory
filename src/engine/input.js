@@ -80,7 +80,7 @@ class Input {
       }
       if (e.code === 'Escape') { if (this.onEscape) this.onEscape(); return; }
       if (this.enabled && (e.code === 'Tab' || e.code === 'Space' || e.code === 'F5' || (e.ctrlKey && e.code === 'KeyW'))) e.preventDefault();
-      if (!e.repeat) this._press(e.code);
+      if (this.enabled && !e.repeat) this._press(e.code);
       if (this.onKey) this.onKey(e.code, true, e);
     };
     const ku = (e) => { this.down.delete(e.code); if (this.onKey) this.onKey(e.code, false, e); };

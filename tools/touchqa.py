@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""真实触摸取消回归，纯 DOM 页面不创建 WebGL。"""
+"""真实触摸取消与菜单键盘输入回归，纯 DOM 页面不创建 WebGL。"""
 import argparse
 import json
 from pathlib import Path
@@ -49,5 +49,25 @@ with sync_playwright() as pw:
     cancel()
     check('__touchTest.input.mouseDX===0 && __touchTest.input.mouseDY===0 && __touchTest.touch.pointers.size===0','系统取消视角手指时清除未消费转向')
     check('__errors.length===0','无浏览器运行错误')
+    page.evaluate('__touchTest.input.enabled=false')
+    page.keyboard.down('w')
+    page.evaluate('__touchTest.input.enabled=true')
+    check('!__touchTest.input.held("forward") && __touchTest.input.moveAxes()[1]===0','暂停菜单按下的移动键不会带入继续游戏')
+    page.keyboard.up('w')
+    page.evaluate('''() => {
+      __touchTest.input.enabled=false;
+      const button=document.createElement('button');button.id='resume-proof';button.textContent='继续游戏';
+      button.style.cssText='position:fixed;z-index:100;top:200px;left:150px';
+      button.onclick=()=>{__touchTest.input.enabled=true};document.body.appendChild(button);button.focus();
+    }''')
+    page.keyboard.press('Space')
+    check('__touchTest.input.enabled && !__touchTest.input.consume("jump",5000)','真实空格激活继续按钮不会留下跳跃缓冲')
+    page.evaluate('document.querySelector("#resume-proof").remove()')
+    page.keyboard.down('w');page.keyboard.down('Shift');page.keyboard.press('Space')
+    check('__touchTest.input.moveAxes()[1]===1 && __touchTest.input.held("dash") && __touchTest.input.consume("jump",5000)','继续后正常键盘移动/闪避/跳跃仍有效')
+    page.keyboard.up('Shift');page.keyboard.up('w')
+    page.evaluate('''()=>{__touchTest.input.enabled=false;__touchTest.input.captureNext=code=>window.__captured=code;__touchTest.input.onEscape=()=>window.__escaped=true}''')
+    page.keyboard.press('k');page.keyboard.press('Escape')
+    check('__captured==="KeyK" && __escaped && __touchTest.input.down.size===0','菜单改键与Esc仍有效且不登记战斗输入')
     (output/'touch-cancel-proof.json').write_text(json.dumps({'results':passed},ensure_ascii=False,indent=2))
     context.close();browser.close()
