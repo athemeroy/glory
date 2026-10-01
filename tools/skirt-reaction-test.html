@@ -1,0 +1,85 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Skirt continuous reaction regression</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">对照原GLB检查完整倒地/起身与下袍边界…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+import { CLASSES } from '../src/data/classes.js';
+import { repairSkirtWeights } from '../src/game/skirt.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label);
+const point=new THREE.Vector3(),normal=new THREE.Vector3(),part=new THREE.Vector3();
+function samples(body){
+  body.model.updateMatrixWorld(true);const mesh=body.meshes[0],g=mesh.geometry;mesh.skeleton.update();
+  const transforms=mesh.skeleton.bones.map((_,i)=>new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().fromArray(mesh.skeleton.boneMatrices,i*16)));
+  const bind=new THREE.Matrix3().setFromMatrix4(mesh.bindMatrix),inverse=new THREE.Matrix3().setFromMatrix4(mesh.bindMatrixInverse),world=new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
+  const points=new Float32Array(g.attributes.position.count*3),normals=new Float32Array(points.length),si=g.attributes.skinIndex,sw=g.attributes.skinWeight;
+  for(let i=0;i<si.count;i++){
+    mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld).toArray(points,i*3);
+    point.fromBufferAttribute(g.attributes.normal,i).applyMatrix3(bind);normal.set(0,0,0);
+    for(let k=0;k<4;k++){const weight=sw.getComponent(i,k);if(weight)normal.addScaledVector(part.copy(point).applyMatrix3(transforms[si.getComponent(i,k)]),weight)}
+    normal.applyMatrix3(inverse).applyMatrix3(world).normalize().toArray(normals,i*3);
+  }
+  return {points,normals};
+}
+const distance=(p,a,b)=>Math.hypot(p[a*3]-p[b*3],p[a*3+1]-p[b*3+1],p[a*3+2]-p[b*3+2]);
+function face(p,a,b,c){
+  const ax=p[b*3]-p[a*3],ay=p[b*3+1]-p[a*3+1],az=p[b*3+2]-p[a*3+2],bx=p[c*3]-p[a*3],by=p[c*3+1]-p[a*3+1],bz=p[c*3+2]-p[a*3+2];
+  return normal.set(ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx);
+}
+function faceValue(sample,tri){
+  face(sample.points,tri.a,tri.b,tri.c);const area=normal.length(),p=sample.normals;
+  point.set(p[tri.a*3]+p[tri.b*3]+p[tri.c*3],p[tri.a*3+1]+p[tri.b*3+1]+p[tri.c*3+1],p[tri.a*3+2]+p[tri.b*3+2]+p[tri.c*3+2]).normalize();
+  return {ratio:area/tri.area,dot:area>1e-12?normal.divideScalar(area).dot(point)*tri.sign:0};
+}
+
+try{
+  await loadClipLibrary('../assets/anim/anims.glb');
+  for(const cls of new URLSearchParams(location.search).get('classes')?.split(',')||['striker','witch']){
+  const source=(await new GLTFLoader().loadAsync(`../assets/models/rigged/${cls}.glb`)).scene;
+  // The baseline is created before the class tag, so future production hooks cannot repair both sides.
+  const original=createMocapBody(source),sourceGeometry=original.meshes[0].geometry,sourceIndices=sourceGeometry.attributes.skinIndex.array.slice(),sourceWeights=sourceGeometry.attributes.skinWeight.array.slice(),bind=samples(original);
+  source.userData.gloryClass=cls;const candidate=createMocapBody(source);if(!candidate.skirt)repairSkirtWeights(candidate,cls);
+  const fixed=candidate.meshes[0].geometry,candidateBind=samples(candidate);let bindError=0;
+  check(candidate.skirt?.changed===(cls==='striker'?472:887),cls+': 仅已审计的局部下袍被修复');
+  for(let i=0;i<sourceGeometry.attributes.position.count;i++)bindError=Math.max(bindError,Math.hypot(bind.points[i*3]-candidateBind.points[i*3],bind.points[i*3+1]-candidateBind.points[i*3+1],bind.points[i*3+2]-candidateBind.points[i*3+2]));
+  check(bindError<1e-5,cls+': 全顶点绑定外形误差小于0.01mm');
+  check(fixed.index===sourceGeometry.index&&fixed.attributes.position===sourceGeometry.attributes.position&&fixed.attributes.normal===sourceGeometry.attributes.normal,cls+': 原完整索引/位置/法线保持共享原数据');
+  const index=sourceGeometry.index,edges=[],triangles=[],seen=new Set();
+  for(let i=0;i<index.count;i+=3){
+    const a=index.getX(i),b=index.getX(i+1),c=index.getX(i+2);
+    for(const[x,y]of[[a,b],[b,c],[c,a]]){const key=Math.min(x,y)+':'+Math.max(x,y);if(!seen.has(key)){seen.add(key);const rest=distance(bind.points,x,y);if(rest>=.005)edges.push({a:x,b:y,rest})}}
+    const area=face(bind.points,a,b,c).length();if(area<1e-8)continue;
+    const tri={a,b,c,area,sign:1};const value=faceValue(bind,tri);tri.sign=value.dot<0?-1:1;tri.orientationReliable=Math.abs(value.dot)>.05;triangles.push(tri);
+  }
+  const C=CLASSES[cls],pairs=[original,candidate].map(body=>{const rig=buildCharacter(C.look),proc=new Animator(rig);proc.breath=0;return {body,rig,proc,anim:new MocapAnimator(body,rig)}}),state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0};
+  const known=cls==='striker'?[[600,589],[21335,21239]]:[[11599,11529]];
+  function compare(pose){
+    const before=samples(original),after=samples(candidate),newSpikes=[],newFolds=[],newCollapsed=[],counts={beforeFolded:0,afterFolded:0};
+    let maxBefore=1,maxAfter=1;
+    for(const edge of edges){const oldLength=distance(before.points,edge.a,edge.b),newLength=distance(after.points,edge.a,edge.b);maxBefore=Math.max(maxBefore,oldLength/edge.rest);maxAfter=Math.max(maxAfter,newLength/edge.rest);if(newLength>oldLength+.1&&newLength>edge.rest*1.8)newSpikes.push({...edge,before:oldLength,after:newLength})}
+    for(const tri of triangles){
+      const old=faceValue(before,tri),next=faceValue(after,tri);if(!Number.isFinite(next.ratio)||!Number.isFinite(next.dot))throw Error('非有限面 '+tri.a);
+      if(tri.orientationReliable&&old.dot<-.1&&old.ratio>=.05)counts.beforeFolded++;if(tri.orientationReliable&&next.dot<-.1&&next.ratio>=.05)counts.afterFolded++;
+      if(tri.orientationReliable&&next.dot<-.1&&next.ratio>=.05&&old.dot>=-.1)newFolds.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
+      if(next.ratio<.05&&old.ratio>=.05)newCollapsed.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
+    }
+    const metric={cls,pose,edges:edges.length,faces:triangles.length,maxBefore,maxAfter,newSpikes:newSpikes.length,newFolds:newFolds.length,newCollapsed:newCollapsed.length,counts,known:known.map(([a,b])=>({a,b,rest:distance(bind.points,a,b),before:distance(before.points,a,b),after:distance(after.points,a,b)})),worstNew:newSpikes.slice(0,10),worstFold:newFolds.slice(0,10),worstCollapsed:newCollapsed.slice(0,10)};__metrics.push(metric);
+    check(!newSpikes.length,cls+' '+pose+': 全网格无新增>10cm拉伸边');check(!newFolds.length&&!newCollapsed.length,cls+' '+pose+': 相同原三角集合无新增折返/压扁');
+  }
+  for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,state);pair.anim.update(1/60,state)}
+  compare('stance');
+  for(const[phase,frames,duration]of[['down',39,.65],['getup',27,.45]])for(let frame=1;frame<=frames;frame++){
+    const st={...state,react:{type:phase,t:(frame-1)/60,dur:duration}};for(const pair of pairs){pair.proc.update(1/60,st);pair.anim.update(1/60,st)}
+    compare(phase+'-'+frame);
+  }
+  for(const[pose,st]of[['run',{...state,speed:5.6}],['attack',{...state,action:{clip:C.chain[0].anim,stage:'active',t:.65,key:'trial'}}],['overhead',{...state,action:{clip:'jumpslam',stage:'wind',t:1,key:'trial'}}],['down-held',{...state,react:{type:'down',t:.8,dur:1}}]]){for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,st);pair.anim.update(1/60,st)}compare(pose)}
+  check(sourceGeometry.attributes.skinIndex.array.every((v,i)=>v===sourceIndices[i])&&sourceGeometry.attributes.skinWeight.array.every((v,i)=>v===sourceWeights[i]),cls+': 原GLB蒙皮数据未被修复实例覆盖');
+  for(const pair of pairs){pair.anim.mixer.stopAllAction();disposeRig({root:pair.body.model},{sharedRoots:[source]});disposeRig(pair.rig)}
+  }
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

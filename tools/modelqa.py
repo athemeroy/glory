@@ -25,11 +25,14 @@ parser.add_argument('--forms',default='')
 parser.add_argument('--samples',default='',help='Comma-separated class:animation:normalized-time samples')
 parser.add_argument('--probes',default='',help='Comma-separated class:vertex-a:vertex-b:pose marked closeups')
 parser.add_argument('--source-probes',default='',help='Comma-separated class:vertex-a:vertex-b:pose closeups with original GLB weights and native hands')
+parser.add_argument('--fp-triangles',default='',help='Comma-separated class:pose:a-b-c/a-b-c exact original source face colors in first-person view')
 parser.add_argument('--component-probes',default='',help='Comma-separated class:vertex:pose connected-component highlights')
+parser.add_argument('--source-component-probes',default='',help='Connected-component highlights using untouched source GLB weights and native hands')
 parser.add_argument('--region-probes',default='',help='Comma-separated class:mesh-user-data-field:pose repair-region highlights')
 parser.add_argument('--reaction-samples',default='',help='Comma-separated class:reaction:frames, after sixty real stance frames and actual fallen pre-roll for getup')
 parser.add_argument('--reaction-probes',default='',help='Comma-separated class:vertex-a:vertex-b:reaction:frames marked actual reaction sequence')
 parser.add_argument('--robe-trial',action='store_true',help='Apply the isolated robe candidate only to audit world bodies; never changes game modules')
+parser.add_argument('--skirt-trial',action='store_true',help='Apply the isolated skirt candidate only to audit world bodies; never changes game modules')
 parser.add_argument('--check-pages',default='',help='Comma-separated test HTML pages exposing __ready and __errors')
 parser.add_argument('--app-check',action='store_true',help='Verify the actual default asset-loading game path on desktop and phone')
 parser.add_argument('--app-accounts',default='yysf',help='Comma-separated real training accounts; two-handed accounts also verify world/FP grips and mirror rendering')
@@ -65,7 +68,7 @@ with sync_playwright() as pw:
     page.on('pageerror',lambda error: errors.append(str(error)))
     try:
         initial='/tools/anim-regression.html' if args.cpu_benchmark else '/tools/model-audit.html'
-        trial_query='&'.join(flag+'=1' for flag,enabled in [('robeTrial',args.robe_trial)] if enabled)
+        trial_query='&'.join(flag+'=1' for flag,enabled in [('robeTrial',args.robe_trial),('skirtTrial',args.skirt_trial)] if enabled)
         page.goto(args.url.rstrip('/')+initial+('?'+trial_query if trial_query else ''),wait_until='networkidle',timeout=90000)
         page.wait_for_function('window.__ready',timeout=90000,polling=100)
         if args.cpu_benchmark:
@@ -99,6 +102,11 @@ with sync_playwright() as pw:
             cls,a,b,pose=probe.split(':')
             result=page.evaluate('([c,a,b,p])=>__probe(c,a,b,p,{rawSource:true})',[cls,int(a),int(b),pose])
             metrics.append(result);page.screenshot(path=str(output/f'{cls}-source-probe-{a}-{b}-{pose}.png'));log_metric(result)
+        for probe in filter(None,args.fp_triangles.split(',')):
+            cls,pose,faces=probe.split(':')
+            triangles=[[int(vertex) for vertex in triangle.split('-')] for triangle in faces.split('/')]
+            result=page.evaluate('([c,triangles,p])=>__fpTriangles(c,triangles,p)',[cls,triangles,pose])
+            metrics.append(result);page.screenshot(path=str(output/f'{cls}-fp-triangles-{pose}.png'));log_metric(result)
         for sample in filter(None,args.reaction_samples.split(',')):
             cls,reaction,frames=sample.split(':')
             result=page.evaluate('([c,r,n])=>__audit(c,"reaction",null,{react:r,frames:n})',[cls,reaction,int(frames)])
@@ -111,6 +119,10 @@ with sync_playwright() as pw:
             cls,vertex,pose=probe.split(':')
             result=page.evaluate('([c,i,p])=>__componentProbe(c,i,p)',[cls,int(vertex),pose])
             metrics.append(result);page.screenshot(path=str(output/f'{cls}-component-{vertex}-{pose}.png'));log_metric(result)
+        for probe in filter(None,args.source_component_probes.split(',')):
+            cls,vertex,pose=probe.split(':')
+            result=page.evaluate('([c,i,p])=>__componentProbe(c,i,p,{rawSource:true})',[cls,int(vertex),pose])
+            metrics.append(result);page.screenshot(path=str(output/f'{cls}-source-component-{vertex}-{pose}.png'));log_metric(result)
         for probe in filter(None,args.region_probes.split(',')):
             cls,field,pose=probe.split(':')
             result=page.evaluate('([c,f,p])=>__regionProbe(c,f,p)',[cls,field,pose])

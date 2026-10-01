@@ -11,6 +11,7 @@ import { GroundReactionSupport, reactionGroundOffset } from './ground-contact.js
 import { repairClericWeights } from './cleric-weights.js';
 import { repairSleeveWeights } from './sleeve.js';
 import { repairRobeWeights } from './robe.js';
+import { repairSkirtWeights } from './skirt.js';
 
 const loader = new GLTFLoader();
 let clipLib = null;      // name -> AnimationClip（已去掉水平根位移）
@@ -156,6 +157,7 @@ export function createMocapBody(riggedScene) {
   repairClericWeights(body, riggedScene.userData.gloryClass);
   repairSleeveWeights(body, riggedScene.userData.gloryClass);
   repairRobeWeights(body, riggedScene.userData.gloryClass);
+  repairSkirtWeights(body, riggedScene.userData.gloryClass);
   return body;
 }
 
@@ -289,6 +291,7 @@ class GroundFeet {
         if (!indices.size) continue;
         const candidates = []; let floor = Infinity;
         for (let i = 0; i < position.count; i++) {
+          if (mesh.userData.skirtStrength?.[i] > 0) continue;
           let weight = 0;
           for (let k = 0; k < 4; k++) if (indices.has(skinIndex.getComponent(i, k))) weight += skinWeight.getComponent(i, k);
           if (weight < 0.5) continue;

@@ -5,6 +5,8 @@ import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
 import { repairClothWeights } from '../src/game/cloth.js';
 import { repairAttachmentWeights } from '../src/game/attachment.js';
+import { repairRobeWeights } from '../src/game/robe.js';
+import { repairSkirtWeights } from '../src/game/skirt.js';
 import { buildCharacter, disposeRig } from '../src/game/model.js';
 import { Animator } from '../src/game/anim.js';
 import { CLASSES } from '../src/data/classes.js';
@@ -27,6 +29,8 @@ try {
     const before=createMocapBody(source);repairClothWeights(before,cls);
     if(cls==='skeleton')repairAttachmentWeights(before,cls);
     source.userData.gloryClass=cls;const after=createMocapBody(source);
+    if(new URLSearchParams(location.search).get('robeTrial')==='1')repairRobeWeights(after,cls);
+    if(new URLSearchParams(location.search).get('skirtTrial')==='1')repairSkirtWeights(after,cls);
     const reference=positions(before),index=before.meshes[0].geometry.index,edges=[],seen=new Set();
     for(let i=0;i<index.count;i+=3)for(const [a,b]of [[index.getX(i),index.getX(i+1)],[index.getX(i+1),index.getX(i+2)],[index.getX(i+2),index.getX(i)]]){
       const key=Math.min(a,b)+':'+Math.max(a,b);if(seen.has(key))continue;seen.add(key);

@@ -26,9 +26,10 @@ const face=(points,a,b,c)=>new THREE.Vector3().subVectors(points[b],points[a]).c
 try {
   await loadClipLibrary('../assets/anim/anims.glb');
   for(const cls of new URLSearchParams(location.search).get('classes')?.split(',')||['battlemage']){
+  if(!['battlemage','striker','witch'].includes(cls))throw Error('不支持的服饰验证职业 '+cls);
   const C=CLASSES[cls],source=(await new GLTFLoader().loadAsync(`../assets/models/rigged/${cls}.glb`)).scene;
   const baseline=createMocapBody(source);source.userData.gloryClass=cls;const fixed=createMocapBody(source);
-  if(cls!=='battlemage')throw Error('Unsupported production robe class '+cls);repairRobeWeights(fixed,cls);
+  if(cls==='battlemage')repairRobeWeights(fixed,cls);else {const {repairSkirtWeights}=await import('../src/game/skirt.js');repairSkirtWeights(fixed,cls)}
   const index=baseline.meshes[0].geometry.index,bind=samples(baseline),triangles=[];
   check(index===fixed.meshes[0].geometry.index,'before/after使用同一source.index，保留完整网格');
   for(let at=0;at<index.count;at+=3) {
@@ -50,14 +51,14 @@ try {
         if(ratio<.05)stats[which].collapsed++;if(ratio<.20)stats[which].thin++;if(tri.orientationReliable&&dot<-.10&&ratio>=.05)stats[which].folded++;
         values.push({ratio,dot});
       }
-      const [before,after]=values,report={a:tri.a,b:tri.b,c:tri.c,before,after,bind: [tri.a,tri.b,tri.c].map(i=>bind.points[i].toArray()),strength:[tri.a,tri.b,tri.c].map(i=>fixed.meshes[0].userData.robeStrength?.[i]||0)};
+      const [before,after]=values,report={a:tri.a,b:tri.b,c:tri.c,before,after,bind: [tri.a,tri.b,tri.c].map(i=>bind.points[i].toArray()),strength:[tri.a,tri.b,tri.c].map(i=>(fixed.meshes[0].userData.robeStrength||fixed.meshes[0].userData.skirtStrength)?.[i]||0)};
       if(tri.orientationReliable&&after.dot<-.10&&after.ratio>=.05&&before.dot>=-.10)newFolds.push(report);
       if(after.ratio<.05&&before.ratio>=.05)newCollapsed.push(report);
     }
     newFolds.sort((a,b)=>a.after.dot-b.after.dot);newCollapsed.sort((a,b)=>a.after.ratio-b.after.ratio);
     __metrics.push({cls,pose,faces:triangles.length,stats,newFolds:newFolds.length,newCollapsed:newCollapsed.length,worstNewFolds:newFolds.slice(0,20),worstNewCollapsed:newCollapsed.slice(0,20)});
     check(true,cls+' '+pose+': 同三角集合面积与相对于蒙皮法线的朝向均有限');
-    if(cls==='battlemage')check(!newFolds.length&&!newCollapsed.length,cls+' '+pose+': 无新增折返或面积压扁');
+    check(!newFolds.length&&!newCollapsed.length,cls+' '+pose+': 无新增折返或面积压扁');
   }
   for(const pair of pairs){pair.anim.mixer.stopAllAction();disposeRig({root:pair.body.model},{sharedRoots:[source]});disposeRig(pair.rig)}
   }
