@@ -1,0 +1,77 @@
+<!doctype html><html><head><meta charset="utf-8"><title>First-person certified head region production proof</title><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body><pre id="result">原源、冻结旧FP、独立候选与正式FP四路验证…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, splitForFirstPerson } from '../src/game/mocap.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { repairClothWeights } from '../src/game/cloth.js';
+import { repairAttachmentWeights as oldAttachment } from './fixtures/attachment-before-fp-regions.js';
+import { Animator } from '../src/game/anim.js';
+import { FPView } from '../src/game/fpview.js';
+import { MOBS } from '../src/data/enemies.js';
+import { skeletonHeadRegion, excludeTrialHeadFaces } from './first-person-region-trial.js';
+import { referenceFirstPersonArms } from './fixtures/first-person-arms-before-regions.js';
+window.__results=[];window.__errors=[];window.__metrics=[];const check=(ok,label)=>(ok?__results:__errors).push(label);
+const point=new THREE.Vector3(),other=new THREE.Vector3();
+const same=(a,b)=>a.length===b.length&&a.every((v,i)=>v===b[i]);
+const native=(fp,position)=>{const out=[];fp.root.traverse(m=>{if(m.isSkinnedMesh&&m.geometry.attributes.position===position)out.push(m)});return out};
+function worldUnion(body){
+  const original=body.meshes.map(m=>m.geometry.index.array.slice()),split=splitForFirstPerson(body);let exact=true;
+  const counts=new Map();const count=(ids,delta)=>{for(let at=0;at<ids.length;at+=3){const key=ids[at]+':'+ids[at+1]+':'+ids[at+2];counts.set(key,(counts.get(key)||0)+delta)}};
+  for(const ids of original)count(ids,1);for(const mesh of [...split.head,...split.arms,...split.body])count(mesh.geometry.index.array,-1);
+  for(const value of counts.values())if(value)exact=false;
+  return{exact,faces:original.reduce((n,ids)=>n+ids.length/3,0),groups:Object.fromEntries(Object.entries(split).map(([name,meshes])=>[name,meshes.reduce((n,m)=>n+m.geometry.index.count/3,0)]))};
+}
+try {
+  const loader=new GLTFLoader(),source=(await loader.loadAsync('../assets/models/rigged/skeleton.glb')).scene,raw=createMocapBody(source),sourceGeometry=raw.meshes[0].geometry;
+  const rawIndex=sourceGeometry.index.array.slice(),rawWeights=sourceGeometry.attributes.skinWeight.array.slice(),rawPositions=sourceGeometry.attributes.position.array.slice();
+  const region=skeletonHeadRegion(raw);check(region&&region.mask.reduce((a,b)=>a+b,0)===4176,'原源27415点仅认证4176点完整头颈片');
+  const worldBefore=createMocapBody(source);repairClothWeights(worldBefore,'skeleton');oldAttachment(worldBefore,'skeleton');
+  source.userData.gloryClass='skeleton';const world=createMocapBody(source),shared=createMocapBody(source),worldGeometry=world.meshes[0].geometry,mask=world.meshes[0].userData.firstPersonHeadMask;
+  check(mask&&same(mask,region.mask),'正式mask逐点等于独立原源4176头颈认证');
+  check(mask===shared.meshes[0].userData.firstPersonHeadMask&&worldGeometry===shared.meshes[0].geometry,'多实例复用只读mask/geometry，骨架仍独立');
+  check(world.meshes[0].skeleton!==shared.meshes[0].skeleton,'缓存不共享实例骨骼');
+  check(same(worldGeometry.attributes.skinIndex.array,worldBefore.meshes[0].geometry.attributes.skinIndex.array)&&same(worldGeometry.attributes.skinWeight.array,worldBefore.meshes[0].geometry.attributes.skinWeight.array),'世界全顶点权重与冻结b2c7d12逐字节等价');
+  check(worldGeometry.index===sourceGeometry.index&&worldGeometry.attributes.position===sourceGeometry.attributes.position,'世界完整原索引/位置不变');
+  const C=MOBS.skeleton,rig=buildCharacter(C.look),anim=new Animator(rig);anim.breath=0;
+  const before=new FPView(C.look,C.weapon,C.weaponOpts,source),candidate=new FPView(C.look,C.weapon,C.weaponOpts,source),production=new FPView(C.look,C.weapon,C.weaponOpts,source);
+  const beforeMeshes=native(before,region.sourcePosition),candidateMeshes=native(candidate,region.sourcePosition),productionMeshes=native(production,region.sourcePosition);
+  // 从完整源index重放冻结旧算法，不能拿生产已删47面后的index反推旧参考。
+  for(const mesh of [...beforeMeshes,...candidateMeshes])mesh.geometry.setIndex(referenceFirstPersonArms(mesh,sourceGeometry.index));
+  const changes=excludeTrialHeadFaces(candidate,region);
+  check(changes.length===1&&changes[0].removed.length===47&&changes[0].before.length/3===4953,'冻结旧FP4953面仅删除47个认证头颈漏面');
+  let exact=true;for(const change of changes){const expected=change.before.filter((_,i,a)=>!a.slice(i-i%3,i-i%3+3).every(n=>region.mask[n]));exact&&=same(change.keep,expected)}
+  check(exact&&changes[0].keep.length/3===4906,'其余4906原手臂/前臂/手腕/肩甲面逐索引保留');
+  check(productionMeshes.length===changes.length&&productionMeshes.every((m,i)=>same(Array.from(m.geometry.index.array),changes[i].keep)),'真实正式FP直接逐索引等于独立47候选');
+  check(changes[0].mesh.geometry.attributes.position===sourceGeometry.attributes.position&&changes[0].mesh.geometry.attributes.normal===sourceGeometry.attributes.normal,'FP仅换私有index，原位置/法线共享');
+  check(productionMeshes[0].skeleton!==beforeMeshes[0].skeleton&&productionMeshes[0].geometry.index!==beforeMeshes[0].geometry.index,'正式与参考FP骨骼/索引独立');
+  const st={onGround:true,speed:0,fwd:1,stance:C.stance,pitch:0};
+  for(const pose of ['stance','run','attack']){
+    const state={...st,speed:pose==='run'?5.6:0,action:pose==='attack'?{clip:C.chain[0].anim,stage:'active',t:.65,key:'probe'}:null};
+    for(let i=0;i<60;i++){anim.update(1/60,state);for(const fp of [before,candidate,production]){fp.sync(rig,1/60,0);fp.update(1/60)}}
+    let maxError=0,productionError=0,headFaces=0;
+    for(let m=0;m<changes.length;m++){
+      const old=beforeMeshes[m],trial=changes[m].mesh,live=productionMeshes[m];for(const mesh of [old,trial,live]){mesh.updateWorldMatrix(true,false);mesh.skeleton.update()}
+      for(const i of new Set(changes[m].keep)){old.getVertexPosition(i,other).applyMatrix4(old.matrixWorld);trial.getVertexPosition(i,point).applyMatrix4(trial.matrixWorld);maxError=Math.max(maxError,other.distanceTo(point));live.getVertexPosition(i,other).applyMatrix4(live.matrixWorld);productionError=Math.max(productionError,other.distanceTo(point))}
+      const ids=live.geometry.index.array;for(let i=0;i<ids.length;i+=3)if([ids[i],ids[i+1],ids[i+2]].some(n=>region.mask[n]))headFaces++;
+    }
+    check(maxError<1e-8&&productionError<1e-8&&headFaces===0,pose+': 三路保留蒙皮完全等价，正式头颈漏面为0');
+    __metrics.push({pose,removed:47,keptFaces:4906,referenceVertexError:maxError,productionVertexError:productionError,headFaces});
+  }
+  check(sourceGeometry.index.array.every((v,i)=>v===rawIndex[i])&&sourceGeometry.attributes.skinWeight.array.every((v,i)=>v===rawWeights[i])&&sourceGeometry.attributes.position.array.every((v,i)=>v===rawPositions[i]),'原GLB索引/蒙皮/位置逐字节不变');
+  const union=worldUnion(world);check(union.exact,'FP拆分三组union保留所有世界原三角，不新增或丢失');__metrics.push({classId:'skeleton',...union});
+  let cachedDisposed=0,attributesProtected=false;worldGeometry.addEventListener('dispose',()=>cachedDisposed++);const pg=productionMeshes[0].geometry,sw=pg.attributes.skinWeight;
+  pg.addEventListener('dispose',()=>{attributesProtected=!Object.values(pg.attributes).includes(sw)});production.dispose();
+  check(cachedDisposed===0&&attributesProtected&&pg.attributes.skinWeight===sw&&same(mask,region.mask),'销毁FP只释放私有index，保留源GPU属性与共享mask/cache');
+  before.dispose();candidate.dispose();disposeRig({root:world.model},{sharedRoots:[source]});disposeRig({root:worldBefore.model},{sharedRoots:[source]});disposeRig({root:shared.model},{sharedRoots:[source]});disposeRig({root:raw.model},{sharedRoots:[source]});
+  if(new URLSearchParams(location.search).get('classes')==='all'){
+    const classes=await(await fetch('../assets/models/rigged/manifest.json')).json();
+    for(const id of classes.filter(id=>id!=='skeleton')){
+      const glb=(await loader.loadAsync('../assets/models/rigged/'+id+'.glb')).scene;glb.userData.gloryClass=id;const body=createMocapBody(glb);
+      check(body.meshes.every(m=>!m.userData.firstPersonHeadMask),id+': 未进入Skel专用FP语义mask');
+      const result=worldUnion(body);check(result.exact,id+': FP分类union保留全世界原三角');__metrics.push({classId:id,...result});disposeRig({root:body.model},{sharedRoots:[glb]});
+    }
+  }
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

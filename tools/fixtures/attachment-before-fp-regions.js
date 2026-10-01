@@ -1,6 +1,7 @@
+// Frozen b2c7d12 attachment weights, independent world reference for FP-only semantic regions.
 // 修复已审计服饰连通片的错绑，所有非目标人体网格保持原绑定。
 import * as THREE from 'three';
-import { markSharedResource } from './model.js';
+import { markSharedResource } from '../../src/game/model.js';
 
 const prepared = new WeakMap();
 const classes = new Set(['skeleton', 'berserker', 'warlock', 'frostcaster', 'thug']);
@@ -60,14 +61,8 @@ function prepare(mesh, body, classId) {
     component.minY = Math.min(component.minY, points[i * 3 + 1]); component.maxY = Math.max(component.maxY, points[i * 3 + 1]);
     component.minZ = Math.min(component.minZ, points[i * 3 + 2]); component.maxZ = Math.max(component.maxZ, points[i * 3 + 2]);
   }
-  const selectedComponents = new Set(), skirtComponents = new Set(), firstPersonHeadComponents = new Set();
+  const selectedComponents = new Set(), skirtComponents = new Set();
   for (const [id, component] of components) {
-    // 骸骨头盔/颈部下缘混有Shoulder影响，主导骨多数分类会漏出47个FP碎面。
-    // 原bind完整头颈片已逐面认证；只提供FP分类语义，不改变世界权重或可见面。
-    if (classId === 'skeleton' && si.count === 27415 && component.count === 4176 &&
-        Math.abs(component.minX + .1050490) < .003 && Math.abs(component.maxX - .0981604) < .003 &&
-        Math.abs(component.minY - 1.4018001) < .003 && Math.abs(component.maxY - 1.7599998) < .003 &&
-        Math.abs(component.minZ - .1808219) < .003 && Math.abs(component.maxZ - .4391391) < .003) firstPersonHeadComponents.add(id);
     // 骸骨卫兵的后侧羽缨是独立、平均 Head>90% 的头饰片；头颈与肩甲不满足这些条件。
     if (classId === 'skeleton' && component.count > 100 && component.headWeight / component.count > .90 && component.minY > neck.y + .01 && component.maxY > head.y + .15 && component.maxZ < head.z - .025 && component.minZ < head.z - .18) selectedComponents.add(id);
     // 骸骨卫兵的灰蓝破裙与棕色后摆是独立1860点片，已认证不包含真腿/脚。
@@ -89,12 +84,10 @@ function prepare(mesh, body, classId) {
   }
   if (!selectedComponents.size) return null;
   const indices = new Uint16Array(si.count * 4), weights = new Float32Array(sw.count * 4), strength = new Float32Array(si.count), componentMask = new Uint8Array(si.count);
-  const firstPersonHeadMask = firstPersonHeadComponents.size ? new Uint8Array(si.count) : null;
   const segments = classId === 'frostcaster' ? limbSegments(body, true) : [], nearest = new THREE.Vector3();
   let changed = 0, targetVertices = 0;
   for (let i = 0; i < si.count; i++) {
     for (let k = 0; k < 4; k++) { indices[i * 4 + k] = si.getComponent(i, k); weights[i * 4 + k] = sw.getComponent(i, k); }
-    if (firstPersonHeadMask && firstPersonHeadComponents.has(root(welded[i]))) firstPersonHeadMask[i] = 1;
     if (!selectedComponents.has(root(welded[i]))) continue;
     let amount = 1;
     if (classId === 'frostcaster') {
@@ -152,7 +145,7 @@ function prepare(mesh, body, classId) {
   geometry.morphAttributes = source.morphAttributes; geometry.morphTargetsRelative = source.morphTargetsRelative;
   geometry.boundingBox = source.boundingBox?.clone() || null; geometry.boundingSphere = source.boundingSphere?.clone() || null;
   geometry.userData = {...source.userData, shared: true}; markSharedResource(geometry);
-  return {geometry, strength, componentMask, firstPersonHeadMask, changed, targetVertices};
+  return {geometry, strength, componentMask, changed, targetVertices};
 }
 
 export function repairAttachmentWeights(body, classId) {
@@ -166,7 +159,6 @@ export function repairAttachmentWeights(body, classId) {
     if (!byClass.has(classId)) byClass.set(classId, prepare(mesh, body, classId));
     const result = byClass.get(classId); if (!result) continue;
     mesh.geometry = result.geometry; mesh.userData.attachmentStrength = result.strength; mesh.userData.attachmentComponent = result.componentMask;
-    if (result.firstPersonHeadMask) mesh.userData.firstPersonHeadMask = result.firstPersonHeadMask;
     changed += result.changed; targetVertices += result.targetVertices;
   }
   if (!changed) return null;

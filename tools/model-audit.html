@@ -16,6 +16,7 @@ import { installGripHands, fitWorldGripHands } from '../src/game/grip.js';
 import { handSocket } from '../src/game/mocap.js';
 
 window.__errors=[];
+const qaVersion=window.__qaVersion?window.__qaVersion+' · ':'';
 window.addEventListener('error',e=>__errors.push(e.message));
 window.addEventListener('unhandledrejection',e=>__errors.push(String(e.reason)));
 const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
@@ -190,6 +191,7 @@ window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
   const {restPositions,restNormals,restIndices,...skin}=bind;
   const metric={cls:clsId,pose,form,sample,weapon:C.weapon,bones:Object.keys(body.bones).length,bounds:bounds(body),skin,deformation:edgeMetrics(body,bind),cloth:body.cloth||null,attachment:body.attachment||null,sleeve:body.sleeve||null,clericWeights:body.clericWeights||null,robe:body.robe||null,skirt:body.skirt||null,rigCalibration:body.rigCalibration||null,clip:anim.curName,handSocket:body.sockets.get('Right')?.toArray(),handSockets:Object.fromEntries(['Left','Right'].map(side=>[side,body.sockets.get(side)?.toArray()]))};
   metric.rawSource=!!sample?.rawSource;
+  metric.sourceVersion=window.__qaVersion||null;
   if(reactionSamples.length)metric.reactionSamples=reactionSamples;
   if(W.offhandGrip&&!left&&worldHands.length){
     const grip=worldHands.find(hand=>hand.side==='Left'),B=body.bones;
@@ -236,7 +238,7 @@ window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
   }
   fp.root.traverse(o=>{if(o.isMesh&&o.visible)metric.fp.visibleMeshes++;});
   current.push({anim,fp,body,bind,scene,worldHands,fpScene,fpCam,overlay,roots:[scene,fpScene,proc.root]});
-  document.querySelector('#label').textContent=`${clsId} · ${pose}${form?' · '+form:''}${sample?.react?' · '+sample.react+' after '+sample.frames+' frames':sample?.clip?' · t='+sample.t:''}\nFront / Side / Hand closeup — First person below\n${sample?.rawSource?'Original GLB weights and native hands; production FPS below':'Real rigged body'} · ${anim.curName} · ${metric.bones} bones${sample?.clip?' · FPS keeps procedural stance':''}${body.robe?' · repaired robe weights':''}${body.skirt?' · repaired skirt weights':''}`;
+  document.querySelector('#label').textContent=`${qaVersion}${clsId} · ${pose}${form?' · '+form:''}${sample?.react?' · '+sample.react+' after '+sample.frames+' frames':sample?.clip?' · t='+sample.t:''}\nFront / Side / Hand closeup — First person below\n${sample?.rawSource?'Original GLB weights and native hands; production FPS below':'Real rigged body'} · ${anim.curName} · ${metric.bones} bones${sample?.clip?' · FPS keeps procedural stance':''}${body.robe?' · repaired robe weights':''}${body.skirt?' · repaired skirt weights':''}`;
   window.__lastMetric=metric;return metric;
 };
 window.__probe=async(clsId,a,b,pose='bind',sample=null)=>{
@@ -263,7 +265,7 @@ window.__probe=async(clsId,a,b,pose='bind',sample=null)=>{
   const oneRing=new Set([a,b]),indices=bind.restIndices.get(mesh);
   for(let i=0;i<indices.length;i+=3)if([indices[i],indices[i+1],indices[i+2]].some(v=>v===a||v===b))for(let k=0;k<3;k++)oneRing.add(indices[i+k]);
   metric.probe.oneRing=[...oneRing].map(vertex=>({vertex,rest:new THREE.Vector3().fromArray(rest,vertex*3).toArray(),posed:mesh.getVertexPosition(vertex,new THREE.Vector3()).applyMatrix4(mesh.matrixWorld).toArray(),weights:influences(vertex),repairStrength:Object.fromEntries(Object.entries(mesh.userData).filter(([name,value])=>name.endsWith('Strength')&&value?.length===mesh.geometry.attributes.position.count).map(([name,value])=>[name,value[vertex]]))}));
-  document.querySelector('#label').textContent=`${clsId} · ${pose}${sample?.react?' · '+sample.react+' after '+sample.frames+' frames':''} · precise bind-weight probe\nA ${a} red / B ${b} green / 15 mm neighborhood yellow\nFront / Side / Rear closeups — First person below`;
+  document.querySelector('#label').textContent=`${qaVersion}${clsId} · ${pose}${sample?.react?' · '+sample.react+' after '+sample.frames+' frames':''} · precise bind-weight probe\nA ${a} red / B ${b} green / 15 mm neighborhood yellow\nFront / Side / Rear closeups — First person below`;
   return metric;
 };
 window.__fpTriangles=async(clsId,triangles,pose='stance')=>{
@@ -287,7 +289,7 @@ window.__fpTriangles=async(clsId,triangles,pose='stance')=>{
     return {ids,color:'#'+colors[order%colors.length].toString(16),presentInArms:present,world:points.map(p=>p.toArray()),ndc:points.map(p=>p.clone().project(overlay).toArray()),weights:ids.map(i=>Array.from({length:4},(_,k)=>({bone:sourceMesh.skeleton.bones[si.getComponent(i,k)]?.name,weight:sw.getComponent(i,k)})).filter(v=>v.weight>0.001))};
   });
   renderer.autoClear=true;draw(fpScene,fpCam,0,0,innerWidth,innerHeight/2);renderer.autoClear=false;renderer.clearDepth();const background=fpScene.background;fpScene.background=null;draw(fpScene,overlay,0,0,innerWidth,innerHeight/2);fpScene.background=background;renderer.autoClear=true;
-  document.querySelector('#label').textContent=`${clsId} · ${pose} · original source FP triangle colors\n${triangles.map((ids,i)=>ids.join('/')+' '+metric.fpTriangles[i].color).join(' · ')}\nActual skinned positions; original arm triangles stay visible beneath translucent markers`;
+  document.querySelector('#label').textContent=`${qaVersion}${clsId} · ${pose} · original source FP triangle colors\n${triangles.map((ids,i)=>ids.join('/')+' '+metric.fpTriangles[i].color).join(' · ')}\nActual skinned positions; original arm triangles stay visible beneath translucent markers`;
   return metric;
 };
 window.__componentProbe=async(clsId,vertex,pose='bind',sample=null)=>{
@@ -319,7 +321,7 @@ window.__componentProbe=async(clsId,vertex,pose='bind',sample=null)=>{
     const camera=new THREE.PerspectiveCamera(40,1,0.002,50);camera.position.copy(center).addScaledVector(axis,distance);camera.lookAt(center);draw(scene,camera,i*width,height,width,height);
   }
   metric.component={vertex,vertices:members.length,triangles:triangles.length/3,restBounds:{min:restBox.min.toArray(),max:restBox.max.toArray()},posedBounds:{min:posedBox.min.toArray(),max:posedBox.max.toArray()},weights};
-  document.querySelector('#label').textContent=`${clsId} · ${pose} · connected component at ${vertex}\n${members.length} vertices / ${triangles.length/3} triangles · cyan translucent highlight\nFront / Side / Rear — First person below`;
+  document.querySelector('#label').textContent=`${qaVersion}${clsId} · ${pose} · connected component at ${vertex}\n${members.length} vertices / ${triangles.length/3} triangles · cyan translucent highlight\nFront / Side / Rear — First person below`;
   return metric;
 };
 window.__regionProbe=async(clsId,field,pose='bind')=>{
@@ -344,7 +346,7 @@ window.__regionProbe=async(clsId,field,pose='bind')=>{
     const camera=new THREE.PerspectiveCamera(40,1,0.002,50);camera.position.copy(center).addScaledVector(axis,distance);camera.lookAt(center);draw(scene,camera,i*width,height,width,height);
   }
   metric.region={field,vertices,triangles,restBounds:{min:restBox.min.toArray(),max:restBox.max.toArray()},posedBounds:{min:posedBox.min.toArray(),max:posedBox.max.toArray()}};
-  document.querySelector('#label').textContent=`${clsId} · ${pose} · repair region ${field}\n${vertices} modified vertices / ${triangles} touching triangles · cyan translucent highlight\nFront / Side / Rear — First person retains production weights`;
+  document.querySelector('#label').textContent=`${qaVersion}${clsId} · ${pose} · repair region ${field}\n${vertices} modified vertices / ${triangles} touching triangles · cyan translucent highlight\nFront / Side / Rear — First person retains production weights`;
   return metric;
 };
 await __audit(new URLSearchParams(location.search).get('cls')||'swordmaster');

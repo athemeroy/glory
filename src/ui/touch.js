@@ -43,7 +43,7 @@ export class TouchControls {
     }
     window.addEventListener('resize', () => this.reset());
     document.addEventListener('click', (e) => {
-      if (!input.touchMode || !input.enabled) return;
+      if (!input.touchMode || !input.enabled || this.app.game.contextLost) return;
       const btn = e.target.closest('#touch-controls [data-command]');
       if (btn) this.command(btn.dataset.command);
       // 键盘和辅助技术也能激活屏幕按钮。
@@ -56,7 +56,7 @@ export class TouchControls {
   }
 
   sync() {
-    const active = input.touchMode && input.enabled;
+    const active = input.touchMode && input.enabled && !this.app.game.contextLost;
     document.body.classList.toggle('touch-mode', input.touchMode);
     document.body.classList.toggle('touch-playing', active);
     this.root.hidden = !active;
@@ -70,7 +70,7 @@ export class TouchControls {
       input.setTouchMode(false);
       return;
     }
-    if (!input.touchMode || !input.enabled || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (!input.touchMode || !input.enabled || this.app.game.contextLost || (e.pointerType === 'mouse' && e.button !== 0)) return;
     const button = e.target.closest('#hud [data-action], #touch-controls [data-action]');
     let pointer;
     if (button) {

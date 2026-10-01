@@ -19,6 +19,7 @@ parser.add_argument('url',nargs='?')
 parser.add_argument('--serve',action='store_true',help='Serve the repository on a temporary local port and stop it on exit')
 parser.add_argument('--cdp',default='http://127.0.0.1:9334')
 parser.add_argument('--output',default='qa')
+parser.add_argument('--version',default='',help='Source checkpoint and isolated candidate label recorded with every result')
 parser.add_argument('--classes',default='unspecialized,swordmaster,battlemage,striker,sharpshooter,launcher,warlock,cleric,witch,berserker,assassin,thug,frostcaster,boss,skeleton')
 parser.add_argument('--poses',default='stance,attack,overhead')
 parser.add_argument('--forms',default='')
@@ -64,6 +65,7 @@ def log_metric(result):
 with sync_playwright() as pw:
     browser=pw.chromium.connect_over_cdp(args.cdp)
     context=browser.new_context(viewport={'width':1440,'height':900},device_scale_factor=1)
+    context.add_init_script('window.__qaVersion='+json.dumps(args.version))
     page=context.new_page()
     page.on('pageerror',lambda error: errors.append(str(error)))
     try:
@@ -336,7 +338,7 @@ with sync_playwright() as pw:
         errors.append(f'{type(error).__name__}: {error}')
         raise
     finally:
-        (output/'metrics.json').write_text(json.dumps({'metrics':metrics,'checks':checks,'errors':errors},ensure_ascii=False,indent=2))
+        (output/'metrics.json').write_text(json.dumps({'sourceVersion':args.version,'metrics':metrics,'checks':checks,'errors':errors},ensure_ascii=False,indent=2))
         context.close()
         if server:server.shutdown();server.server_close()
     if errors:raise AssertionError(errors)

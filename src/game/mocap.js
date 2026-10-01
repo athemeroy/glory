@@ -229,6 +229,7 @@ export function splitForFirstPerson(body) {
     if (!si) { out.body.push(m); continue; }
     const names = m.skeleton.bones.map((b) => b.name);
     const cls = (vi) => {
+      if (m.userData.firstPersonHeadMask?.[vi]) return 'head';
       let best = 0, bw = -1; for (let k = 0; k < 4; k++) { const w = sw.getComponent(vi, k); if (w > bw) { bw = w; best = si.getComponent(vi, k); } }
       const n = names[best] || '';
       if (/head|neck/i.test(n)) return 'head';

@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="../style.css"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body>
+<canvas id="game"></canvas><div id="hud"><div class="skill-bar"><button type="button" class="slot" data-action="attack">普攻</button></div></div>
+<script type="module">
+// 真实 Game 主循环和触控使用模拟渲染器，不创建 WebGL 上下文。
+import { Game } from '../src/game/game.js';
+import { TouchControls } from '../src/ui/touch.js';
+import { input } from '../src/engine/input.js';
+window.__errors=[];window.__results=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label);
+try {
+  let ticks=0,renders=0,resizes=0,updates=0;
+  const canvas=document.querySelector('#game'),game=Object.create(Game.prototype);
+  Object.assign(game,{canvas,level:{},mode:{frame(){updates++}},paused:false,manual:false,timeScale:1,acc:0,hitstop:0,frames:0,fpsT:0,
+    settings:{post:false,autoQuality:false},vfx:{update(){updates++}},tick(){ticks++},updateTrails(){updates++},handleLook(){},updateCamera(){},
+    resize(){resizes++;this._renderDirty=true},renderer:{render(){renders++}},player:null,firstPerson:true});
+  input.attach(canvas);input.setTouchMode(true);input.enabled=true;
+  const app={canvas,game,hud:{showStats(){}}},touch=new TouchControls(app),events=[];
+  game.onGraphicsChange=lost=>{events.push(lost);touch.sync()};
+  // 先证明旧实现即使标记图形不可用也仍推进真实主循环。
+  game.contextLost=true;game.frame(1/60);
+  check(ticks===0&&renders===0&&updates===0,'图形不可用时主循环不推进战斗或渲染');
+  game.contextLost=false;
+  if(typeof game.setupGraphicsRecovery!=='function')throw Error('生产未实现上下文恢复入口');
+  game.setupGraphicsRecovery();
+  game.frame(1/60);check(ticks===1&&renders===1,'正常图形状态继续原有固定步长模拟');
+  input.touchHold('attack',true);input.touchMove=[.5,1];input.mouseDX=30;input.mouseDY=20;game.acc=.01;
+  const lost=new Event('webglcontextlost',{cancelable:true});canvas.dispatchEvent(lost);
+  check(lost.defaultPrevented&&game.contextLost,'丢失事件允许浏览器恢复并标记图形不可用');
+  check(!input.held('attack')&&!input.peek('attack',5000)&&input.moveAxes().every(v=>v===0)&&input.mouseDX===0&&input.mouseDY===0,'丢失时释放技能、摇杆与待消费转向');
+  check(touch.root.hidden&&!document.body.classList.contains('touch-playing'),'丢失时隐藏屏幕战斗按钮');
+  const before={ticks,renders,updates};for(let i=0;i<5;i++)game.frame(1/60);game.debugAdvance(.1);game.render();
+  check(ticks===before.ticks&&renders===before.renders&&updates===before.updates,'丢失期间实时循环、手动模拟与直接渲染都冻结');
+  const attack=document.querySelector('[data-action="attack"]');
+  attack.dispatchEvent(new PointerEvent('pointerdown',{pointerId:901,pointerType:'touch',bubbles:true,cancelable:true}));attack.click();
+  check(touch.pointers.size===0&&!input.held('attack')&&!input.peek('attack',5000),'丢失期间按屏幕技能不会缓存幽灵攻击');
+  input._press('KeyW');input._press('Space');canvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}));
+  check(events.length===1,'重复丢失事件不重复通知或改变恢复状态');
+  game.last=-1000;canvas.dispatchEvent(new Event('webglcontextrestored'));
+  check(!game.contextLost&&game.acc===0&&game.last>=0&&resizes===1,'恢复时清空积压时间、刷新机位与尺寸');
+  check(input.down.size===0&&input.pressedAt.size===0&&input.touchPressedAt.size===0,'恢复时清除不可见期间的键盘和触控缓冲');
+  check(!touch.root.hidden&&events.join(',')==='true,false','恢复后屏幕操作重新可用');
+  game.frame(1/60);check(ticks===before.ticks+1&&renders===before.renders+1,'恢复首帧只推进一个固定步长');
+  game.paused=true;canvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}));canvas.dispatchEvent(new Event('webglcontextrestored'));
+  check(game.paused&&input.enabled,'上下文恢复保留用户当前暂停与输入开关');
+  input.enabled=false;canvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}));canvas.dispatchEvent(new Event('webglcontextrestored'));
+  check(!input.enabled&&touch.root.hidden,'用户已退出或暂停时恢复不会重新启用操作');
+} catch(error) { __errors.push(String(error.stack||error)); }
+document.body.insertAdjacentHTML('beforeend','<pre id="result"></pre>');document.querySelector('#result').textContent=JSON.stringify({results:__results,errors:__errors},null,2);window.__ready=true;
+</script></body></html>

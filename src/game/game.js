@@ -72,11 +72,33 @@ export class Game {
     this.frames = 0; this.fpsT = 0; this.fps = 60;
     this.post = new Post(this.renderer, this.scene, this.camera, this.vmCamera, () => !!(this.player && this.firstPerson && this.player.fp && this.player.fp.root.visible), this.settings.quality);
     this.resize();
+    this.setupGraphicsRecovery();
     window.addEventListener('resize', () => this.resize());
     this.applyAudioSettings();
   }
 
   applyAudioSettings() { audio.setVolume(this.settings.master, this.settings.sfx, this.settings.music); voice.setVolume(this.settings.master * (this.settings.voice ?? 1)); }
+  setupGraphicsRecovery() {
+    this.contextLost = false;
+    this.canvas.addEventListener('webglcontextlost', event => {
+      event.preventDefault();
+      if (this.contextLost) return;
+      this.contextLost = true;
+      this.acc = 0;
+      input.clear();
+      this.onGraphicsChange?.(true);
+    });
+    this.canvas.addEventListener('webglcontextrestored', () => {
+      if (!this.contextLost) return;
+      // Three.js 的恢复监听已先重建 GPU 状态；不把不可见期间的时间与输入补进战斗。
+      this.contextLost = false;
+      this.acc = 0;
+      this.last = performance.now();
+      input.clear();
+      this.resize();
+      this.onGraphicsChange?.(false);
+    });
+  }
   voice(name, gain = 1) { voice.play(name, gain); }
   saveSettings() { store.set('settings', this.settings); this.applyAudioSettings(); this.resize(); }
 
@@ -433,7 +455,7 @@ export class Game {
 
   frame(dt) {
     // 菜单不需要空场景后处理；后台页与手机背景对战也不消耗模拟和 GPU。
-    if (document.hidden || (this.isAttract && input.touchMode)) { this._renderDirty = true; return; }
+    if (this.contextLost || document.hidden || (this.isAttract && input.touchMode)) { this._renderDirty = true; return; }
     if (!this.level) return;
     const pauseChanged = this.paused !== this._wasPaused; this._wasPaused = this.paused;
     if (this.paused) {
@@ -476,6 +498,7 @@ export class Game {
 
   // 调试：手动推进模拟（测试用，manual 模式下实时循环不推进模拟）
   debugAdvance(sec) {
+    if (this.contextLost) return;
     const n = Math.max(1, Math.round(sec * 60));
     for (let i = 0; i < n; i++) { this.tick(STEP); this.vfx.update(STEP); this.updateTrails(STEP); if (this.mode && this.mode.frame) this.mode.frame(STEP); }
     this.updateCamera(STEP);
@@ -698,6 +721,7 @@ export class Game {
   }
 
   render(dt = 1 / 60) {
+    if (this.contextLost) return;
     this._renderDirty = false;
     // 录制工具用：外部接管机位（宣传片运镜），游戏本身不设置
     if (this.camHook) { try { this.camHook(this.camera, this); } catch (e) { this.camHook = null; console.warn('camHook', e); } }

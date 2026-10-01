@@ -35,11 +35,21 @@ class App {
     };
     input.onKey = (code, down) => {
       if (code === input.binds.stats && !down) this.hud.showStats(false, this.game);
-      if (!this.mode || this.game.paused || this.modeId === 'attract') return;
+      if (!this.mode || this.game.paused || this.game.contextLost || this.modeId === 'attract') return;
       if (code === input.binds.stats) this.hud.showStats(down, this.game);
       if (down && code === input.binds.view) this.game.toggleView();
     };
     this.touch = new TouchControls(this);
+    const graphicsStatus = document.createElement('div');
+    graphicsStatus.className = 'graphics-recovery';
+    graphicsStatus.hidden = true;
+    graphicsStatus.setAttribute('role', 'status');
+    graphicsStatus.textContent = '画面恢复中，请稍候…';
+    document.body.appendChild(graphicsStatus);
+    this.game.onGraphicsChange = lost => {
+      graphicsStatus.hidden = !lost;
+      this.touch.sync();
+    };
     this.game.start();
     this.game.preload().catch(error => console.warn('资源预加载失败', error));
     this.menu.title();
