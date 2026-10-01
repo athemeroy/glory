@@ -6,7 +6,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
-import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator, mountMocapWeapon, weaponTilt } from '../src/game/mocap.js';
 import { buildWeapon } from '../src/game/weapons.js';
 const q = new URLSearchParams(location.search);
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -28,8 +28,9 @@ clips.forEach((c, i) => {
   body.model.position.x = (i - (clips.length - 1) / 2) * 1.4;
   scene.add(body.model);
   const wl = (q.get('w') || 'sword').split(','); const W = buildWeapon(wl[i % wl.length]);
-  const mount = new THREE.Group(); mount.rotation.set(rx * Math.PI / 180, ry * Math.PI / 180, rz * Math.PI / 180); mount.position.set(px, py, pz);
-  mount.add(W.obj); body.bones.RightHand.add(mount);
+  const mount = mountMocapWeapon(body, 'Right', W.obj, weaponTilt(W.type));
+  if (q.has('r')) mount.rotation.set(rx * Math.PI / 180, ry * Math.PI / 180, rz * Math.PI / 180);
+  mount.position.add(new THREE.Vector3(px, py, pz));
   body.model.updateMatrixWorld(true);
   const ws = body.bones.RightHand.getWorldScale(new THREE.Vector3()).x; mount.scale.setScalar(1 / ws);
   const anim = new MocapAnimator(body);

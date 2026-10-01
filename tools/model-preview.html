@@ -5,6 +5,7 @@
 </head><body><div id="l"></div><script>window.onerror=(m,s,l,c,e)=>{document.body.insertAdjacentHTML("beforeend","<pre id=err>"+m+" @"+l+":"+c+"</pre>")};</script>
 <script type="module">
 import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { buildCharacter } from '../src/game/model.js';
 import { buildWeapon } from '../src/game/weapons.js';
 import { Animator } from '../src/game/anim.js';
@@ -47,7 +48,9 @@ if (W.makeLeft) { const l = W.makeLeft(); rig.bones.gripL.add(l); }
 if (form && W.setForm) W.setForm(form, true);
 const anim = new Animator(rig);
 const st = { speed, fwd: 1, side: 0, onGround: true, vy: 0, stance, pitch, action: clip ? { clip, stage, t } : null, react: react ? { type: react, t: parseFloat(q.get('rt') || '0.2'), dur: 0.4 } : null };
-const fp = new FPView(C.look, C.weapon, C.weaponOpts || {});
+const fpModel = q.get('model') === 'rigged'
+  ? (await new GLTFLoader().loadAsync(`../assets/models/rigged/${clsId}.glb`)).scene : null;
+const fp = new FPView(C.look, C.weapon, C.weaponOpts || {}, fpModel, clsId);
 if (form) { fp.setForm(form); for (let i=0;i<60;i++) fp.update(1/60); }
 for (let i = 0; i < 90; i++) { anim.update(1 / 60, st); fp.sync(rig, 1/60, speed); }
 rig.root.updateMatrixWorld(true);

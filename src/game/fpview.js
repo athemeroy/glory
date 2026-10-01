@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { buildCharacter } from './model.js';
 import { buildWeapon } from './weapons.js';
 import { applySkinnedModel } from './skin.js';
-import { createMocapBody, splitForFirstPerson } from './mocap.js';
+import { createMocapBody, splitForFirstPerson, handSocket } from './mocap.js';
 
 export const FP_LAYER = 2;
 
@@ -119,6 +119,7 @@ export class FPView {
   // 用 Meshy 绑骨模型的手臂：程序化骨骼只作姿态来源（隐藏），逐帧按骨段方向重定向到模型骨骼
   initMeshyArms(glb) {
     const body = createMocapBody(glb);
+    const palms = { Right: handSocket(body, 'Right'), Left: handSocket(body, 'Left') };
     const split = splitForFirstPerson(body);
     for (const m of [...split.head, ...split.body]) m.removeFromParent();
     if (!split.arms.length) return false;
@@ -145,7 +146,11 @@ export class FPView {
     if (need.some((n) => !B[n])) { body.model.removeFromParent(); return false; }
     const rest = new Map(need.map((n) => [n, B[n].quaternion.clone()]));
     this.mc = {
-      B, rest,
+      B, rest, palms,
+      handFrames: Object.fromEntries([['Right', 'haR'], ['Left', 'haL']].map(([side, name]) => [side,
+        this.rig.bones[name].getWorldQuaternion(new THREE.Quaternion()).invert()
+          .multiply(B[side + 'Hand'].getWorldQuaternion(new THREE.Quaternion())),
+      ])),
       chestRest: this.rig.bones.chest.getWorldQuaternion(new THREE.Quaternion()),
       spineRest: B.Spine02.getWorldQuaternion(new THREE.Quaternion()),
       v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3(), v4: new THREE.Vector3(),
@@ -182,12 +187,15 @@ export class FPView {
       const arm = B[s + 'Arm'], fore = B[s + 'ForeArm'], hand = B[s + 'Hand'];
       swing(arm, wp(fore, v1).sub(wp(arm, v2)), wp(el, v3).sub(wp(sh, v4)));
       swing(fore, wp(hand, v1).sub(wp(fore, v2)), wp(ha, v3).sub(wp(el, v4)));
-      const foreLen = wp(hand, v1).distanceTo(wp(fore, v2));
-      v1.sub(v2); swing(hand, v1, wp(grip, v3).sub(wp(ha, v4)));
+      // 手掌不仅要朝向握把，还要保留绕前臂的扭转（旋前/旋后）。
+      ha.getWorldQuaternion(q1).multiply(mc.handFrames[s]);
+      hand.parent.getWorldQuaternion(q2).invert();
+      hand.quaternion.copy(q2.multiply(q1));
+      hand.updateMatrixWorld(true);
       // 武器：朝向沿用程序化握把，位置移到模型手心
       if (w && base) {
         w.position.copy(base);
-        const palm = wp(hand, v1).add(v3.normalize().multiplyScalar(foreLen * 0.32));
+        const palm = hand.localToWorld(v1.copy(mc.palms[s]));
         const cur = grip.localToWorld(v2.copy(base));
         const target = cur.add(palm.sub(wp(grip, v4)));
         w.position.copy(grip.worldToLocal(target));

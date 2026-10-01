@@ -112,7 +112,47 @@ export function createMocapBody(riggedScene) {
     world: bone.getWorldQuaternion(new THREE.Quaternion()),
     parent: bone.parent.getWorldQuaternion(new THREE.Quaternion()),
   });
-  return { model, bones, meshes, rest };
+  return { model, bones, meshes, rest, sockets: new Map() };
+}
+
+// 从绑定姿态中受手骨影响的顶点估计握持中心，避免武器插在手腕上。
+export function handSocket(body, side) {
+  if (body.sockets.has(side)) return body.sockets.get(side).clone();
+  const hand = body.bones[side + 'Hand'];
+  if (!hand) return null;
+  body.model.updateMatrixWorld(true);
+  const center = new THREE.Vector3(), vertex = new THREE.Vector3();
+  let total = 0;
+  for (const mesh of body.meshes) {
+    const index = mesh.skeleton.bones.indexOf(hand);
+    const si = mesh.geometry.attributes.skinIndex, sw = mesh.geometry.attributes.skinWeight;
+    if (index < 0 || !si || !sw) continue;
+    mesh.skeleton.update();
+    for (let i = 0; i < si.count; i++) {
+      let weight = 0;
+      for (let k = 0; k < 4; k++) if (si.getComponent(i, k) === index) weight += sw.getComponent(i, k);
+      if (weight < 0.5) continue;
+      mesh.getVertexPosition(i, vertex).applyMatrix4(mesh.matrixWorld);
+      center.addScaledVector(vertex, weight); total += weight;
+    }
+  }
+  if (total) hand.worldToLocal(center.divideScalar(total));
+  body.sockets.set(side, center.clone());
+  return center;
+}
+
+export function mountMocapWeapon(body, side, object, tilt, characterScale = 1) {
+  const hand = body.bones[side + 'Hand'];
+  if (!hand || !object) return null;
+  const mount = new THREE.Group();
+  mount.name = side + 'WeaponSocket';
+  mount.position.copy(handSocket(body, side));
+  mount.rotation.set(-Math.PI / 2, 0, tilt);
+  const scale = hand.getWorldScale(new THREE.Vector3()).x / Math.max(1e-6, characterScale);
+  mount.scale.setScalar(1 / Math.max(1e-6, scale));
+  hand.add(mount); mount.add(object);
+  object.position.set(0, 0, 0); object.rotation.set(0, 0, 0);
+  return mount;
 }
 
 // 将源动作映射到目标骨骼的绑定坐标轴，保留目标骨长。
@@ -160,11 +200,18 @@ export function splitForFirstPerson(body) {
     }
     for (const k of ['head', 'arms', 'body']) {
       if (!lists[k].length) continue;
-      const ng = g.clone();
+      // 分区只改变索引；顶点、UV 和蒙皮属性保持只读共享，避免复制三份精模。
+      const ng = new THREE.BufferGeometry();
+      for (const [name, attribute] of Object.entries(g.attributes)) ng.setAttribute(name, attribute);
+      ng.morphAttributes = g.morphAttributes;
+      ng.morphTargetsRelative = g.morphTargetsRelative;
       ng.setIndex(lists[k]);
       const nm = new THREE.SkinnedMesh(ng, m.material);
       nm.castShadow = true; nm.frustumCulled = false; nm.name = m.name + '_' + k;
+      nm.position.copy(m.position); nm.quaternion.copy(m.quaternion); nm.scale.copy(m.scale);
+      nm.bindMode = m.bindMode;
       nm.bind(m.skeleton, m.bindMatrix);
+      if (m.morphTargetInfluences) nm.morphTargetInfluences = m.morphTargetInfluences.slice();
       m.parent.add(nm);
       out[k].push(nm);
     }

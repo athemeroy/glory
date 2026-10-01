@@ -4,7 +4,7 @@ import { buildCharacter, setFirstPersonHidden } from './model.js';
 import { buildWeapon } from './weapons.js';
 import { Animator } from './anim.js';
 import { applySkinnedModel } from './skin.js';
-import { createMocapBody, splitForFirstPerson, MocapAnimator, hasClips, analyzeImpacts, weaponTilt } from './mocap.js';
+import { createMocapBody, splitForFirstPerson, MocapAnimator, hasClips, analyzeImpacts, weaponTilt, mountMocapWeapon } from './mocap.js';
 import { clamp, wrapAngle, turnToward, uid, DEG } from '../engine/util.js';
 
 export const GRAVITY = 24;
@@ -897,17 +897,9 @@ export class Fighter {
       this.rig.armParts = [...split.arms];
       this.rig.mocapBodyMeshes = split.body;
       this.rig.root.updateMatrixWorld(true);
-      const mount = (bone, obj, rz) => {
-        if (!bone || !obj) return;
-        const m = new THREE.Group();
-        m.rotation.set(-Math.PI / 2, 0, rz);
-        const ws = bone.getWorldScale(new THREE.Vector3()).x / Math.max(1e-6, this.rig.root.scale.x);
-        m.scale.setScalar(1 / ws);
-        bone.add(m); m.add(obj); obj.position.set(0, 0, 0); obj.rotation.set(0, 0, 0);
-      };
       const tilt = weaponTilt(this.weapon.type);
-      mount(body.bones.RightHand, this.weapon.obj, tilt);
-      mount(body.bones.LeftHand, this.leftWeapon, -tilt);
+      mountMocapWeapon(body, 'Right', this.weapon.obj, tilt, this.scale);
+      mountMocapWeapon(body, 'Left', this.leftWeapon, -tilt, this.scale);
       this.mocapBody = body;
       this.mocap = new MocapAnimator(body);
       this.fpGlb = rs;

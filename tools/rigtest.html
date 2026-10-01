@@ -1,7 +1,9 @@
 <!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body><pre id="result">检查中…</pre><script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
-import { loadClipLibrary, createMocapBody, retargetClip, MocapAnimator } from '../src/game/mocap.js';
+import { loadClipLibrary, createMocapBody, retargetClip, MocapAnimator, handSocket, mountMocapWeapon, splitForFirstPerson } from '../src/game/mocap.js';
+import { FPView } from '../src/game/fpview.js';
+import { buildCharacter } from '../src/game/model.js';
 window.__errors = [];
 try {
   await loadClipLibrary('../assets/anim/anims.glb');
@@ -18,6 +20,28 @@ try {
   for (const name of names) {
     const gltf = await loader.loadAsync(`../assets/models/rigged/${name}.glb`);
     const body = createMocapBody(gltf.scene);
+    for (const side of ['Right', 'Left']) {
+      const socket = handSocket(body, side), hand = body.bones[side + 'Hand'];
+      const distance = hand.localToWorld(socket.clone()).distanceTo(hand.getWorldPosition(new THREE.Vector3()));
+      if (!socket.toArray().every(Number.isFinite) || distance < 0.01 || distance > 0.2) throw Error(name + ': 握持中心异常 ' + distance);
+      const weapon = new THREE.Group();
+      const mount = mountMocapWeapon(body, side, weapon, 0);
+      body.model.updateMatrixWorld(true);
+      if (weapon.getWorldPosition(new THREE.Vector3()).distanceTo(hand.localToWorld(socket.clone())) > 1e-5) throw Error(name + ': 武器位置异常');
+      mount.removeFromParent();
+    }
+    const fp = new FPView({}, 'sword', {}, gltf.scene);
+    if (!fp.mc) throw Error(name + ': 第一人称手臂未启用');
+    const procedural = buildCharacter({});
+    for (const twist of [-1, 0, 1]) {
+      procedural.bones.haR.rotation.y = twist;
+      fp.sync(procedural, 1/60);
+      fp.root.updateMatrixWorld(true);
+      const expected = fp.rig.bones.haR.getWorldQuaternion(new THREE.Quaternion()).multiply(fp.mc.handFrames.Right);
+      const actual = fp.mc.B.RightHand.getWorldQuaternion(new THREE.Quaternion());
+      if (expected.angleTo(actual)>0.001) throw Error(name + ': 手腕扭转丢失');
+      if (!fp.weapon.obj.getWorldPosition(new THREE.Vector3()).toArray().every(Number.isFinite)) throw Error(name + ': 第一人称武器坐标异常');
+    }
     const rest = new Map(Object.entries(body.bones).map(([n,b]) => [n, {q:b.quaternion.clone(), p:b.position.clone()}]));
     const mixer = new THREE.AnimationMixer(body.model);
     const clip = retargetClip(bindClip, body.rest);
@@ -49,7 +73,12 @@ try {
     animator.update(0, {...idle, guard:true});
     if (Math.abs(body.bones.Hips.position.y-hipY)>0.001) throw Error(name + ': 切换动作时髋部跳变');
     for (let i=0;i<30;i++) animator.update(1/60, {...idle, guard:true});
-    results.push(name + ': 绑定姿态 + 5 个动作通过');
+    const original = [...body.meshes];
+    const vertexCount = original.reduce((n,m)=>n+(m.geometry.index?.count || m.geometry.attributes.position.count),0);
+    const split = splitForFirstPerson(body);
+    if (body.meshes.reduce((n,m)=>n+m.geometry.index.count,0)!==vertexCount) throw Error(name + ': 拆分丢失三角形');
+    if (body.meshes.some(m=>!original.some(o=>o.geometry.attributes.position===m.geometry.attributes.position))) throw Error(name + ': 拆分复制了顶点');
+    results.push(name + ': 动作、握持点、手腕扭转、网格拆分通过');
     gltf.scene.traverse(o=>{if(o.isMesh){o.geometry.dispose();for(const m of [].concat(o.material)){m.map?.dispose();m.dispose();}}});
   }
   if (JSON.stringify(bindClip.toJSON()) !== before) throw Error('重定向污染源动作');

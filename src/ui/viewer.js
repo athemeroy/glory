@@ -6,7 +6,7 @@ import { Animator, CLIPS } from '../game/anim.js';
 import { CLASSES } from '../data/classes.js';
 import { store } from '../engine/util.js';
 import { applySkinnedModel } from '../game/skin.js';
-import { createMocapBody, MocapAnimator, hasClips, weaponTilt } from '../game/mocap.js';
+import { createMocapBody, MocapAnimator, hasClips, weaponTilt, mountMocapWeapon } from '../game/mocap.js';
 
 let shared = null; // 复用一个渲染器，避免反复创建 WebGL 上下文
 
@@ -66,8 +66,7 @@ export class CharViewer {
         for (const p of this.rig.parts) p.visible = false;
         this.rig.root.add(body.model);
         this.rig.root.updateMatrixWorld(true);
-        const mount = (bone, obj, rz) => { if (!bone || !obj) return; const m = new THREE.Group(); m.rotation.set(-Math.PI / 2, 0, rz); m.scale.setScalar(1 / bone.getWorldScale(new THREE.Vector3()).x); bone.add(m); m.add(obj); obj.position.set(0, 0, 0); obj.rotation.set(0, 0, 0); };
-        this._mountLater = [body, mount];
+        this._mountLater = body;
         this.mocap = new MocapAnimator(body);
       } catch { this.mocap = null; }
     }
@@ -77,7 +76,7 @@ export class CharViewer {
     this.rig.bones.gripR.add(this.weapon.obj);
     const left = this.weapon.makeLeft ? this.weapon.makeLeft() : null;
     if (left) this.rig.bones.gripL.add(left);
-    if (this._mountLater) { const [body, mount] = this._mountLater; const tilt = weaponTilt(cls.weapon); mount(body.bones.RightHand, this.weapon.obj, tilt); mount(body.bones.LeftHand, left, -tilt); this._mountLater = null; }
+    if (this._mountLater) { const body = this._mountLater; const tilt = weaponTilt(cls.weapon); mountMocapWeapon(body, 'Right', this.weapon.obj, tilt); mountMocapWeapon(body, 'Left', left, -tilt); this._mountLater = null; }
     if (this.weapon.setForm) this.weapon.setForm('sword', true);
     this.rig.root.traverse((o) => { if (o.isMesh) o.castShadow = true; });
     this.anim = new Animator(this.rig);
