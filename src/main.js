@@ -29,6 +29,7 @@ class App {
     input.onLockNeeded = () => this.showClickPlay();
     input.onLockFail = () => { if (!this._lockWarned) { this._lockWarned = true; this.hud.toast('无法锁定鼠标：按住右键拖动或用方向键转视角'); } };
     input.onEscape = () => {
+      if (this._loadingMode) { this.quit(); return; }
       if (this.inWardrobe || this.modeId === 'attract') return;
       if (this.mode && !this.mode.over) { if (this.game.paused) this.resume(); else this.pause(); }
     };
@@ -40,7 +41,7 @@ class App {
     };
     this.touch = new TouchControls(this);
     this.game.start();
-    this.game.preload();
+    this.game.preload().catch(error => console.warn('资源预加载失败', error));
     this.menu.title();
     window.__glory = this; // 调试/自动测试
   }
@@ -67,10 +68,10 @@ class App {
         this.mode.start();
         this.game.applyView();
         this.hud.show(true);
-        const bar = load.querySelector('.load-bar i'); if (bar) bar.style.width = '100%';
+        showProgress(100, '准备完成');
         this._hideLoadTimer = setTimeout(() => {
           this._hideLoadTimer = null;
-          if (!current()) return;
+          if (!current() || !this._loadingMode) return;
           this._loadingMode = false;
           this.menu.hide(); input.enabled = true; input.lock(false); this.firstTimeHelp();
         }, 350);
@@ -81,12 +82,27 @@ class App {
         alert('加载失败：' + e.message);
       }
     }, 60); };
-    const bar = load.querySelector('.load-bar i');
-    this._loadTick = setInterval(() => { const g = this.game; if (bar && g.loadTotal) bar.style.width = Math.min(95, 10 + 85 * (g.loadDone || 0) / g.loadTotal) + '%'; }, 100);
+    const bar = load.querySelector('.load-bar'), state = load.querySelector('.load-state');
+    let displayed = 10;
+    const showProgress = (value, label) => {
+      displayed = Math.max(displayed, value);
+      if (bar) { bar.querySelector('i').style.width = displayed + '%'; bar.setAttribute('aria-valuenow', Math.round(displayed)); }
+      if (state) state.textContent = label + ' · ' + Math.round(displayed) + '%';
+    };
+    const tick = () => {
+      const g = this.game, progress = g.loadProgress ?? (g.loadTotal ? (g.loadDone || 0) / g.loadTotal : 0);
+      showProgress(Math.min(95, 10 + 85 * progress), g.loadStage || '准备资源');
+    };
+    tick(); this._loadTick = setInterval(tick, 100);
     this.game.preload().then(() => {
       if (!current()) return;
       clearInterval(this._loadTick); this._loadTick = null;
       go();
+    }).catch(error => {
+      if (!current()) return;
+      clearInterval(this._loadTick); this._loadTick = null;
+      console.error(error);
+      if (state) state.textContent = '加载失败，请返回菜单重试';
     });
   }
 
@@ -157,7 +173,7 @@ class App {
   hideClickPlay() { const el = document.getElementById('clickplay'); if (el) el.style.display = 'none'; }
 
   pause() {
-    if (!this.mode) return;
+    if (!this.mode || this._loadingMode) return;
     this.hideClickPlay();
     this.hud.showStats(false, this.game);
     if (this.modeId === 'netguest') net.relay({ k: 'in', mx: 0, my: 0, yaw: this.game.viewYaw, pitch: this.game.viewPitch, guard: 0, atk: 0, p: [] });

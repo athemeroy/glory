@@ -45,6 +45,11 @@ function prepare(mesh,body) {
   for(const [id,c]of components){
     if([481,444].includes(c.count)&&c.min.y>1.08&&c.max.y<1.41&&c.min.z>.15&&c.max.z<.23&&c.max.x-c.min.x<.10)ornaments.set(id,'chest');
     if(c.count===42&&c.min.y>1.12&&c.max.y<1.15&&c.min.z>.16&&c.max.x<0)ornaments.set(id,'waist');
+    // 整片高亮确认：金链与胸牌挂颈，腰环与长蓝飘带挂腰，均不属于皮肤或腿。
+    if(c.count===1051&&c.min.y>1.32&&c.max.y<1.53&&c.min.x>-.12&&c.max.x<.12)ornaments.set(id,'neck');
+    if(c.count===1678&&c.min.y>.63&&c.max.y<1.11&&c.min.x>-.23&&c.max.x<-.09&&c.max.z<.17)ornaments.set(id,'hips');
+    if(c.count===855&&c.min.y>.70&&c.max.y<1.07&&c.min.x>.03&&c.max.x<.15&&c.min.z>.17)ornaments.set(id,'hips');
+    if(c.count===94&&c.min.y>1.02&&c.max.y<1.15&&c.min.x>-.12&&c.max.x<.15&&c.max.z<.21)ornaments.set(id,'hips');
   }
   const indices=new Uint16Array(si.count*4),weights=new Float32Array(sw.count*4),mask=new Uint8Array(si.count);
   let changed=0,mainChanged=0,ornamentChanged=0;
@@ -60,6 +65,8 @@ function prepare(mesh,body) {
     point.fromArray(points,i*3);let desired,amount=1;
     if(ornament==='chest')desired=new Map([[chest,1]]);
     else if(ornament==='waist')desired=new Map([[names.indexOf('Hips'),.25],[names.indexOf('Spine02'),.75]]);
+    else if(ornament==='neck')desired=new Map([[names.indexOf('neck'),1]]);
+    else if(ornament==='hips')desired=new Map([[names.indexOf('Hips'),1]]);
     else {
       // 头脸与发型退出，肩部披领仍跟随胸肩。近腿的主片下摆是袍料，不当作小腿。
       amount=1-smooth(neck.y+.055,neck.y+.10,point.y);

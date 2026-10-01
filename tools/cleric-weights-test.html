@@ -18,7 +18,7 @@ try {
   const old=baseline.meshes[0],mesh=body.meshes[0],geometry=mesh.geometry,si=geometry.attributes.skinIndex,sw=geometry.attributes.skinWeight;
   const oi=old.geometry.attributes.skinIndex,ow=old.geometry.attributes.skinWeight,names=mesh.skeleton.bones.map(bone=>bone.name),mask=mesh.userData.clericWeightMask;
   check(body.clericWeights.mainChanged>4000&&body.clericWeights.mainChanged<6000,'重建已认证主衣装的躯干与袖面');
-  check(body.clericWeights.ornamentChanged===967,'胸前两条独立饰条与42点腰扣完整修复');
+  check(body.clericWeights.ornamentChanged===4645,'胸饰、颈链胸牌与腰环飘带完整修复');
   check(sourceMesh.geometry===sourceGeometry&&snapshot(sourceGeometry)===sourceWeights,'源 GLB geometry 和权重保持原样');
   for(const name of ['position','normal','uv'])check(geometry.attributes[name]===sourceGeometry.attributes[name],name+' 属性保留原网格');
   check(geometry.index===sourceGeometry.index,'原三角面索引保持原样');

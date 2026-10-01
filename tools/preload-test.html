@@ -1,0 +1,63 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查资源预加载…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { Game } from '../src/game/game.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(value,label)=>{if(!value)throw Error(label);__results.push(label)};
+const original={fetch:window.fetch,texture:THREE.TextureLoader.prototype.loadAsync,gltf:GLTFLoader.prototype.loadAsync,url:location.href};
+let requests=[];
+const request=(kind,url)=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});requests.push({kind,url,resolve,reject});return promise};
+window.fetch=url=>request('manifest',url);
+THREE.TextureLoader.prototype.loadAsync=function(url){return request('texture',url)};
+GLTFLoader.prototype.loadAsync=function(url){return request('gltf',url)};
+const pending=url=>{const item=requests.find(request=>request.url===url&&!request.done);if(!item)throw Error('未请求 '+url);item.done=true;return item};
+const scene=()=>({scene:new THREE.Group(),animations:[]});
+const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve()};
+const textures=()=>{for(const item of requests.filter(request=>request.kind==='texture'&&!request.done)){item.done=true;item.resolve(new THREE.Texture())}};
+const manifest=(url,value)=>pending(url).resolve({ok:true,json:()=>Promise.resolve(value)});
+const game=(settings={})=>{const history=[],g={settings,loader:new THREE.TextureLoader(),texCache:new Map()};let value;
+  Object.defineProperty(g,'loadProgress',{get:()=>value,set:next=>{value=next;history.push(next)}});g.history=history;return g};
+const monotone=g=>g.history.every((value,index)=>Number.isFinite(value)&&value>=0&&value<=1&&(index===0||value>=g.history[index-1]));
+const query=value=>{const url=new URL(original.url);url.search=value;history.replaceState(null,'',url)};
+try {
+  query('');const g=game(),p=Game.prototype.preload.call(g),again=Game.prototype.preload.call(g);
+  check(p===again,'重复preload调用返回同一个Promise');
+  check(requests.filter(request=>request.kind==='manifest').length===2&&new Set(requests.filter(request=>request.kind==='manifest').map(request=>request.url)).size===2,'两个manifest各请求一次，无重复网络');
+  textures();await flush();check(g.loadDone===6&&Math.abs(g.loadProgress-.1)<1e-8,'清单尚未到达时贴图完成不会提前达到角色进度');
+  manifest('assets/models/rigged/manifest.json',['qa_rig_ok','qa_rig_fail','qa_rig_ok','../bad','UPPER',42,null]);
+  manifest('assets/models/manifest.json',['qa_rig_ok','qa_rig_fail','qa_static','qa_static','../bad']);
+  pending('assets/anim/anims.glb').resolve(scene());await flush();
+  check(g.loadTotal===8&&requests.filter(request=>request.url.startsWith('assets/models/rigged/')&&request.kind==='gltf').length===2,'迟到清单扩展总数并过滤重复/非法模型名');
+  pending('assets/models/rigged/qa_rig_ok.glb').resolve(scene());pending('assets/models/rigged/qa_rig_fail.glb').reject(Error('expected rig failure'));await flush();
+  check(g.rigged.has('qa_rig_ok')&&!g.rigged.has('qa_rig_fail')&&g.rigged.get('qa_rig_ok').userData.gloryClass==='qa_rig_ok','成功绑定模型可用并保留职业标记，失败模型进入回退');
+  check(g.loadTotal===10&&g.loadStage==='补全角色'&&!requests.some(request=>request.url==='assets/models/qa_rig_ok.glb'),'旧模型只补失败或缺失角色，不重复下载成功绑定模型');
+  check(monotone(g),'贴图完成、绑定清单与旧模型清单扩展时进度始终不倒退');
+  pending('assets/models/qa_rig_fail.glb').resolve(scene());pending('assets/models/qa_static.glb').resolve(scene());await p;
+  check(g.models.has('qa_rig_fail')&&g.models.has('qa_static')&&g.loadDone===g.loadTotal&&g.loadProgress===1,'旧模型回退完成后计数相等并达到100%');
+  check(monotone(g)&&g.loadStage==='准备场景','最终进度有效且显示准备场景');
+  check([...g.texCache.values()].every(texture=>texture.wrapS===THREE.RepeatWrapping&&texture.wrapT===THREE.RepeatWrapping&&texture.colorSpace===THREE.SRGBColorSpace),'预加载贴图保留环绕与颜色空间配置');
+  const count=requests.length;check(Game.prototype.preload.call(g)===p&&requests.length===count,'加载完成后再次调用仍复用缓存且不产生请求');
+  __metrics.push({case:'rig-fallback',progress:g.history,done:g.loadDone,total:g.loadTotal,requests:requests.map(({kind,url})=>({kind,url}))});
+
+  requests=[];const malformed=game(),bad=Game.prototype.preload.call(malformed);
+  pending('assets/models/rigged/manifest.json').resolve({ok:true,json:()=>Promise.reject(SyntaxError('expected malformed JSON'))});
+  manifest('assets/models/manifest.json',{invalid:'not an array'});textures();await bad;
+  check(malformed.loadProgress===1&&malformed.loadDone===6&&malformed.rigged.size===0&&malformed.models.size===0,'损坏JSON与非数组清单安全回退，不挂起');
+  check(monotone(malformed)&&!requests.some(request=>request.kind==='gltf'),'损坏清单不会产生无效GLB请求，进度保持单调');
+
+  requests=[];query('models=0');const disabled=game(),off=Game.prototype.preload.call(disabled);textures();await off;
+  check(requests.length===6&&requests.every(request=>request.kind==='texture'),'models=0仅请求六张贴图，不访问模型清单或GLB');
+  check(monotone(disabled)&&disabled.loadProgress===1&&disabled.loadDone===disabled.loadTotal,'models=0也正常完成且进度单调');
+
+  requests=[];query('mocap=0');const staticOnly=game(),legacy=Game.prototype.preload.call(staticOnly);
+  manifest('assets/models/manifest.json',['qa_static_only']);textures();await flush();
+  check(!requests.some(request=>request.url==='assets/models/rigged/manifest.json'||request.url==='assets/anim/anims.glb'),'mocap=0只读取旧模型清单');
+  pending('assets/models/qa_static_only.glb').reject(Error('expected static failure'));await legacy;
+  check(staticOnly.loadProgress===1&&staticOnly.models.size===0&&staticOnly.loadDone===staticOnly.loadTotal&&monotone(staticOnly),'旧模型下载失败仍可使用程序模型完成加载');
+  __metrics.push({case:'static-failure',progress:staticOnly.history,done:staticOnly.loadDone,total:staticOnly.loadTotal});
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+finally {window.fetch=original.fetch;THREE.TextureLoader.prototype.loadAsync=original.texture;GLTFLoader.prototype.loadAsync=original.gltf;history.replaceState(null,'',original.url)}
+window.__ready=true;
+</script></body></html>

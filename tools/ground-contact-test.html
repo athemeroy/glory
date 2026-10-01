@@ -1,0 +1,71 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Ground reaction contact proof</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查倒地脚部支撑…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+import { GroundReactionSupport, reactionGroundOffset } from '../src/game/ground-contact.js';
+import { CLASSES } from '../src/data/classes.js';
+import { MOBS, BOSS } from '../src/data/enemies.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(condition,message)=>(condition?__results:__errors).push(message);
+const vector=new THREE.Vector3(),inverse=new THREE.Matrix4();
+try{
+  await loadClipLibrary('../assets/anim/anims.glb');const loader=new GLTFLoader();
+  const classes=new URLSearchParams(location.search).get('classes')?.split(',')||['boss','frostcaster','skeleton'];
+  for(const cls of classes){
+    const source=(await loader.loadAsync(`../assets/models/rigged/${cls}.glb`)).scene;source.userData.gloryClass=cls;
+    const body=createMocapBody(source),anim=new MocapAnimator(body),support=new GroundReactionSupport(body,null,true),C=CLASSES[cls]||MOBS[cls]||(cls==='boss'?BOSS:null);
+    const referenceBody=createMocapBody(source),referenceAnim=new MocapAnimator(referenceBody);referenceAnim.groundFeet.reactionSupport=null;
+    const state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0},samples=[];
+    for(let i=0;i<60;i++){anim.update(1/60,state);referenceAnim.update(1/60,state)}
+    let offset=anim.groundFeet.offset,previousHip=body.bones.Hips.getWorldPosition(vector).y,previousOldHip=referenceBody.bones.Hips.getWorldPosition(vector).y,maxOffsetError=0;
+    for(const [phase,frames,duration]of [['down',39,.65],['getup',27,.45],['recover',30,.5]]){
+      for(let frame=0;frame<frames;frame++){
+        const react=phase==='recover'?null:{type:phase,t:frame/60,dur:duration};
+        anim.update(1/60,{...state,react});referenceAnim.update(1/60,{...state,react});
+        const compact=support.floor(),full=support.floor(support.fullProbes),worst=support.lowestProbe;
+        const oldOffset=anim.groundFeet.offset,rawFull=full-oldOffset,rawCompact=compact-oldOffset;
+        if(react)offset=reactionGroundOffset(offset,rawCompact,1/60);
+        else{
+          body.model.updateMatrixWorld(true);inverse.copy(body.model.matrixWorld).invert();let sole=Infinity;
+          for(const p of anim.groundFeet.probes){p.mesh.getVertexPosition(p.index,vector).applyMatrix4(p.mesh.matrixWorld).applyMatrix4(inverse);sole=Math.min(sole,vector.y-oldOffset)}
+          const target=THREE.MathUtils.clamp(-sole,-.15,.15);offset+=(target-offset)*(1-Math.exp(-40/60));
+        }
+        const currentHip=body.bones.Hips.getWorldPosition(vector).y,oldHip=referenceBody.bones.Hips.getWorldPosition(vector).y,hip=currentHip-oldOffset+offset;
+        maxOffsetError=Math.max(maxOffsetError,Math.abs(offset-oldOffset));
+        samples.push({phase,frame,full,oldFull:rawFull+referenceAnim.groundFeet.offset,compact,compressionError:compact-full,offset,correctedMinY:rawFull+offset,oldHip,hip,hipDelta:Math.abs(hip-previousHip),oldHipDelta:Math.abs(oldHip-previousOldHip),signedHipDelta:hip-previousHip,oldSignedHipDelta:oldHip-previousOldHip,worst:worst?{index:worst.index,side:worst.side}:null});
+        previousHip=hip;previousOldHip=oldHip;
+      }
+    }
+    const phases={};for(const phase of ['down','getup','recover']){
+      const rows=samples.filter(s=>s.phase===phase);
+      phases[phase]={oldMinY:Math.min(...rows.map(s=>s.oldFull)),minY:Math.min(...rows.map(s=>s.correctedMinY)),maxY:Math.max(...rows.map(s=>s.correctedMinY)),maxHipDelta:Math.max(...rows.map(s=>s.hipDelta)),oldMaxHipDelta:Math.max(...rows.map(s=>s.oldHipDelta)),maxUpHipDelta:Math.max(...rows.map(s=>s.signedHipDelta)),oldMaxUpHipDelta:Math.max(...rows.map(s=>s.oldSignedHipDelta))};
+    }
+    const maxCompressionError=Math.max(...samples.map(s=>s.compressionError));
+    check(support.probes.length>0&&support.probes.length<support.fullProbes.length,cls+': 脚部完整候选压缩为方向支撑点');
+    check(maxCompressionError<.012,cls+': 所有连续帧支撑点相对真实完整脚部误差<12mm');
+    check(phases.down.minY>=-.02&&phases.getup.minY>=-.02,cls+': 倒地/起身真实脚穿透<2cm');
+    check(maxOffsetError<1e-6,cls+': 生产接入与独立包络数值一致');
+    // 充分回到站姿后，所有非地面倒地/起身路径应与关闭支撑的实例一致。
+    for(let i=0;i<90;i++){anim.update(1/60,state);referenceAnim.update(1/60,state)}
+    let inactiveError=0;
+    for(const gate of [
+      {...state,onGround:false,react:{type:'down',t:.2}},
+      {...state,react:{type:'hit',t:.1,dur:.3}},
+      {...state,action:{clip:'slash1',stage:'active',t:.5,key:'gate'}},
+      {...state,dash:true,dashT:.5},
+    ])for(let i=0;i<12;i++){
+      anim.update(1/60,gate);referenceAnim.update(1/60,gate);
+      inactiveError=Math.max(inactiveError,anim.hips.position.distanceTo(referenceAnim.hips.position));
+    }
+    check(inactiveError<1e-6,cls+': 空中倒地、受击、攻击、闪避不增加接地约束');
+    __metrics.push({cls,fullProbes:support.fullProbes.length,probes:support.probes.length,maxCompressionError,maxOffsetError,inactiveError,phases,samples});
+  }
+  check(reactionGroundOffset(0,.3,1/60)===0,'双脚抬起时不向下吸附地面');
+  check(reactionGroundOffset(.1,.3,1/60)<.1&&reactionGroundOffset(.1,.3,1/60)>0,'失去支撑后连续释放旧补偿');
+  check(reactionGroundOffset(0,-.3,1/60)>=.295,'快速负穿透由单向包络阻止');
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n');
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

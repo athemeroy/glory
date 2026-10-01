@@ -158,8 +158,13 @@ window.__audit=async(clsId,pose='stance',form=null,sample=null)=>{
   if(sample?.react){
     const frames=sample.frames??4;
     if(!Number.isInteger(frames)||frames<1||frames>120)throw Error('Invalid reaction sample frame count');
+    // A get-up follows an actual fallen pose, preserving the same transition history.
+    if(sample.react==='getup')for(let i=0;i<39;i++){
+      const fallenState={...state,action:null,react:{type:'down',t:i/60,dur:0.65}};
+      procAnim.update(1/60,fallenState);anim.update(1/60,fallenState);fitWorldGripHands(body,worldHands,W,left);fp.sync(proc,1/60,0);W.update?.(1/60);fp.update(1/60);
+    }
     for(let i=0;i<frames;i++){
-      const reactionState={...state,action:null,react:{type:sample.react,t:i/60,dur:sample.dur||0.65}};
+      const reactionState={...state,action:null,react:{type:sample.react,t:i/60,dur:sample.dur||(sample.react==='getup'?0.45:0.65)}};
       procAnim.update(1/60,reactionState);anim.update(1/60,reactionState);fitWorldGripHands(body,worldHands,W,left);fp.sync(proc,1/60,0);W.update?.(1/60);fp.update(1/60);
       const foot=footSample(anim);reactionSamples.push({frame:i,t:i/60,...foot});
     }

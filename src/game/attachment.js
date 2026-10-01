@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { markSharedResource } from './model.js';
 
 const prepared = new WeakMap();
-const classes = new Set(['skeleton', 'berserker', 'warlock', 'frostcaster']);
+const classes = new Set(['skeleton', 'berserker', 'warlock', 'frostcaster', 'thug']);
 const contaminatingBones = new Set(['LeftShoulder', 'RightShoulder', 'LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm', 'LeftHand', 'RightHand']);
 const smooth = (a, b, value) => { const t = Math.max(0, Math.min(1, (value - a) / (b - a))); return t * t * (3 - 2 * t); };
 
@@ -20,7 +20,7 @@ function limbSegments(body, armsOnly = false) {
 function prepare(mesh, body, classId) {
   const source = mesh.geometry, si = source.attributes.skinIndex, sw = source.attributes.skinWeight;
   if (!si || !sw || !source.index) return null;
-  const names = mesh.skeleton.bones.map(bone => bone.name), headIndex = names.indexOf('Head'), hipIndex = names.indexOf('Hips'), spineIndex = names.indexOf('Spine02') >= 0 ? names.indexOf('Spine02') : names.indexOf('Spine');
+  const names = mesh.skeleton.bones.map(bone => bone.name), headIndex = names.indexOf('Head'), hipIndex = names.indexOf('Hips'), spineIndex = names.indexOf('Spine02') >= 0 ? names.indexOf('Spine02') : names.indexOf('Spine'), rightLegIndex = names.indexOf('RightLeg'), rightUpLegIndex = names.indexOf('RightUpLeg');
   if (headIndex < 0 || hipIndex < 0 || spineIndex < 0 || !body.bones.neck || !body.bones.Head || !body.bones.Hips) return null;
   const head = body.bones.Head.getWorldPosition(new THREE.Vector3()), neck = body.bones.neck.getWorldPosition(new THREE.Vector3());
   const hips = body.bones.Hips.getWorldPosition(new THREE.Vector3());
@@ -45,10 +45,15 @@ function prepare(mesh, body, classId) {
   const components = new Map();
   for (let i = 0; i < si.count; i++) {
     const id = root(welded[i]); let component = components.get(id);
-    if (!component) { component = {count: 0, headWeight: 0, lowHeadVertices: 0, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity}; components.set(id, component); }
+    if (!component) { component = {count: 0, headWeight: 0, lowHeadVertices: 0, rightLegWeight: 0, rightUpLegWeight: 0, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity}; components.set(id, component); }
     component.count++;
     let headWeight = 0;
-    for (let k = 0; k < 4; k++) if (si.getComponent(i, k) === headIndex) headWeight += sw.getComponent(i, k);
+    for (let k = 0; k < 4; k++) {
+      const index = si.getComponent(i, k), weight = sw.getComponent(i, k);
+      if (index === headIndex) headWeight += weight;
+      if (classId === 'thug' && index === rightLegIndex) component.rightLegWeight += weight;
+      if (classId === 'thug' && index === rightUpLegIndex) component.rightUpLegWeight += weight;
+    }
     component.headWeight += headWeight;
     if (headWeight > .05 && points[i * 3 + 1] < neck.y - .50) component.lowHeadVertices++;
     component.minX = Math.min(component.minX, points[i * 3]); component.maxX = Math.max(component.maxX, points[i * 3]);
@@ -65,6 +70,8 @@ function prepare(mesh, body, classId) {
     if (classId === 'warlock' && component.count > 500 && component.count < 1200 && component.headWeight / component.count < .05 && component.minY > .08 && component.minY < hips.y - .65 && component.maxY > hips.y - .05 && component.maxY < hips.y + .18 && component.minZ < hips.z - .15 && component.maxZ > hips.z + .10 && component.maxX - component.minX > .50 && component.maxX - component.minX < .90) selectedComponents.add(id);
     // 霜法师外袍连到头袖，但真正腿脚是另一个独立 2647 顶点片；只选择外袍后再限定下摆。
     if (classId === 'frostcaster' && component.count > 12000 && component.count < 14000 && component.minY > .06 && component.minY < .10 && component.maxY > head.y + .15 && component.minZ < -.30 && component.minX < hips.x - .45 && component.maxX > hips.x + .45) selectedComponents.add(id);
+    // 流氓右膝后破衣角是独立62点片；保持原两段腿骨的平均运动归属，避免假定它挂在腰身。
+    if (classId === 'thug' && component.count === 62 && rightLegIndex >= 0 && rightUpLegIndex >= 0 && component.rightLegWeight + component.rightUpLegWeight > component.count * .99999 && Math.abs(component.minX + .3082583) < .0035 && Math.abs(component.maxX + .2738160) < .0035 && Math.abs(component.minY - .4270843) < .0035 && Math.abs(component.maxY - .4994129) < .0035 && Math.abs(component.minZ + .1773777) < .0035 && Math.abs(component.maxZ + .1429354) < .0035) selectedComponents.add(id);
   }
   if (!selectedComponents.size) return null;
   const indices = new Uint16Array(si.count * 4), weights = new Float32Array(sw.count * 4), strength = new Float32Array(si.count), componentMask = new Uint8Array(si.count);
@@ -85,6 +92,11 @@ function prepare(mesh, body, classId) {
       if (amount <= 1e-6) continue;
     }
     componentMask[i] = 1; targetVertices++;
+    if (classId === 'thug') {
+      const component = components.get(root(welded[i])), total = component.rightLegWeight + component.rightUpLegWeight;
+      indices.set([rightLegIndex, rightUpLegIndex, 0, 0], i * 4); weights.set([component.rightLegWeight / total, component.rightUpLegWeight / total, 0, 0], i * 4);
+      strength[i] = 1; changed++; continue;
+    }
     if (classId !== 'skeleton') {
       // 精确连通片已确认是挂布；真实腿/膝在其他片，原 cloth 的 13cm 人体保护门槛不变。
       const torso = smooth(hips.y - .10, hips.y + .12, points[i * 3 + 1]) * .40;
@@ -125,6 +137,7 @@ function prepare(mesh, body, classId) {
 
 export function repairAttachmentWeights(body, classId) {
   if (!classes.has(classId)) return null;
+  if (body.attachment?.classId === classId) return body.attachment;
   let changed = 0, targetVertices = 0;
   for (const mesh of body.meshes) {
     const source = mesh.geometry;

@@ -288,7 +288,8 @@ export class Menu {
   loading(mode) {
     this.clear();
     const img = mode === 'duel' || mode === 'relay' ? 'loading-duel' : mode === 'team' ? 'loading-team' : MODE_INFO[mode].img;
-    const s = el('div', 'screen loading-screen', this.root, `<div class="bg" style="background-image:url(assets/img/${img}.jpg)"></div><div class="load-box"><div class="load-title">${MODE_INFO[mode].name}</div><div class="load-bar"><i></i></div><div class="load-tip">${this.tip()}</div></div>`);
+    const s = el('div', 'screen loading-screen', this.root, `<div class="bg" style="background-image:url(assets/img/${img}.jpg)"></div><div class="load-box"><div class="load-heading"><div class="load-title">${MODE_INFO[mode].name}</div><button type="button" class="btn ghost load-cancel">返回菜单</button></div><div class="load-bar" role="progressbar" aria-label="加载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="10"><i></i></div><div class="load-state" role="status">准备资源</div><div class="load-tip">${this.tip()}</div></div>`);
+    click(s.querySelector('.load-cancel'), () => this.app.quit());
     return s;
   }
   tip() {
