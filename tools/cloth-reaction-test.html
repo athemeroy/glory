@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
 import { MOBS } from '../src/data/enemies.js';
+import { trialSkeletonRearCloth } from './skeleton-rear-cloth-trial.js';
 import { trialSkeletonArmAttachment } from './skeleton-attachment-trial.js';
 import { trialSkeletonWeights } from './skeleton-reaction-trial.js';
 import { repairClothWeights as repairOldClothWeights } from './fixtures/skeleton-cloth-before-reactions.js';
@@ -42,9 +43,10 @@ try{
   const current=createMocapBody(source);repairOldClothWeights(current,'skeleton');repairOldAttachmentWeights(current,'skeleton');
   const referenceGeometry=current.meshes[0].geometry,oldIndices=referenceGeometry.attributes.skinIndex.array.slice(),oldWeights=referenceGeometry.attributes.skinWeight.array.slice();
   // 独立候选只生成预期权重，随后还原旧参考网格。真正动画比较使用raw/旧场/新生产三实例。
-  current.model.userData.gloryClass='skeleton';const trial=trialSkeletonWeights(original,current,bind),strip=trialSkeletonArmAttachment(current),expected=current.meshes[0].geometry;
+  current.model.userData.gloryClass='skeleton';const trial=trialSkeletonWeights(original,current,bind),strip=trialSkeletonArmAttachment(current),rear=trialSkeletonRearCloth(original,current),expected=current.meshes[0].geometry;
   check(strip?.targets.length===2,'仅叠加已认证154片中独立两端点修复，不扩长手指/裙片范围');
-  const expectedTargets=trial.target.slice();for(const i of strip.targets)expectedTargets[i]=3;
+  check(rear?.roi.length===1434,'仅叠加独立已认证1434后披风连续场');
+  const expectedTargets=trial.target.slice();for(const i of strip.targets)expectedTargets[i]=3;for(const i of rear.roi)expectedTargets[i]=4;
   current.meshes[0].geometry=referenceGeometry;delete current.meshes[0].userData.reactionTrial;
   source.userData.gloryClass='skeleton';const candidate=createMocapBody(source),fixed=candidate.meshes[0].geometry;
   check(trial.hands.length===1832,'源Hand>=98%且距腕22cm内的1832长手指点恢复原绑定');
@@ -59,7 +61,7 @@ try{
       if(trial.target[i]===1&&(fixed.attributes.skinIndex.getComponent(i,k)!==sourceGeometry.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==sourceGeometry.attributes.skinWeight.getComponent(i,k)))handExact=false;
     }
   }
-  check(untouched&&productionExact,'新生产逐分量等于独立手指/破裙/两端点候选，其他身体/披风/头饰保持旧场参考值');check(handExact,'目标真实手指权重逐分量等于原GLB');check(bindError<1e-5,'全顶点绑定形状误差小于0.01mm');
+  check(untouched&&productionExact,'新生产逐分量等于独立手指/破裙/两端点/1434后披风候选，其他身体/头饰保持旧场参考值');check(handExact,'目标真实手指权重逐分量等于原GLB');check(bindError<1e-5,'全顶点绑定形状误差小于0.01mm');
   check(fixed.index===sourceGeometry.index&&fixed.attributes.position===sourceGeometry.attributes.position&&fixed.attributes.normal===sourceGeometry.attributes.normal,'原三角索引/位置/法线保持共享原数据');
   const index=sourceGeometry.index,edges=[],triangles=[],seen=new Set();
   for(let i=0;i<index.count;i+=3){

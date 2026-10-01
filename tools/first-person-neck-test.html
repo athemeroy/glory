@@ -1,0 +1,47 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Skeleton isolated collar FP proof</title><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body><pre id="result">原index47点蓝领口FP隔离候选…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, splitForFirstPerson } from '../src/game/mocap.js';
+import { buildCharacter,disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+import { FPView } from '../src/game/fpview.js';
+import { MOBS } from '../src/data/enemies.js';
+import { skeletonNeckRootRegion } from './first-person-neck-trial.js';
+import { referenceFirstPersonArms } from './fixtures/first-person-arms-before-regions.js';
+import { skeletonHeadRegion, excludeTrialHeadFaces } from './first-person-region-trial.js';
+window.__results=[];window.__errors=[];window.__metrics=[];const check=(ok,label)=>(ok?__results:__errors).push(label),same=(a,b)=>a.length===b.length&&a.every((v,i)=>v===b[i]);
+const p=new THREE.Vector3(),q=new THREE.Vector3();
+try{
+  const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/skeleton.glb')).scene,raw=createMocapBody(source),g=raw.meshes[0].geometry;
+  const region=skeletonNeckRootRegion(raw),sourceSI=g.attributes.skinIndex.array.slice(),sourceSW=g.attributes.skinWeight.array.slice(),sourceIndex=g.index.array.slice();
+  check(region?.component.count===47&&region.component.crossBoundaryFaces===0,'严格原index47点蓝领口且无跨片面，不选择weld11040主体');
+  check(region.component.maxDistalWeight===0&&region.component.maxArmWeight<.2,'原源蓝领口无Fore/Hand且Arm混入小于20%，完整片已语义认证');
+  source.userData.gloryClass='skeleton';const C=MOBS.skeleton,rig=buildCharacter(C.look),anim=new Animator(rig);anim.breath=0;
+  const before=new FPView(C.look,C.weapon,C.weaponOpts,source),candidate=new FPView(C.look,C.weapon,C.weaponOpts,source),production=new FPView(C.look,C.weapon,C.weaponOpts,source);
+  const native=fp=>{const out=[];fp.root.traverse(mesh=>{if(mesh.isSkinnedMesh&&mesh.geometry.attributes.position===g.attributes.position)out.push(mesh)});return out};
+  const old=native(before),trialMeshes=native(candidate),live=native(production),headRegion=skeletonHeadRegion(raw);
+  // 从完整源index重放原分类，只剔已ship的4176点头颈；独立恢复core10旧4906面。
+  for(const mesh of [...old,...trialMeshes])mesh.geometry.setIndex(referenceFirstPersonArms(mesh,g.index));
+  excludeTrialHeadFaces(before,headRegion);excludeTrialHeadFaces(candidate,headRegion);
+  const changes=excludeTrialHeadFaces(candidate,region),world=createMocapBody(source),worldGeometry=world.meshes[0].geometry;
+  const mask=world.meshes[0].userData.firstPersonHeadMask,expected=headRegion.mask.slice();for(let i=0;i<expected.length;i++)if(region.mask[i])expected[i]=1;
+  check(mask&&same(mask,expected)&&mask.reduce((sum,v)=>sum+v,0)===4223,'正式FP语义mask仅4176原头颈加47蓝领口，逐点等独立证书');
+  check(changes.length===1&&changes[0].removed.length===8&&changes[0].before.length/3===4906,'实际原FP4906面仅移除8个已认证领口漏面');
+  const change=changes[0];check(live.length===1&&same(Array.from(live[0].geometry.index.array),change.keep),'实际正式FP直接逐索引等于独立8领口漏面候选');check(same(change.keep,change.before.filter((_,i,arr)=>!arr.slice(i-i%3,i-i%3+3).every(vi=>region.mask[vi])))&&change.keep.length/3===4898,'其余4898真手臂/手腕/肩甲面逐索引保留');
+  check(same(change.mesh.geometry.attributes.skinIndex.array,old[0].geometry.attributes.skinIndex.array)&&same(change.mesh.geometry.attributes.skinWeight.array,old[0].geometry.attributes.skinWeight.array),'候选不改任何蒙皮权重，实际手指/握持不受影响');
+  const state={onGround:true,speed:0,fwd:1,stance:C.stance,pitch:0};
+  for(const pose of ['stance','run','attack']){
+    const st={...state,speed:pose==='run'?5.6:0,action:pose==='attack'?{clip:C.chain[0].anim,stage:'active',t:.65,key:'neck-trial'}:null};
+    for(let i=0;i<60;i++){anim.update(1/60,st);for(const fp of [before,candidate,production]){fp.sync(rig,1/60,0);fp.update(1/60)}}
+    for(const mesh of [old[0],change.mesh,live[0]]){mesh.updateWorldMatrix(true,false);mesh.skeleton.update()}
+    let retainedVertexError=0,productionVertexError=0;for(const i of new Set(change.keep)){old[0].getVertexPosition(i,p).applyMatrix4(old[0].matrixWorld);change.mesh.getVertexPosition(i,q).applyMatrix4(change.mesh.matrixWorld);retainedVertexError=Math.max(retainedVertexError,p.distanceTo(q));live[0].getVertexPosition(i,p).applyMatrix4(live[0].matrixWorld);productionVertexError=Math.max(productionVertexError,p.distanceTo(q))}
+    check(retainedVertexError<1e-8&&productionVertexError<1e-8,pose+': 两路候选与实际生产保留蒙皮位置逐点完全相同');__metrics.push({pose,beforeFaces:change.before.length/3,afterFaces:change.keep.length/3,removedFaces:change.removed.length,retainedVertexError,productionVertexError});
+  }
+  check(same(g.attributes.skinIndex.array,sourceSI)&&same(g.attributes.skinWeight.array,sourceSW)&&same(g.index.array,sourceIndex),'原GLB完整index/蒙皮逐字节不变，世界几何未改');
+  const union=new Map(),count=(ids,delta)=>{for(let at=0;at<ids.length;at+=3){const key=ids[at]+':'+ids[at+1]+':'+ids[at+2];union.set(key,(union.get(key)||0)+delta)}};
+  count(worldGeometry.index.array,1);const split=splitForFirstPerson(world);for(const mesh of [...split.head,...split.arms,...split.body])count(mesh.geometry.index.array,-1);
+  check([...union.values()].every(value=>value===0),'实际世界完整原三角仍由head/arms/body union逐面保留');
+  before.dispose();candidate.dispose();production.dispose();disposeRig(rig);disposeRig({root:raw.model},{sharedRoots:[source]});disposeRig({root:world.model},{sharedRoots:[source]});
+}catch(error){__errors.push(String(error.stack||error))}
+document.querySelector('#result').textContent=JSON.stringify({results:__results,errors:__errors,metrics:__metrics},null,2);window.__ready=true;
+</script></body></html>

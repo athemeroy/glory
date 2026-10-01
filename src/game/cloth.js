@@ -7,6 +7,10 @@ const profiles = {
   skeleton: { rear: [-0.08, -0.18], front: [0.28, 0.40], center: [0.04, 0.12], protectHands: true },
 };
 const prepared = new WeakMap();
+const originalGeometries = new WeakMap();
+
+// 原GLB仅作只读输入；独立服饰修复可从缓存结果找回其原蒙皮，不放进userData。
+export function originalClothGeometry(geometry) { return originalGeometries.get(geometry) || geometry; }
 const smooth = (a, b, value) => {
   const t = Math.max(0, Math.min(1, (value - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -81,6 +85,7 @@ function prepare(mesh, body, profile) {
   geometry.morphAttributes = source.morphAttributes; geometry.morphTargetsRelative = source.morphTargetsRelative;
   geometry.boundingBox = source.boundingBox?.clone() || null; geometry.boundingSphere = source.boundingSphere?.clone() || null;
   geometry.userData = {...source.userData, shared: true}; markSharedResource(geometry);
+  originalGeometries.set(geometry, source);
   return {geometry, strength, changed, protectedLimbVertices};
 }
 

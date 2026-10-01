@@ -1,7 +1,7 @@
+// Frozen cb953f3 attachment weights and FP head mask, before posterior cloth/collar fixes.
 // 修复已审计服饰连通片的错绑，所有非目标人体网格保持原绑定。
 import * as THREE from 'three';
-import { markSharedResource } from './model.js';
-import { originalClothGeometry } from './cloth.js';
+import { markSharedResource } from '../../src/game/model.js';
 
 const prepared = new WeakMap();
 const classes = new Set(['skeleton', 'berserker', 'warlock', 'frostcaster', 'thug']);
@@ -21,7 +21,6 @@ function limbSegments(body, armsOnly = false) {
 function prepare(mesh, body, classId) {
   const source = mesh.geometry, si = source.attributes.skinIndex, sw = source.attributes.skinWeight;
   if (!si || !sw || !source.index) return null;
-  const original = originalClothGeometry(source), originalSI = original.attributes.skinIndex, originalSW = original.attributes.skinWeight;
   const names = mesh.skeleton.bones.map(bone => bone.name), headIndex = names.indexOf('Head'), hipIndex = names.indexOf('Hips'), spineIndex = names.indexOf('Spine02') >= 0 ? names.indexOf('Spine02') : names.indexOf('Spine'), rightLegIndex = names.indexOf('RightLeg'), rightUpLegIndex = names.indexOf('RightUpLeg');
   const leftShoulderIndex = names.indexOf('LeftShoulder'), leftArmIndex = names.indexOf('LeftArm'), leftForeArmIndex = names.indexOf('LeftForeArm');
   if (headIndex < 0 || hipIndex < 0 || spineIndex < 0 || !body.bones.neck || !body.bones.Head || !body.bones.Hips) return null;
@@ -29,10 +28,6 @@ function prepare(mesh, body, classId) {
   const hips = body.bones.Hips.getWorldPosition(new THREE.Vector3());
   const point = new THREE.Vector3(), points = new Float32Array(si.count * 3), welded = new Uint32Array(si.count), cells = new Map(), parent = [];
   mesh.skeleton.update();
-  // Skeleton连续场使用原cloth前的bind位置，避免权重归一化的微小舍入影响场系数。
-  // 只临时切换当前新实例的采样输入；原GLB/缓存几何保持只读，已有扫描不重复。
-  if (classId === 'skeleton' && originalSI?.count === si.count && originalSW?.count === si.count) mesh.geometry = original;
-  try {
   for (let i = 0; i < si.count; i++) {
     mesh.getVertexPosition(i, point).applyMatrix4(mesh.matrixWorld); point.toArray(points, i * 3);
     // GLB 的硬法线/UV 缝有重复顶点；按 0.05mm 焊接后再检查真实三角连通片。
@@ -41,7 +36,6 @@ function prepare(mesh, body, classId) {
     if (id === undefined) { id = parent.length; parent.push(id); cells.set(key, id); }
     welded[i] = id;
   }
-  } finally { mesh.geometry = source; }
   const root = id => {
     while (parent[id] !== id) { parent[id] = parent[parent[id]]; id = parent[id]; }
     return id;
@@ -112,86 +106,15 @@ function prepare(mesh, body, classId) {
     // 流氓右膝后破衣角是独立62点片；保持原两段腿骨的平均运动归属，避免假定它挂在腰身。
     if (classId === 'thug' && component.count === 62 && rightLegIndex >= 0 && rightUpLegIndex >= 0 && component.rightLegWeight + component.rightUpLegWeight > component.count * .99999 && Math.abs(component.minX + .3082583) < .0035 && Math.abs(component.maxX + .2738160) < .0035 && Math.abs(component.minY - .4270843) < .0035 && Math.abs(component.maxY - .4994129) < .0035 && Math.abs(component.minZ + .1773777) < .0035 && Math.abs(component.maxZ + .1429354) < .0035) selectedComponents.add(id);
   }
-  let posteriorMask = null;
-  // 1434点蓝色下后披风属于11040主体的一部分；仅选择已认证原bind连通衣料区域。
-  // 使用既有points/weld，原cloth前的权重从只读lookup取得，不能继续混合旧x/z门槛结果。
-  if (classId === 'skeleton' && si.count === 27415 && source.index.count === 53583 && originalSI?.count === si.count && originalSW?.count === si.count && components.get(root(welded[13648]))?.count === 11040) {
-    const main = root(welded[13648]), eligible = new Uint8Array(si.count), near = new THREE.Vector3(), segments = [];
-    for (const side of ['Left', 'Right']) for (const [a, b] of [['Arm', 'ForeArm'], ['ForeArm', 'Hand'], ['UpLeg', 'Leg'], ['Leg', 'Foot']]) {
-      const start = body.bones[side + a], end = body.bones[side + b];
-      if (start && end) segments.push(new THREE.Line3(start.getWorldPosition(new THREE.Vector3()), end.getWorldPosition(new THREE.Vector3())));
-    }
-    if (segments.length === 8) for (let i = 0; i < si.count; i++) {
-      if (root(welded[i]) !== main || points[i * 3 + 2] >= .18 || points[i * 3 + 1] >= 1.15) continue;
-      let armWeight = 0;
-      for (let k = 0; k < 4; k++) if (/Arm|Hand/.test(names[originalSI.getComponent(i, k)])) armWeight += originalSW.getComponent(i, k);
-      if (armWeight >= .05) continue;
-      point.fromArray(points, i * 3); let distance = Infinity;
-      for (const segment of segments) { segment.closestPointToPoint(point, true, near); distance = Math.min(distance, point.distanceTo(near)); }
-      if (distance > .18) eligible[i] = 1;
-    }
-    const graph = Uint32Array.from({length: parent.length}, (_, i) => i);
-    const graphRoot = id => { while (graph[id] !== id) { graph[id] = graph[graph[id]]; id = graph[id]; } return id; };
-    for (let at = 0; at < source.index.count; at += 3) {
-      const a = source.index.getX(at), b = source.index.getX(at + 1), c = source.index.getX(at + 2);
-      for (const [x, y] of [[a, b], [b, c], [c, a]]) if (eligible[x] && eligible[y]) graph[graphRoot(welded[y])] = graphRoot(welded[x]);
-    }
-    const seed = graphRoot(welded[13648]), ids = [], bounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-    for (let i = 0; i < si.count; i++) if (eligible[i] && graphRoot(welded[i]) === seed) {
-      ids.push(i); for (let k = 0; k < 3; k++) { bounds[k] = Math.min(bounds[k], points[i * 3 + k]); bounds[k + 3] = Math.max(bounds[k + 3], points[i * 3 + k]); }
-    }
-    const certifiedBounds = [-.3220362, .1446560, -.4976955, .4391377, 1.1297066, .1498238];
-    if (ids.length === 1434 && bounds.every((value, k) => Math.abs(value - certifiedBounds[k]) < .003)) {
-      const mask = new Uint8Array(si.count); for (const i of ids) mask[i] = 1;
-      let boundaryFaces = 0;
-      for (let at = 0; at < source.index.count; at += 3) { const n = mask[source.index.getX(at)] + mask[source.index.getX(at + 1)] + mask[source.index.getX(at + 2)]; if (n > 0 && n < 3) boundaryFaces++; }
-      if (boundaryFaces === 21) posteriorMask = mask;
-    }
-  }
-  let collarMask = null;
-  // 47点蓝领口上缘在位置焊接后接入主体，使用完整原index连通证书，不能删整肩根。
-  if (classId === 'skeleton' && si.count === 27415 && source.index.count === 53583 && originalSI?.count === si.count && originalSW?.count === si.count) {
-    const rawParents = Uint32Array.from({length: si.count}, (_, i) => i);
-    const rawRoot = id => { while (rawParents[id] !== id) { rawParents[id] = rawParents[rawParents[id]]; id = rawParents[id]; } return id; };
-    for (let at = 0; at < source.index.count; at += 3) { const a = rawRoot(source.index.getX(at)), b = rawRoot(source.index.getX(at + 1)), c = rawRoot(source.index.getX(at + 2)); rawParents[b] = a; rawParents[c] = a; }
-    const seed = rawRoot(22243), ids = [], bounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-    let neckWeight = 0, shoulderWeight = 0, maxArmWeight = 0, maxDistalWeight = 0;
-    for (let i = 0; i < si.count; i++) if (rawRoot(i) === seed) {
-      ids.push(i); for (let k = 0; k < 3; k++) { bounds[k] = Math.min(bounds[k], points[i * 3 + k]); bounds[k + 3] = Math.max(bounds[k + 3], points[i * 3 + k]); }
-      let armWeight = 0, distalWeight = 0;
-      for (let k = 0; k < 4; k++) {
-        const name = names[originalSI.getComponent(i, k)] || '', weight = originalSW.getComponent(i, k);
-        if (/neck/i.test(name)) neckWeight += weight; if (/Shoulder/.test(name)) shoulderWeight += weight;
-        if (/^(Left|Right)Arm$/.test(name)) armWeight += weight; if (/ForeArm|Hand/.test(name)) distalWeight += weight;
-      }
-      maxArmWeight = Math.max(maxArmWeight, armWeight); maxDistalWeight = Math.max(maxDistalWeight, distalWeight);
-    }
-    const certifiedBounds = [-.1257144, 1.4224656, .1670450, .1050489, 1.5016826, .3771428];
-    if (ids.length === 47 && bounds.every((value, k) => Math.abs(value - certifiedBounds[k]) < .003) && neckWeight / 47 >= .25 && shoulderWeight / 47 >= .4 && maxArmWeight < .2 && maxDistalWeight <= 1e-6) {
-      collarMask = new Uint8Array(si.count); for (const i of ids) collarMask[i] = 1;
-    }
-  }
   if (!selectedComponents.size) return null;
   const indices = new Uint16Array(si.count * 4), weights = new Float32Array(sw.count * 4), strength = new Float32Array(si.count), componentMask = new Uint8Array(si.count);
-  const firstPersonHeadMask = firstPersonHeadComponents.size || collarMask ? new Uint8Array(si.count) : null;
+  const firstPersonHeadMask = firstPersonHeadComponents.size ? new Uint8Array(si.count) : null;
   const segments = classId === 'frostcaster' ? limbSegments(body, true) : [], nearest = new THREE.Vector3();
   let changed = 0, targetVertices = 0;
   for (let i = 0; i < si.count; i++) {
     for (let k = 0; k < 4; k++) { indices[i * 4 + k] = si.getComponent(i, k); weights[i * 4 + k] = sw.getComponent(i, k); }
     const componentId = root(welded[i]);
-    if (firstPersonHeadMask && (firstPersonHeadComponents.has(componentId) || collarMask?.[i])) firstPersonHeadMask[i] = 1;
-    if (posteriorMask?.[i]) {
-      const y = points[i * 3 + 1], amount = 1 - smooth(hips.y - .04, hips.y + .12, y), torso = smooth(hips.y - .10, hips.y + .12, y) * .40;
-      if (amount > 1e-6) {
-        const byBone = new Map();
-        for (let k = 0; k < 4; k++) { const bone = originalSI.getComponent(i, k); byBone.set(bone, (byBone.get(bone) || 0) + originalSW.getComponent(i, k) * (1 - amount)); }
-        byBone.set(hipIndex, (byBone.get(hipIndex) || 0) + amount * (1 - torso)); byBone.set(spineIndex, (byBone.get(spineIndex) || 0) + amount * torso);
-        const selected = [...byBone].filter(([, weight]) => weight > 1e-8).sort((a, b) => b[1] - a[1]).slice(0, 4), total = selected.reduce((sum, [, weight]) => sum + weight, 0);
-        for (let k = 0; k < 4; k++) { indices[i * 4 + k] = selected[k]?.[0] || 0; weights[i * 4 + k] = selected[k] ? selected[k][1] / total : 0; }
-        componentMask[i] = 1; strength[i] = amount; targetVertices++; changed++;
-      }
-      continue;
-    }
+    if (firstPersonHeadMask && firstPersonHeadComponents.has(componentId)) firstPersonHeadMask[i] = 1;
     if (armStripComponents.has(componentId)) {
       let foreWeight = 0;
       for (let k = 0; k < 4; k++) if (indices[i * 4 + k] === leftForeArmIndex) foreWeight += weights[i * 4 + k];
