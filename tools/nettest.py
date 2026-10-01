@@ -9,7 +9,9 @@ SECS = float(sys.argv[3]) if len(sys.argv) > 3 else 40
 HOW = sys.argv[4] if len(sys.argv) > 4 else 'room'
 args = ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', '--mute-audio']
 with sync_playwright() as p:
-    b = p.chromium.launch(channel='chrome', headless=True, args=args)
+    import os
+    px = os.environ.get('PROXY')  # 例：http://127.0.0.1:18081（访问被污染的域名时）
+    b = p.chromium.launch(channel='chrome', headless=True, args=args, **({'proxy': {'server': px}} if px else {}))
     A = b.new_page(viewport={'width': 640, 'height': 360}); B = b.new_page(viewport={'width': 640, 'height': 360})
     logs = []
     for n, pg in (('A', A), ('B', B)):
