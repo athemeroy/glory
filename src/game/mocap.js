@@ -9,6 +9,7 @@ const loader = new GLTFLoader();
 let clipLib = null;      // name -> AnimationClip（已去掉水平根位移）
 let clipLibPromise = null;
 const hipsY = new Map();   // 片段名 -> {times, ys}
+const sourceRest = new Map();
 let refHipY = 1;           // 购买动作所用模型的站立髋高（片段单位）
 function sampleHip(name, t) {
   const h = hipsY.get(name); if (!h) return refHipY;
@@ -20,6 +21,13 @@ function sampleHip(name, t) {
 export function loadClipLibrary(url = 'assets/anim/anims.glb') {
   if (clipLibPromise) return clipLibPromise;
   clipLibPromise = loader.loadAsync(url).then((g) => {
+    g.scene.updateMatrixWorld(true);
+    g.scene.traverse((o) => {
+      if (o.name && o.parent) sourceRest.set(o.name, {
+        world: o.getWorldQuaternion(new THREE.Quaternion()),
+        parent: o.parent.getWorldQuaternion(new THREE.Quaternion()),
+      });
+    });
     clipLib = new Map();
     for (const c of g.animations) {
       // 髋骨位移从片段里拿出来单独保存：只用竖直方向的“相对变化”，再按各模型比例叠加（不同模型骨架单位不同）
@@ -74,7 +82,7 @@ export function analyzeImpacts(riggedScene) {
     const c = clipLib.get(n); if (!c) continue;
     const bone = /Kick|Sweep/.test(n) ? probe.bones.RightFoot : probe.bones.RightHand;
     if (!bone) continue;
-    const a = mixer.clipAction(c); a.play(); a.paused = true;
+    const a = mixer.clipAction(retargetClip(c, probe.rest)); a.play(); a.paused = true;
     const N = 48; let best = 0.42, bs = -1;
     for (let i = 0; i <= N; i++) {
       a.time = (i / N) * c.duration; mixer.update(0); probe.model.updateMatrixWorld(true);
@@ -98,7 +106,33 @@ export function createMocapBody(riggedScene) {
     if (o.isBone) bones[o.name] = o;
     if (o.isSkinnedMesh) { o.castShadow = true; o.frustumCulled = false; meshes.push(o); }
   });
-  return { model, bones, meshes };
+  model.updateMatrixWorld(true);
+  const rest = new Map();
+  for (const [name, bone] of Object.entries(bones)) rest.set(name, {
+    world: bone.getWorldQuaternion(new THREE.Quaternion()),
+    parent: bone.parent.getWorldQuaternion(new THREE.Quaternion()),
+  });
+  return { model, bones, meshes, rest };
+}
+
+// 将源动作映射到目标骨骼的绑定坐标轴，保留目标骨长。
+// 同名骨骼并不保证局部朝向一致，直接套旋转会扭曲髋骨和四肢。
+export function retargetClip(clip, rest) {
+  const tracks = clip.tracks.map((track) => {
+    if (!track.name.endsWith('.quaternion')) return track.clone();
+    const name = track.name.slice(0, -'.quaternion'.length);
+    const src = sourceRest.get(name), dst = rest.get(name);
+    if (!src || !dst) return track.clone();
+    const left = dst.parent.clone().invert().multiply(src.parent);
+    const right = src.world.clone().invert().multiply(dst.world);
+    const mapped = track.clone(), q = new THREE.Quaternion();
+    for (let i = 0; i < mapped.values.length; i += 4) {
+      q.fromArray(track.values, i).premultiply(left).multiply(right).normalize();
+      q.toArray(mapped.values, i);
+    }
+    return mapped;
+  });
+  return new THREE.AnimationClip(clip.name, clip.duration, tracks, clip.blendMode);
 }
 
 // 把蒙皮网格按主导骨骼拆出头部与手臂（第一人称隐藏用）；返回 {head:[], arms:[], body:[]}
@@ -155,7 +189,7 @@ export class MocapAnimator {
   }
   action(name) {
     let a = this.actions.get(name);
-    if (!a) { const c = clipLib && clipLib.get(name); if (!c) return null; a = this.mixer.clipAction(c); this.actions.set(name, a); }
+    if (!a) { const c = clipLib && clipLib.get(name); if (!c) return null; a = this.mixer.clipAction(retargetClip(c, this.body.rest)); this.actions.set(name, a); }
     return a;
   }
   // 切换到片段；manual=true 时由调用方设置时间
@@ -230,9 +264,14 @@ export class MocapAnimator {
     this.mixer.update(dt); // 手动控制时间的片段已暂停，只推进交叉淡入
     // 髋骨高度：静止高度 + 片段中的相对起伏（按两套骨架站立髋高之比缩放）
     if (this.hips && this.hipRest && this.cur) {
-      const y = sampleHip(this.curName, this.cur.time);
+      // 与旋转使用同一套交叉淡入权重，避免切换动作时身体瞬间上下跳。
+      let offset = 0;
+      for (const [name, action] of this.actions) {
+        if (!action.enabled) continue;
+        offset += (sampleHip(name, action.time) - refHipY) * action.getEffectiveWeight();
+      }
       const k = this.hipRest.y / (refHipY || 1);
-      this.hips.position.set(this.hipRest.x, this.hipRest.y + (y - refHipY) * k, this.hipRest.z);
+      this.hips.position.set(this.hipRest.x, this.hipRest.y + offset * k, this.hipRest.z);
     }
     // 视线俯仰带动上身
     if (this.spine && st.pitch && !r) {

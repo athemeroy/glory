@@ -86,8 +86,10 @@ EffectComposer：主画面 RenderPass → 第一人称手臂层 OverlayPass（�
 
 ## 动捕角色（src/game/mocap.js）
 - `assets/models/rigged/<clsId>.glb`：Tripo P1 模型经 Meshy 绑骨（24 骨：Hips、Spine/Spine01/Spine02、neck、Head、Left/Right Shoulder/Arm/ForeArm/Hand、UpLeg/Leg/Foot/ToeBase），Armature 缩放 0.01。`manifest.json` 列出可用角色。
-- `assets/anim/anims.glb`：70 个动作片段（只含骨架与轨道）。加载时去掉缩放轨道，髋骨位移单独保存：只取竖直方向相对站立高度的变化，按“目标模型静止髋高 / 片段站立髋高”缩放后叠加（不同模型骨架单位不同）。
+- `assets/anim/anims.glb`：70 个动作片段（只含骨架与轨道）。髋骨位移单独保存：只取竖直方向相对站立高度的变化，按“目标模型静止髋高 / 片段站立髋高”缩放后叠加（不同模型骨架单位不同）。
 - `MocapAnimator.update(dt, st)` 与程序化 `Animator` 共用同一个状态对象：移动按速度/方向选片段（战斗待机、前后走跑、斜向跑、疾跑）；技能按程序化片段名映射到动捕片段（`ATTACK_MAP`），命中帧由右手/右脚速度峰值自动估计（`analyzeImpacts`），蓄力阶段走到命中帧前、生效阶段越过命中帧；射击类固定在瞄准帧；受击/浮空/倒地/起身/受身/死亡/欢呼各有映射。视线俯仰叠加到 Spine02。
+- 共享动作按源骨架与目标骨架的世界绑定朝向重定向四元数，保留目标骨长；每个角色按需缓存重定向后的动作，命中帧分析也使用同一映射。髋部起伏按动画交叉淡入权重混合，防止切换时高度跳变。
+- `tools/rigtest.html`：检查全部 15 个角色的绑定姿态恢复、5 类动作的旋转与骨长、髋部切换连续性以及源动作不被修改。启动本地静态服务器后打开此页，结果保存在 `window.__results` / `window.__errors`。
 - 武器挂到 `RightHand`/`LeftHand`：绕 X -90°，再绕 Z 30°（法杖类 95°），缩放抵消骨骼 0.01。
 - 本地玩家第一人称：世界身体按主导骨骼拆出 head / arms（`splitForFirstPerson`），分别进 `rig.headParts`、`rig.armParts` 隐藏；身体材质加只对主相机生效的胸口裁切面。
 - 第一人称手臂层（`fpview.js`）：再克隆一份绑骨模型，只留手臂网格（去掉 Shoulder 主导的肩甲）。程序化骨骼照常由 `Animator` 驱动但隐藏，只作姿态源；每帧 `retarget()` 把胸口扭转按世界增量复制到 Spine02，再让 Arm→ForeArm→Hand 各段朝向对齐程序化骨段（最小旋转）。武器朝向沿用程序化握把，位置移到模型手心。手臂材质 `nearFade`：离镜头 0.42m 内的片元抖动丢弃。

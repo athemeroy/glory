@@ -1,0 +1,60 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head><body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, retargetClip, MocapAnimator } from '../src/game/mocap.js';
+window.__errors = [];
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');
+  const loader = new GLTFLoader();
+  const source = (await loader.loadAsync('../assets/anim/anims.glb')).scene;
+  const tracks = [];
+  source.traverse(o => {
+    if (o.name && o.parent) tracks.push(new THREE.QuaternionKeyframeTrack(o.name + '.quaternion', [0, 1], [...o.quaternion.toArray(), ...o.quaternion.toArray()]));
+  });
+  const bindClip = new THREE.AnimationClip('bind-pose', 1, tracks);
+  const before = JSON.stringify(bindClip.toJSON());
+  const names = await (await fetch('../assets/models/rigged/manifest.json')).json();
+  const results = [];
+  for (const name of names) {
+    const gltf = await loader.loadAsync(`../assets/models/rigged/${name}.glb`);
+    const body = createMocapBody(gltf.scene);
+    const rest = new Map(Object.entries(body.bones).map(([n,b]) => [n, {q:b.quaternion.clone(), p:b.position.clone()}]));
+    const mixer = new THREE.AnimationMixer(body.model);
+    const clip = retargetClip(bindClip, body.rest);
+    mixer.clipAction(clip).play(); mixer.update(0.5);
+    let maxAngle = 0;
+    for (const [n,b] of Object.entries(body.bones)) {
+      maxAngle = Math.max(maxAngle, b.quaternion.angleTo(rest.get(n).q));
+      if (b.position.distanceTo(rest.get(n).p) > 1e-6) throw Error(name + ': 骨长改变');
+    }
+    if (maxAngle > 0.001) throw Error(name + ': 绑定姿态误差 ' + maxAngle);
+    mixer.stopAllAction();
+    const animator = new MocapAnimator(body);
+    for (const c of ['Idle', 'Combat_Stance', 'Run_02', 'Right_Hand_Sword_Slash', 'Knock_Down']) {
+      const a = animator.play(c, {manual:true, loop:false});
+      if (!a) throw Error('缺少动作 ' + c);
+      for (const t of [0, 0.3, 0.7, 0.99]) {
+        a.time = t * a.getClip().duration; animator.mixer.update(0.2);
+        for (const [n,b] of Object.entries(body.bones)) {
+          if (!b.quaternion.toArray().every(Number.isFinite) || Math.abs(b.quaternion.length()-1)>0.001) throw Error(name + ': 旋转异常 ' + n);
+          if (b.position.distanceTo(rest.get(n).p)>1e-6) throw Error(name + ': 动画改变骨长 ' + n);
+        }
+      }
+    }
+    animator.mixer.stopAllAction();
+    animator.curName = '';
+    const idle = {onGround:true, speed:0, calm:true};
+    for (let i=0;i<60;i++) animator.update(1/60, idle);
+    const hipY = body.bones.Hips.position.y;
+    animator.update(0, {...idle, guard:true});
+    if (Math.abs(body.bones.Hips.position.y-hipY)>0.001) throw Error(name + ': 切换动作时髋部跳变');
+    for (let i=0;i<30;i++) animator.update(1/60, {...idle, guard:true});
+    results.push(name + ': 绑定姿态 + 5 个动作通过');
+    gltf.scene.traverse(o=>{if(o.isMesh){o.geometry.dispose();for(const m of [].concat(o.material)){m.map?.dispose();m.dispose();}}});
+  }
+  if (JSON.stringify(bindClip.toJSON()) !== before) throw Error('重定向污染源动作');
+  window.__results = results;
+  document.querySelector('#result').textContent = results.join('\n');
+} catch (e) { window.__errors.push(String(e)); document.querySelector('#result').textContent = String(e); }
+window.__ready = true;
+</script></body></html>
