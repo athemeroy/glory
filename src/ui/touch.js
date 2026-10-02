@@ -47,6 +47,8 @@ export class TouchControls {
       document.addEventListener(event, (e) => this.up(e.pointerId, event !== 'pointerup'));
     }
     window.addEventListener('resize', () => this.reset());
+    // Browser bars and fold/split-screen changes can move hit targets mid-gesture.
+    window.visualViewport?.addEventListener('resize', () => this.reset());
     document.addEventListener('click', (e) => {
       if (!input.touchMode || !input.enabled || this.app.game.contextLost) return;
       const btn = e.target.closest('#touch-controls [data-command]');

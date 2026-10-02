@@ -1016,7 +1016,9 @@ export class Fighter {
     this.applyFlash();
     this.applyTell(dt);
     if (!this.renderPose || this.renderPoseRoot !== this.rig.root) {
-      const nodes = [...Object.values(this.rig.bones), ...Object.values(this.mocapBody?.bones || {}), this.mocapBody?.model];
+      const nodes = [...Object.values(this.rig.bones), ...Object.values(this.mocapBody?.bones || {}), this.mocapBody?.model,
+        // 袖口连接段每步由 connectWrist 改写；必须与握持手/手臂一同插值。
+        ...(this.gripHands || []).map(hand => hand.wrist)];
       for (const object of [this.weapon.obj, this.leftWeapon, ...(this.gripHands || []).map(hand => hand.root)]) {
         if (!object) continue;
         nodes.push(object, object.parent);

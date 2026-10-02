@@ -246,3 +246,25 @@
 }
 .goal-box .gb-title { display: flex; justify-content: space-between; gap: 10px; }
 .goal-box .gb-title small { color: #9fb7b9; font: 10px var(--sans); white-space: nowrap; }
+
+/* Narrow cover displays still need separate movement and skill hit targets.
+   Reduce decoration/spacing, never shrink an action below a 44px target. */
+@media (max-width: 359px) {
+  .touch-mode .skill-bar { width: 166px; height: 184px; right: calc(var(--safe-right) + 8px); }
+  .touch-mode .slot, .touch-mode .slot.basic, .touch-mode .slot.ult { width: 44px; height: 44px; }
+  .touch-mode .slot[data-action="attack"] { width: 64px; height: 64px; }
+  .touch-mode .slot[data-action="special"] { right: 70px; width: 44px; height: 44px; }
+  .touch-mode .slot[data-action="ult"] { right: 122px; width: 44px; height: 44px; }
+  .touch-mode .slot[data-action="s1"] { right: 122px; bottom: 58px; }
+  .touch-mode .slot[data-action="s2"] { right: 64px; bottom: 74px; }
+  .touch-mode .slot[data-action="s3"] { right: 8px; bottom: 78px; }
+  .touch-mode .slot[data-action="s4"] { right: 122px; bottom: 110px; }
+  .touch-mode .slot[data-action="s5"] { right: 64px; bottom: 126px; }
+  .touch-mode .slot[data-action="s6"] { right: 8px; bottom: 130px; }
+  .touch-mode .slot[data-action="attack"] img { inset: 9px 16px 23px; width: 28px; height: 28px; }
+  .touch-stick { width: 80px; height: 80px; }
+  .touch-movement { right: calc(var(--safe-right) + 184px); }
+  #touch-controls .touch-movement [data-action="sprint"] { left: calc(var(--safe-left) + 26px); bottom: calc(var(--safe-bottom) + 115px); }
+  #touch-controls .touch-interact { left: calc(var(--safe-left) + 8px); bottom: calc(var(--safe-bottom) + 175px); }
+  .touch-mode .form-bar { left: calc(var(--safe-left) + 8px); bottom: calc(var(--safe-bottom) + 229px); }
+}
