@@ -5,12 +5,14 @@ import { Menu } from './ui/menu.js';
 import { TouchControls } from './ui/touch.js';
 import { MODES, AttractMode } from './game/modes.js';
 import { NetHostDuel, NetGuestDuel } from './game/netmodes.js';
+import { StoryMode } from './game/story-mode.js';
 import { net } from './engine/net.js';
 import { ACCOUNTS } from './data/classes.js';
 
 MODES.nethost = NetHostDuel;
 MODES.attract = AttractMode;
 MODES.netguest = NetGuestDuel;
+MODES.story = StoryMode;
 import { input, keyLabel } from './engine/input.js';
 import { audio } from './engine/audio.js';
 import { store } from './engine/util.js';
@@ -24,7 +26,7 @@ class App {
     this.menu = new Menu(document.getElementById('menu'), this);
     input.attach(this.canvas);
     input.onLockChange = (locked) => {
-      if (!locked && !input.touchMode && this.mode && this.modeId !== 'attract' && !this.game.paused && !this.inWardrobe && !this.mode.over && !input.fallbackLook) this.pause();
+      if (!locked && !input.touchMode && this.mode && !this.mode.lines && this.modeId !== 'attract' && !this.game.paused && !this.inWardrobe && !this.mode.over && !input.fallbackLook) this.pause();
     };
     input.onLockNeeded = () => this.showClickPlay();
     input.onLockFail = () => { if (!this._lockWarned) { this._lockWarned = true; this.hud.toast('无法锁定鼠标：按住右键拖动或用方向键转视角'); } };
@@ -58,6 +60,8 @@ class App {
 
   startMode(id, opts) {
     this.endMode();
+    // 手册中的练习入口也可从联机暂停打开；离开网络玩法时释放房间和重开局监听。
+    if (id !== 'nethost' && id !== 'netguest' && (net.role || this._guestOff)) this.leaveNet();
     const generation = this._modeGeneration;
     const current = () => generation === this._modeGeneration;
     this._loadingMode = true;
@@ -125,13 +129,13 @@ class App {
     el.className = 'quick-help';
     el.innerHTML = input.touchMode ? `<h3>触屏操作</h3>
       <p>左下摇杆移动 · 在画面空白处拖动视角</p>
-      <p>右下点按技能，普攻长按蓄力 / 连射，格挡或瞄准长按保持。</p>
+      <p>右下点按技能，普攻长按蓄力 / 连射；职业特技依职业而异。</p>
       <p>跳跃可受身，闪避躲攻击；顶部可暂停、切视角和查看数据。</p>
       <small>横屏操作更舒适 · 轻触此提示关闭</small>` : `<h3>操作速览</h3>
-      <p><kbd>${k('forward')}${k('left')}${k('back')}${k('right')}</kbd> 移动　鼠标 视角　<kbd>${k('attack')}</kbd> 普攻（连按三段）　<kbd>${k('special')}</kbd> 格挡/瞄准</p>
+      <p><kbd>${k('forward')}${k('left')}${k('back')}${k('right')}</kbd> 移动　鼠标 视角　<kbd>${k('attack')}</kbd> 普攻　<kbd>${k('special')}</kbd> 职业特技</p>
       <p><kbd>${k('s1')}</kbd><kbd>${k('s2')}</kbd><kbd>${k('s3')}</kbd><kbd>${k('s4')}</kbd><kbd>${k('s5')}</kbd><kbd>${k('s6')}</kbd> 技能　<kbd>${k('ult')}</kbd> 大招　<kbd>${k('dash')}</kbd> 闪避　<kbd>${k('jump')}</kbd> 跳跃 / 被击飞时受身</p>
-      <p><kbd>${k('lockon')}</kbd> 锁定目标　<kbd>${k('view')}</kbd> 切换视角　<kbd>Tab</kbd> 数据　<kbd>Esc</kbd> 暂停</p>
-      <small>挑空 → 空中追击 → 击倒，是荣耀连段的基本套路。按任意键关闭</small>`;
+      <p><kbd>${k('lockon')}</kbd> 观察目标　<kbd>${k('view')}</kbd> 切换视角　<kbd>Tab</kbd> 数据　<kbd>Esc</kbd> 暂停</p>
+      <small>职业操作可在暂停菜单的荣耀手册中查阅。按任意键关闭</small>`;
     document.body.appendChild(el);
     let expireTimer, keyTimer, fadeTimer;
     const close = (immediate = false) => {
@@ -212,7 +216,7 @@ class App {
     this._guestOff = net.on('relay', (d) => {
       if (d.k !== 'go') return;
       const byId = (id) => ACCOUNTS.find((a) => a.id === id) || ACCOUNTS[0];
-      this.startMode('netguest', { net, level: d.level, hostAcc: byId(d.host.acc), hostId: d.host.id, guestAcc: byId(d.guest.acc), guestId: d.guest.id });
+      this.startMode('netguest', { net, level: d.level, hostAcc: byId(d.host.acc), hostId: d.host.id, hostSkills: d.host.skills, guestAcc: byId(d.guest.acc), guestId: d.guest.id, guestSkills: d.guest.skills });
     });
   }
   leaveNet() {
@@ -221,13 +225,12 @@ class App {
   }
 
   quit() {
-    if (this.modeId === 'nethost' || this.modeId === 'netguest') this.leaveNet();
+    if (net.role || this._guestOff) this.leaveNet();
     this.endMode();
     input.enabled = false;
     input.unlock();
     audio.music(true);
     this.menu.main();
-    this.startAttract();
   }
 
   // 主菜单背景的实时 AI 对战
@@ -275,7 +278,7 @@ class App {
     this.game.paused = true;
     this.hud.show(false);
     if (this.modeId === 'netguest') { this.menu.results(res, () => this.menu.netWaiting('等待主机开始下一局…'), () => this.quit()); return; }
-    this.menu.results(res, () => this.startMode(this.modeId, this.modeOpts), () => this.quit());
+    this.menu.results(res, () => this.startMode(this.modeId, this.modeId === 'story' && res.storyNext != null ? { ...this.modeOpts, chapter: res.storyNext } : this.modeOpts), () => this.quit());
   }
 }
 
@@ -288,7 +291,7 @@ if (q.get('auto')) {
   const { Brain } = await import('./game/ai.js');
   const byId = (id) => ACCOUNTS.find((a) => a.id === id) || ACCOUNTS[0];
   const mode = q.get('auto');
-  const opts = { account: byId(q.get('acc') || 'jmx'), enemy: byId(q.get('enemy') || 'yysf'), diff: q.get('diff') || 'normal',
+  const opts = { account: byId(q.get('acc') || 'jmx'), enemy: byId(q.get('enemy') || 'yysf'), diff: q.get('diff') || 'normal', chapter: Number(q.get('chapter')) || 0, level: q.get('level') || undefined,
     teamA: (q.get('ta') || 'jmx,myc,yyzq').split(',').map(byId), teamB: (q.get('tb') || 'yysf,dmgy,yqcy').split(',').map(byId) };
   if (mode === 'dungeon' && q.get('party') !== '0') opts.party = [byId('myc'), byId('yyzq')];
   if (q.get('fp') === '0') { const { store } = await import('./engine/util.js'); store.set('viewMode', q.get('view') || 'ots'); }

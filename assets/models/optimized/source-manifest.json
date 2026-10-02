@@ -1,0 +1,301 @@
+{
+  "version": "2026-10-03-blender-v6",
+  "tool": "Blender 4.5.9 LTS",
+  "originalRiggedPreserved": true,
+  "characters": [
+    {
+      "class": "unspecialized",
+      "source": "assets/models/rigged/unspecialized.glb",
+      "sha256Source": "a6b1a7c63a42423cde73f31fad873cc1359d6128ff2b7c41d4c8a021bbe2075a",
+      "sha256Output": "036cd98c4828d34e9c8669c05e021ed29122625fe8914d15e741a49d706bed76",
+      "vertices": 50920,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.72,
+          "roughnessFactor": 0.94
+        }
+      ]
+    },
+    {
+      "class": "swordmaster",
+      "source": "assets/models/rigged/swordmaster.glb",
+      "sha256Source": "782dd81350a0ceafa5d44ae67a78d782087f3214e77f71e84fac0007dc05f56b",
+      "sha256Output": "c212d76b885b80c3059efa7e82b443748c366b486e7e1984a7f1c67a3c46364e",
+      "vertices": 48650,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.8,
+          "roughnessFactor": 0.93
+        }
+      ]
+    },
+    {
+      "class": "battlemage",
+      "source": "assets/models/rigged/battlemage.glb",
+      "sha256Source": "fbe856c9ad63d0ff0ba4aab90676213a47f62ee121ac62498419ccdc27db437b",
+      "sha256Output": "7943558dd908e999abf457d95175b22778b63a8f35a3132a5b00e9791ff70168",
+      "vertices": 48183,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.84,
+          "roughnessFactor": 0.92
+        }
+      ]
+    },
+    {
+      "class": "striker",
+      "source": "assets/models/rigged/striker.glb",
+      "sha256Source": "1c834d58999444f5888d39539e79864f23bdf112420a1fe3350e35fd8a52c6e5",
+      "sha256Output": "f14439e6a7f22da3d33fca5f6868048b188768736a63103d924cd01222b790de",
+      "vertices": 45722,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.48,
+          "roughnessFactor": 0.97
+        }
+      ]
+    },
+    {
+      "class": "sharpshooter",
+      "source": "assets/models/rigged/sharpshooter.glb",
+      "sha256Source": "f8d1c1ba4b6d844a4a229033eebeaa991ce7011fdcb6c0ad3ce562c074fea0c8",
+      "sha256Output": "6777593ce5956eb17e0bcd85fd005d3ca5b3e0af52d2bfec786d91cc49c9deca",
+      "vertices": 52665,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.67,
+          "roughnessFactor": 0.94
+        }
+      ]
+    },
+    {
+      "class": "launcher",
+      "source": "git:e0c31fb5035f6ae41173f2d3d5a927130968b8a8:assets/models/rigged/launcher.glb",
+      "sha256Source": "982d7b53851d8df95832a038e0f74ecad93d157cf3a4ca0a2596fb9b8b26a45c",
+      "sha256Output": "26f032b2108e98217cf320f6abea08d620dd49a3070f20264511df2c4ee26f39",
+      "vertices": 28668,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "roughnessFactor": 0.94,
+          "metallicFactor": 0,
+          "baseColorTexture": {
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "class": "warlock",
+      "source": "assets/models/rigged/warlock.glb",
+      "sha256Source": "f9daf2837778f50401257f061dc09ef7ee312124017d29fba2f192d40b06c08e",
+      "sha256Output": "77940092417eaa45d5c38e47a88b8d115846e17fa3d2860b1be82a796d0c350e",
+      "vertices": 48819,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.56,
+          "roughnessFactor": 0.98
+        }
+      ]
+    },
+    {
+      "class": "cleric",
+      "source": "git:e0c31fb5035f6ae41173f2d3d5a927130968b8a8:assets/models/rigged/cleric.glb",
+      "sha256Source": "88eafa6dd00c1bf96f0854226df03a14b5247094cada7acb947874ba42e5da4a",
+      "sha256Output": "a8e8b1046f14d0c9cdb663879fc9712fe28b4e39c243a5e93233602a99ff6342",
+      "vertices": 27026,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "roughnessFactor": 0.96,
+          "metallicFactor": 0,
+          "baseColorTexture": {
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "class": "witch",
+      "source": "assets/models/rigged/witch.glb",
+      "sha256Source": "792e83585a399766947fb8c1b2da109d6ed2ed4d1a3814abdb398ae757841025",
+      "sha256Output": "2bf5dd72b42c123fb189495487b67f3c848f1066830c9dca3c2b962f5f50a714",
+      "vertices": 50147,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.56,
+          "roughnessFactor": 0.98
+        }
+      ]
+    },
+    {
+      "class": "berserker",
+      "source": "assets/models/rigged/berserker.glb",
+      "sha256Source": "d4a293ef39ced9fa51b548bbad15eb9822c7040594ad41926750ba9a86dad94e",
+      "sha256Output": "db0212d840d36e479b682373a62d8fbbc07ad06fb67e10a04cf56747c66e4f28",
+      "vertices": 50163,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.88,
+          "roughnessFactor": 0.92
+        }
+      ]
+    },
+    {
+      "class": "assassin",
+      "source": "assets/models/rigged/assassin.glb",
+      "sha256Source": "8230601aba589fee6e7c75e6412f0cf024ee0c581ebbb3e9eb924e4d3fe24a02",
+      "sha256Output": "704af4073cb4898b1ec0f9d7c07e6deec171e150a5cd7113a859953d6d867cf2",
+      "vertices": 49210,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.54,
+          "roughnessFactor": 0.97
+        }
+      ]
+    },
+    {
+      "class": "thug",
+      "source": "assets/models/rigged/thug.glb",
+      "sha256Source": "bd079e289d707338cecd19d83902ec85f4a7c0249f3f17cc1fd042a3a63c1f3f",
+      "sha256Output": "1e3f2fe5a04a267413004559fa003292c7d66d9b72df03e411b308af257de002",
+      "vertices": 54068,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.54,
+          "roughnessFactor": 0.97
+        }
+      ]
+    },
+    {
+      "class": "frostcaster",
+      "source": "assets/models/rigged/frostcaster.glb",
+      "sha256Source": "6490bcd748a23c4cb5e61570e8b6a422be74782eec8abcd6c8aa57626ace6b2e",
+      "sha256Output": "074e7446bf30f52e6fc2bdbf18686c58f5178bbae9b7549f2bcb020eb5997f85",
+      "vertices": 46717,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.82,
+          "roughnessFactor": 0.94
+        }
+      ]
+    },
+    {
+      "class": "boss",
+      "source": "assets/models/rigged/boss.glb",
+      "sha256Source": "ef42096d9d1d59fe12e16feda4ca70f7806a8661f2695cdb31313c45089de701",
+      "sha256Output": "1173e865efe54da7b8384c1dd17e714fbdd8e579c3769b796e8652f1673ed5a3",
+      "vertices": 54295,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.88,
+          "roughnessFactor": 0.94
+        }
+      ]
+    },
+    {
+      "class": "skeleton",
+      "source": "assets/models/rigged/skeleton.glb",
+      "sha256Source": "f276df011c8722f08a500e5d8cf466e9a945e66fd9786d16d5616acc0bbcd511",
+      "sha256Output": "6458288bdd4eaa736fab1e81eb3755643bb37cde33b584354cccb2aa5412e3e0",
+      "vertices": 53524,
+      "bones": 24,
+      "materialFactors": [
+        {
+          "baseColorTexture": {
+            "index": 0
+          },
+          "metallicRoughnessTexture": {
+            "index": 1
+          },
+          "metallicFactor": 0.84,
+          "roughnessFactor": 0.96
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 // 霜法师袖面曾整片绑 Hand，肘边又混入 neck/Spine；仅修复已审计的外袍近臂区域。
 import * as THREE from 'three';
+import { getRepairPosition } from './repair-position.js';
 import { markSharedResource } from './model.js';
 
 const prepared = new WeakMap();
@@ -39,7 +40,7 @@ function prepare(mesh, body) {
   const point = new THREE.Vector3(), points = new Float32Array(si.count * 3), welded = new Uint32Array(si.count), cells = new Map(), parent = [];
   mesh.skeleton.update();
   for (let i = 0; i < si.count; i++) {
-    mesh.getVertexPosition(i, point).applyMatrix4(mesh.matrixWorld); point.toArray(points, i * 3);
+    getRepairPosition(mesh, i, point).applyMatrix4(mesh.matrixWorld); point.toArray(points, i * 3);
     const key = `${Math.round(point.x / .00005)},${Math.round(point.y / .00005)},${Math.round(point.z / .00005)}`;
     let id = cells.get(key);
     if (id === undefined) { id = parent.length; parent.push(id); cells.set(key, id); }

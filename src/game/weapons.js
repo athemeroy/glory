@@ -246,6 +246,17 @@ export function buildWeapon(type, opts = {}) {
       break;
     }
     case 'tome': { // 术士：魔典（左手）+ 骨杖（右手）
+      if (opts.variant === 'summoner') {
+        const wood=mat('#50412f',{rough:.82}), brass=mat('#bfa76d',{rough:.42,metal:.65}),jade=glow('#8cd7c4',.8);
+        m(new THREE.CylinderGeometry(.013,.021,.55,10),wood,root,0,.19,0);
+        for(const y of [.04,.37,.45])m(new THREE.TorusGeometry(.024,.006,6,12),brass,root,0,y,0).rotation.x=Math.PI/2;
+        const seal=m(new THREE.OctahedronGeometry(.052),jade,root,0,.515,0);seal.scale.set(.85,1.2,.85);
+        for(const side of [-1,1]) {
+          const claw=m(new THREE.ConeGeometry(.019,.12,7),brass,root,side*.039,.51,0);claw.rotation.z=-side*.35;
+        }
+        W.muzzle=marker(root,0,.57,0);W.tip=W.muzzle;W.base=marker(root,0,.25,0);
+        break;
+      }
       m(new THREE.CylinderGeometry(0.014, 0.016, 0.6, 6), mat('#3b2c3f', { rough: 0.6 }), root, 0, 0.18, 0);
       m(new THREE.IcosahedronGeometry(0.045, 0), glow('#b05cff', 2.0), root, 0, 0.52, 0);
       m(new THREE.TorusGeometry(0.05, 0.008, 5, 10, Math.PI * 1.5), mat('#ccc2b0', { rough: 0.6 }), root, 0, 0.52, 0);

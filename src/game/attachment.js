@@ -1,5 +1,6 @@
 // 修复已审计服饰连通片的错绑，所有非目标人体网格保持原绑定。
 import * as THREE from 'three';
+import { getRepairPosition } from './repair-position.js';
 import { markSharedResource } from './model.js';
 import { originalClothGeometry } from './cloth.js';
 
@@ -34,7 +35,7 @@ function prepare(mesh, body, classId) {
   if (classId === 'skeleton' && originalSI?.count === si.count && originalSW?.count === si.count) mesh.geometry = original;
   try {
   for (let i = 0; i < si.count; i++) {
-    mesh.getVertexPosition(i, point).applyMatrix4(mesh.matrixWorld); point.toArray(points, i * 3);
+    getRepairPosition(mesh, i, point).applyMatrix4(mesh.matrixWorld); point.toArray(points, i * 3);
     // GLB 的硬法线/UV 缝有重复顶点；按 0.05mm 焊接后再检查真实三角连通片。
     const key = `${Math.round(point.x / .00005)},${Math.round(point.y / .00005)},${Math.round(point.z / .00005)}`;
     let id = cells.get(key);

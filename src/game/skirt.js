@@ -1,5 +1,6 @@
 // 已认证的拳法师前披条与魔道学者下袍：同一薄壳截面跟随腰身，保留真人手脚。
 import * as THREE from 'three';
+import { getRepairPosition } from './repair-position.js';
 import { markSharedResource } from './model.js';
 
 const prepared=new WeakMap();
@@ -22,7 +23,7 @@ function prepare(mesh,body,classId) {
   const point=new THREE.Vector3(),nearest=new THREE.Vector3(),points=new Float32Array(si.count*3),cells=new Map(),parent=[],welded=new Uint32Array(si.count);
   mesh.skeleton.update();
   for(let i=0;i<si.count;i++){
-    mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld).toArray(points,i*3);
+    getRepairPosition(mesh,i,point).applyMatrix4(mesh.matrixWorld).toArray(points,i*3);
     const key=[point.x,point.y,point.z].map(value=>Math.round(value/.00005)).join(',');let id=cells.get(key);
     if(id===undefined){id=parent.length;parent.push(id);cells.set(key,id)}welded[i]=id;
   }

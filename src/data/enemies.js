@@ -4,6 +4,8 @@ const P = (o) => ({ t: 0, kind: 'magic', speed: 18, radius: 0.25, range: 30, dmg
 
 export const MOBS = {
   skeleton: {
+    // 原著第28章：无血肉的骷髅类免疫出血；其他状态仍分别判断。
+    statusImmunities: ['bleed'],
     name: '骸骨卫兵', weapon: 'sword', stance: 'sword', hp: 650, mp: 100, speed: 3.6, aiRange: 1.9, metal: false,
     chain: [
       { anim: 'slash1', wind: 380, active: 110, recover: 420, hits: [H({ range: 2.3, dmg: 55, stun: 350, knock: 2 })], lunge: 1.2, vfx: 'slashR', sfx: 'swing_light' },
@@ -29,7 +31,7 @@ export const MOBS = {
 export const BOSS = {
   name: '寒铁守卫', weapon: 'axe', stance: 'greatsword', hp: 9000, mp: 100, speed: 2.8, aiRange: 2.8, metal: true,
   chain: [
-    { anim: 'slash1', wind: 520, active: 140, recover: 620, hits: [H({ range: 3.4, arc: 120, dmg: 90, stun: 420, knock: 4 })], vfx: 'slashWide', sfx: 'swing_heavy', lunge: 1 },
+    { anim: 'slash3', wind: 520, active: 140, recover: 620, hits: [H({ range: 3.4, arc: 120, dmg: 90, stun: 420, knock: 4 })], vfx: 'slashDown', sfx: 'swing_heavy', lunge: 1 },
   ],
   skills: {
     s1: { name: '寒铁横扫', icon: 'sword', cd: 5000, mp: 0, anim: 'spin', wind: 750, active: 240, recover: 850, tele: { type: 'cone', radius: 4.4, arc: 170 }, hits: [H({ t: 40, range: 4.4, arc: 170, dmg: 180, stun: 500, knock: 7 })], vfx: 'slashWide', sfx: 'swing_heavy', ai: { range: [0, 4.2], role: 'poke' } },

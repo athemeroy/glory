@@ -3,17 +3,17 @@ import { store } from './util.js';
 
 export const DEFAULT_BINDS = {
   forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
-  jump: 'Space', dash: 'ShiftLeft', attack: 'Mouse0', special: 'Mouse2',
+  jump: 'Space', dash: 'ShiftLeft', sprint: 'ControlLeft', attack: 'Mouse0', special: 'Mouse2',
   s1: 'KeyQ', s2: 'KeyE', s3: 'KeyR', s4: 'KeyF', s5: 'KeyC', s6: 'KeyX', ult: 'KeyV',
   form1: 'Digit1', form2: 'Digit2', form3: 'Digit3', form4: 'Digit4',
   interact: 'KeyG', stats: 'Tab', view: 'F5', lockon: 'KeyT',
 };
 
 export const BIND_LABELS = {
-  forward: '前进', back: '后退', left: '左移', right: '右移', jump: '跳跃 / 受身', dash: '闪避冲刺',
+  forward: '前进', back: '后退', left: '左移', right: '右移', jump: '跳跃 / 受身', dash: '闪避冲刺', sprint: '疾跑（按住）',
   attack: '普通攻击', special: '职业特技', s1: '技能 1', s2: '技能 2', s3: '技能 3', s4: '技能 4', s5: '技能 5', s6: '技能 6', ult: '大招',
   form1: '千机伞·剑', form2: '千机伞·矛', form3: '千机伞·枪', form4: '千机伞·盾',
-  interact: '交互', stats: '数据面板', view: '切换视角', lockon: '锁定目标',
+  interact: '交互', stats: '数据面板', view: '切换视角', lockon: '观察目标',
 };
 
 export function keyLabel(code) {
@@ -79,7 +79,7 @@ class Input {
         return;
       }
       if (e.code === 'Escape') { if (this.onEscape) this.onEscape(); return; }
-      if (this.enabled && (e.code === 'Tab' || e.code === 'Space' || e.code === 'F5' || (e.ctrlKey && e.code === 'KeyW'))) e.preventDefault();
+      if (this.enabled && (e.code === 'Tab' || e.code === 'Space' || e.code === 'F5' || (e.ctrlKey && Object.values(this.binds).includes(e.code)))) e.preventDefault();
       if (this.enabled && !e.repeat) this._press(e.code);
       if (this.onKey) this.onKey(e.code, true, e);
     };
@@ -114,6 +114,7 @@ class Input {
 
   // gesture=true 表示由用户点击触发；只有点击触发仍失败（如沙箱 iframe）才退回拖拽转视角
   lock(gesture = true) {
+    if (this.cursorMode) return;
     if (this.touchMode || !this.canvas || this.locked) return;
     this._gesture = gesture;
     const fail = () => { if (this._gesture) { this.fallbackLook = true; if (this.onLockFail) this.onLockFail(); } else if (this.onLockNeeded) this.onLockNeeded(); };

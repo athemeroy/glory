@@ -1,0 +1,128 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Ground reaction foot probe</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查倒地/起身真实脚部…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+import { CLASSES } from '../src/data/classes.js';
+import { MOBS, BOSS } from '../src/data/enemies.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const v=new THREE.Vector3(),inverse=new THREE.Matrix4();
+const footWeight=Number(new URLSearchParams(location.search).get('footWeight')||.75);
+const options=new URLSearchParams(location.search);
+function connectedMask(mesh,target){
+  const count=mesh.geometry.attributes.position.count,welded=new Uint32Array(count),parent=[],cells=new Map();
+  const root=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i]}return i};
+  mesh.skeleton.update();
+  for(let i=0;i<count;i++){
+    mesh.getVertexPosition(i,v).applyMatrix4(mesh.matrixWorld).applyMatrix4(inverse);
+    const key=[v.x,v.y,v.z].map(n=>Math.round(n/.00005)).join(',');let id=cells.get(key);
+    if(id===undefined){id=parent.length;parent.push(id);cells.set(key,id)}welded[i]=id;
+  }
+  const index=mesh.geometry.index;
+  for(let i=0;i<index.count;i+=3){const a=root(welded[index.getX(i)]),b=root(welded[index.getX(i+1)]),c=root(welded[index.getX(i+2)]);parent[b]=a;parent[c]=a}
+  const label=root(welded[target]);return Uint8Array.from(welded,id=>root(id)===label?1:0);
+}
+const segmentDistance=(p,a,b)=>{const d=b.clone().sub(a),t=THREE.MathUtils.clamp(p.clone().sub(a).dot(d)/d.lengthSq(),0,1);return p.distanceTo(d.multiplyScalar(t).add(a))};
+function footProbes(body){
+  body.model.updateMatrixWorld(true);inverse.copy(body.model.matrixWorld).invert();
+  const probes=[];
+  for(const mesh of body.meshes){
+    mesh.skeleton.update();const {skinIndex,skinWeight,position}=mesh.geometry.attributes;
+    if(!skinIndex||!skinWeight)continue;
+    const feet=['Left','Right'].map(side=>{
+      const a=body.bones[side+'Foot'],b=body.bones[side+'ToeBase'];
+      return {side,a:a.getWorldPosition(new THREE.Vector3()).applyMatrix4(inverse),b:b.getWorldPosition(new THREE.Vector3()).applyMatrix4(inverse),indices:new Set(mesh.skeleton.bones.flatMap((bone,i)=>bone===a||bone===b?[i]:[]))};
+    });
+    for(let i=0;i<position.count;i++){
+      // 精确衣饰修复掩码一律排除；剩余点还须强脚骨权重且距实际脚/趾段<=13cm。
+      if(mesh.userData.clothStrength?.[i]>0||mesh.userData.attachmentComponent?.[i]||mesh.userData.sleeveComponent?.[i]||mesh.userData.robeStrength?.[i]>0)continue;
+      for(const foot of feet){
+        let weight=0;for(let k=0;k<4;k++)if(foot.indices.has(skinIndex.getComponent(i,k)))weight+=skinWeight.getComponent(i,k);
+        if(weight<footWeight)continue;
+        mesh.getVertexPosition(i,v).applyMatrix4(mesh.matrixWorld).applyMatrix4(inverse);
+        if(segmentDistance(v,foot.a,foot.b)>.13)continue;
+        probes.push({mesh,index:i,side:foot.side,weight,bind:v.toArray()});
+      }
+    }
+  }
+  return probes;
+}
+function centralBodyProbes(body){
+  body.model.updateMatrixWorld(true);inverse.copy(body.model.matrixWorld).invert();const probes=[];
+  const names=['Hips','Spine02','Spine01','Spine','neck','Head'],points=new Map(names.filter(n=>body.bones[n]).map(n=>[n,body.bones[n].getWorldPosition(new THREE.Vector3()).applyMatrix4(inverse)]));
+  const trunkNames=new Set(names.slice(0,4)),headNames=new Set(['Head','neck']);
+  for(const mesh of body.meshes){
+    mesh.skeleton.update();const {skinIndex,skinWeight,position}=mesh.geometry.attributes;
+    const excluded=options.has('excludeFrostHair')&&body.model.userData.gloryClass==='frostcaster'?connectedMask(mesh,13050):null;
+    const excludedRobe=options.has('excludeFrostRobe')&&body.model.userData.gloryClass==='frostcaster'?connectedMask(mesh,8969):null;
+    for(let i=0;i<position.count;i++){
+      if(excluded?.[i]||excludedRobe?.[i])continue;
+      if(mesh.userData.clothStrength?.[i]>0||mesh.userData.attachmentComponent?.[i]||mesh.userData.sleeveComponent?.[i]||mesh.userData.robeStrength?.[i]>0)continue;
+      let head=0,trunk=0;
+      for(let k=0;k<4;k++){const name=mesh.skeleton.bones[skinIndex.getComponent(i,k)].name,weight=skinWeight.getComponent(i,k);if(headNames.has(name))head+=weight;if(trunkNames.has(name))trunk+=weight}
+      if(head<.9&&trunk<.8)continue;
+      mesh.getVertexPosition(i,v).applyMatrix4(mesh.matrixWorld).applyMatrix4(inverse);
+      let part=null,weight=0,distance=Infinity;
+      if(head>=.9){distance=segmentDistance(v,points.get('neck'),points.get('Head'));if(distance<.15){part='head';weight=head}}
+      if(!part&&trunk>=.8){
+        for(let k=0;k<names.length-2;k++)distance=Math.min(distance,segmentDistance(v,points.get(names[k]),points.get(names[k+1])));
+        if(distance<.14){part='torso';weight=trunk}
+      }
+      if(part)probes.push({mesh,index:i,part,weight,distance,bind:v.toArray()});
+    }
+  }
+  return probes;
+}
+function sample(body,anim,probes,central,phase,frame,time){
+  body.model.updateMatrixWorld(true);inverse.copy(body.model.matrixWorld).invert();
+  for(const mesh of body.meshes)mesh.skeleton.update();
+  let minY=Infinity,worst=null;
+  for(const p of probes){
+    p.mesh.getVertexPosition(p.index,v).applyMatrix4(p.mesh.matrixWorld).applyMatrix4(inverse);
+    if(v.y<minY){minY=v.y;worst={index:p.index,side:p.side,weight:p.weight,bind:p.bind,posed:v.toArray()}}
+  }
+  let soleMinY=Infinity;
+  for(const p of anim.groundFeet.probes){p.mesh.getVertexPosition(p.index,v).applyMatrix4(p.mesh.matrixWorld).applyMatrix4(inverse);soleMinY=Math.min(soleMinY,v.y)}
+  const bodyParts={head:{minY:Infinity},torso:{minY:Infinity}};
+  for(const p of central){p.mesh.getVertexPosition(p.index,v).applyMatrix4(p.mesh.matrixWorld).applyMatrix4(inverse);if(v.y<bodyParts[p.part].minY)bodyParts[p.part]={minY:v.y,index:p.index,weight:p.weight,distance:p.distance,bind:p.bind,posed:v.toArray()}}
+  return {phase,frame,time,minY,soleMinY,bodyParts,offset:anim.groundFeet.offset,hipY:body.bones.Hips.getWorldPosition(v).applyMatrix4(inverse).y,worst};
+}
+try{
+  await loadClipLibrary('../assets/anim/anims.glb');const loader=new GLTFLoader();
+  const classes=new URLSearchParams(location.search).get('classes')?.split(',')||['boss','frostcaster','skeleton'];
+  for(const cls of classes){
+    const source=(await loader.loadAsync(`../assets/models/rigged/${cls}.glb`)).scene;source.userData.gloryClass=cls;
+    const body=createMocapBody(source),anim=new MocapAnimator(body),probes=footProbes(body),central=centralBodyProbes(body),C=CLASSES[cls]||MOBS[cls]||(cls==='boss'?BOSS:null);
+    // 可选夹具仅改 mixer 的源采样时间，不能再把新生产映射的真实 react.t 扭曲第二次。
+    let fixtureTime=null;
+    if(options.has('getupWindow')||options.has('oldGetup')){const update=anim.mixer.update.bind(anim.mixer);anim.mixer.update=dt=>{if(fixtureTime!==null&&anim.curName==='Stand_Up1')anim.cur.time=fixtureTime;return update(dt)}}
+    if(!probes.length)throw Error(cls+': 未找到强脚骨权重的真实脚部');
+    const state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0};
+    for(let i=0;i<60;i++)anim.update(1/60,state);
+    const samples=[sample(body,anim,probes,central,'stance',0,0)];
+    // 与 Fighter 实际地面击倒650ms/起身450ms一致，固定60Hz；随后观察站姿补偿接回。
+    for(const [phase,frames,duration]of [['down',39,.65],['getup',27,.45],['recover',30,.5]]){
+      for(let frame=0;frame<frames;frame++){
+        const time=frame/60,react=phase==='recover'?null:{type:phase,t:time,dur:duration};
+        fixtureTime=null;
+        if(phase==='getup'&&options.has('oldGetup'))fixtureTime=time/.45*anim.action('Stand_Up1').getClip().duration;
+        else if(phase==='getup'&&options.has('getupWindow')){
+          const progress=time/.45,phaseKnots=[0,.30,.90,1],timeKnots=[1.2,4.4666667,5.9666667,7.0];fixtureTime=7;
+          for(let k=1;k<phaseKnots.length;k++)if(progress<=phaseKnots[k]){fixtureTime=timeKnots[k-1]+(timeKnots[k]-timeKnots[k-1])*(progress-phaseKnots[k-1])/(phaseKnots[k]-phaseKnots[k-1]);break}
+        }
+        anim.update(1/60,{...state,react});samples.push(sample(body,anim,probes,central,phase,frame,time));
+      }
+    }
+    const phases={};for(const phase of ['stance','down','getup','recover']){
+      const rows=samples.filter(s=>s.phase===phase),worst=rows.reduce((a,b)=>a.minY<b.minY?a:b);
+      const bodyParts={};for(const part of ['head','torso'])bodyParts[part]=rows.reduce((a,b)=>a.bodyParts[part].minY<b.bodyParts[part].minY?a:b).bodyParts[part];
+      phases[phase]={minY:worst.minY,maxY:Math.max(...rows.map(s=>s.minY)),maxHipDelta:Math.max(0,...rows.slice(1).map((s,i)=>Math.abs(s.hipY-rows[i].hipY))),bodyParts,worst};
+    }
+    __metrics.push({cls,footWeight,probes:probes.length,bodyProbes:{head:central.filter(p=>p.part==='head').length,torso:central.filter(p=>p.part==='torso').length},soleProbes:anim.groundFeet.probes.length,phases,samples});
+    __results.push(cls+': '+probes.length+'真实脚部顶点，倒地 '+(phases.down.minY*1000).toFixed(1)+'mm，起身 '+(phases.getup.minY*1000).toFixed(1)+'mm');
+  }
+  document.querySelector('#result').textContent=__results.join('\n');
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

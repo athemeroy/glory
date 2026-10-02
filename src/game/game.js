@@ -2,14 +2,19 @@
 import * as THREE from 'three';
 import { World } from './world.js';
 import { Combat } from './combat.js';
+import { SummonSystem, decorateSummoner } from './summons.js';
 import { VFX, WeaponTrail } from './vfx.js';
 import { Fighter } from './fighter.js';
-import { FPView, FP_LAYER, hideWorldArmsForFP } from './fpview.js';
+import { visibleTo, shadowStep, sandBlinds, incomingFromFront } from './perception.js';
+import { statusLabel } from './statuses.js';
+import { applyGunRecoil, gunProfile } from './ballistics.js';
+import { battleMageHit } from './battle-mage.js';
+import { FPView, FP_LAYER, hideWorldArmsForFP, showWorldBodyForFP } from './fpview.js';
 import { Brain } from './ai.js';
 import { buildLevel } from './levels.js';
 import { Post } from './post.js';
 import { loadModel } from './skin.js';
-import { loadClipLibrary } from './mocap.js';
+import { loadClipLibrary, loadSwordPilotClips } from './mocap.js';
 import { GLTFLoader } from '../../vendor/GLTFLoader.js';
 import { input } from '../engine/input.js';
 import { audio } from '../engine/audio.js';
@@ -21,6 +26,7 @@ const STEP = 1 / 60;
 export const SETTINGS_DEFAULT = {
   sens: 1.0, fov: 95, invertY: false, shake: true, bob: true, quality: 'high', master: 0.8, sfx: 1.0, music: 0.6,
   dmgNumbers: true, showTrails: true, hudScale: 1, crosshair: true,
+  aimAssist: false,
 };
 
 export class Game {
@@ -30,7 +36,7 @@ export class Game {
     this.settings = { ...SETTINGS_DEFAULT, ...(input.touchMode ? { quality: 'low' } : {}), ...store.get('settings', {}) };
     const hi = this.settings.quality === 'high';
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: hi, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, hi ? 1.5 : 1));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, hi ? 2 : 1.25));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -49,9 +55,13 @@ export class Game {
     this.combat = new Combat(this);
     this.vfx = new VFX(this.scene);
     this.fighters = [];
+    this.summons = new SummonSystem(this);
     this.trails = new Map();
     this.player = null;
     this.firstPerson = true;
+    // 默认直接从角色眼睛看世界身体，镜子与屏幕共享同一套骨骼。fpbody=0 保留旧视图作对照。
+    this.fpBody = new URLSearchParams(globalThis.location?.search || '').get('fpbody') !== '0';
+    this.swordPilot = new URLSearchParams(globalThis.location?.search || '').get('swordpilot') === '1';
     this.timeScale = 1; this.hitstop = 0;
     this.shakeAmt = 0; this.shakeT = 0;
     this.acc = 0;
@@ -70,7 +80,7 @@ export class Game {
     this.lastMouse = [0, 0];
     this.tmp = new THREE.Vector3();
     this.frames = 0; this.fpsT = 0; this.fps = 60;
-    this.post = new Post(this.renderer, this.scene, this.camera, this.vmCamera, () => !!(this.player && this.firstPerson && this.player.fp && this.player.fp.root.visible), this.settings.quality);
+    this.post = new Post(this.renderer, this.scene, this.camera, this.vmCamera, () => !!(this.player && this.firstPerson && (!this.fpBody && this.player.fp && this.player.fp.root.visible)), this.settings.quality);
     this.resize();
     this.setupGraphicsRecovery();
     window.addEventListener('resize', () => this.resize());
@@ -106,15 +116,24 @@ export class Game {
     this.degraded = true;
     this.renderer.setPixelRatio(1);
     if (this.post && this.post.smaa) this.post.smaa.enabled = false;
-    if (this.post) this.post.bloom.strength *= 0.8;
+    if (this.post) this.post.bloomBase *= 0.8;
     this.resize();
     this.hud.toast('帧率偏低，已自动切换为流畅画质');
   }
 
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
+    const quality = this.degraded ? 'low' : this.settings.quality;
+    const pr = this.degraded ? 1 : Math.min(window.devicePixelRatio, quality === 'high' ? 2 : 1.25);
+    if (this.renderer.getPixelRatio() !== pr) this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
-    if (this.post) { const pr = this.renderer.getPixelRatio(); this.post.setSize(w * pr, h * pr); }
+    if (this.post) { this.post.setQuality(quality); this.post.setSize(w, h); }
+    // 镜面反射也是整幅相机画面，按画布像素而非固定纵向贴图分配。
+    for (const mirror of this.level?.mirrors || []) {
+      const pr = this.renderer.getPixelRatio(), cap = quality === 'high' ? 2048 : 1280;
+      const scale = Math.min(1, cap / Math.max(w * pr, h * pr));
+      mirror.getRenderTarget().setSize(Math.max(1, Math.floor(w * pr * scale)), Math.max(1, Math.floor(h * pr * scale)));
+    }
     this.aspect = w / h;
     this.updateFov();
     this.vfx.setScale(h * this.renderer.getPixelRatio());
@@ -165,7 +184,8 @@ export class Game {
     }).catch(() => { assetFailed = true; return []; });
     const rigList = noRig || noModels ? Promise.resolve([]) : getList('assets/models/rigged/manifest.json');
     const oldList = noModels ? Promise.resolve([]) : getList('assets/models/manifest.json');
-    const rigged = (noRig || noModels ? Promise.resolve([]) : loadClipLibrary().then((lib) => {
+    const rigged = (noRig || noModels ? Promise.resolve([]) : loadClipLibrary().then(async (lib) => {
+      if (lib && this.swordPilot) await loadSwordPilotClips();
       animationFailed = !lib;
       return lib ? rigList : [];
     }))
@@ -173,7 +193,13 @@ export class Game {
         this.loadTotal += list.length; listKnown = true; this.loadStage = list.length ? '加载角色' : '准备场景'; progress();
         return Promise.all(list.map((k) => {
           if (this.rigged.has(k)) { this.loadDone++; progress(); return Promise.resolve(); }
-          return new GLTFLoader().loadAsync(`assets/models/rigged/${k}.glb`).then((g) => {
+          const originalURL = `assets/models/rigged/${k}.glb`;
+          const modelURL = this.swordPilot && k === 'swordmaster' ? 'assets/models/pilot/swordmaster.glb' : q.get('modelset') === 'original' ? originalURL : `assets/models/optimized/${k}.glb`;
+          const loader = new GLTFLoader();
+          return loader.loadAsync(modelURL).catch(error => {
+            if (modelURL !== originalURL) return loader.loadAsync(originalURL);
+            throw error;
+          }).then((g) => {
             g.scene.userData.gloryClass = k; this.rigged.set(k, g.scene); this.loadDone++; progress();
           }).catch(() => { assetFailed = true; this.loadDone++; progress(); });
         }));
@@ -213,6 +239,7 @@ export class Game {
     this.unloadLevel();
     const level = buildLevel(id, { THREE, renderer: this.renderer, tex: (n) => this.tex(n), quality: this.settings.quality, noEnv: new URLSearchParams(location.search).get('noenv') === '1' });
     this.level = level;
+    this.resize();
     this.scene.add(level.group);
     this.scene.background = level.background || new THREE.Color('#8fa3b8');
     this.scene.fog = level.fog || null;
@@ -228,6 +255,7 @@ export class Game {
     return level;
   }
   unloadLevel() {
+    this.summons?.clear();
     if (!this.level) return;
     this.level.group.removeFromParent();
     if (this.level.dispose) this.level.dispose();
@@ -237,6 +265,7 @@ export class Game {
   // ---- 角色 ----
   spawn(opts) {
     const f = new Fighter(this, opts);
+    decorateSummoner(f);
     this.fighters.push(f);
     if (opts.isPlayer) this.setPlayer(f);
     if (opts.ai) { f.ai = new Brain(f, opts.ai); }
@@ -246,6 +275,7 @@ export class Game {
     return f;
   }
   removeFighter(f) {
+    this.summons.removeOwner(f);
     if (this.lockTarget === f) this.lockTarget = null;
     if (this.spectate === f) this.spectate = null;
     const i = this.fighters.indexOf(f);
@@ -256,6 +286,7 @@ export class Game {
     this._renderDirty = true;
   }
   clearFighters() {
+    this.summons.clear();
     for (const f of [...this.fighters]) this.removeFighter(f);
     this.player = null;
     this.combat.clear();
@@ -264,6 +295,7 @@ export class Game {
 
   setPlayer(f) {
     this.player = f;
+    this.shotHeat = this.shotRoll = 0;
     f.isPlayer = true;
     f.fp = new FPView(f.lookData || f.cls.look, f.cls.weapon, f.cls.weaponOpts || {}, f.fpGlb || null, f.modelKey + (f.mocap ? ':rig' : ''));
     if (f.form) { f.fp.setForm(f.form); f.fp.weapon.setForm?.(f.form, true); }
@@ -285,18 +317,19 @@ export class Game {
     const f = this.player; if (!f) return;
     f.setFirstPerson(this.firstPerson);
     // 精模身体：主相机第一人称时裁掉胸口以上（避免领口贴脸穿插），镜子与他人视角不受影响
-    const bodyMesh = f.rig.mocapBodyMeshes ? f.rig.mocapBodyMeshes[0] : (f.usesModel && f.rig.skinned ? f.rig.skinned.body : null);
-    if (bodyMesh) {
-      const body = bodyMesh;
+    const bodies = f.rig.mocapBodyMeshes || (f.usesModel && f.rig.skinned?.body ? [f.rig.skinned.body] : []);
+    for (const body of bodies) {
       const plane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1e5);
-      body.material.clippingPlanes = [plane];
+      for (const material of [].concat(body.material)) material.clippingPlanes = [plane];
       const game = this;
       body.onBeforeRender = (r, sc, cam) => {
         plane.constant = game.firstPerson && cam === game.camera ? f.pos.y + 1.36 * f.scale : 1e5;
       };
     }
-    hideWorldArmsForFP(f.rig, f.weapon.obj, f.leftWeapon, this.firstPerson);
-    f.fp.root.visible = this.firstPerson;
+    this.vmCamera.position.set(0, 0, 0); this.vmCamera.rotation.set(0, 0, 0);
+    if (this.fpBody) showWorldBodyForFP(f.rig, f.weapon.obj, f.leftWeapon);
+    else hideWorldArmsForFP(f.rig, f.weapon.obj, f.leftWeapon, this.firstPerson);
+    f.fp.root.visible = this.firstPerson && !this.fpBody;
     this._renderDirty = true;
   }
   get viewMode() { return this._viewMode || (this.firstPerson ? 'fp' : 'ots'); }
@@ -311,6 +344,20 @@ export class Game {
   // ---- 事件 ----
   sfx(name, pos, vol = 1, rate = 1) { audio.play(name, pos ? { pos: [pos.x, pos.y, pos.z], vol, rate } : { vol, rate }); }
 
+  // 大招等强效果：全屏柔光闪一下（DOM 叠层，不影响输入）
+  flashScreen(color = '#ffffff', alpha = 0.35) {
+    if (typeof document === 'undefined') return;
+    let el = this._flashEl;
+    if (!el) {
+      el = this._flashEl = document.createElement('div');
+      el.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5;opacity:0;transition:opacity .5s ease-out';
+      document.body.appendChild(el);
+    }
+    el.style.background = `radial-gradient(ellipse at center, transparent 35%, ${color} 130%)`;
+    el.style.transition = 'none'; el.style.opacity = String(alpha);
+    requestAnimationFrame(() => { el.style.transition = 'opacity .55s ease-out'; el.style.opacity = '0'; });
+  }
+
   shake(pos, amt) {
     if (!this.settings.shake || !this.player) return;
     const d = pos ? pos.distanceTo(this.player.pos) : 0;
@@ -321,6 +368,7 @@ export class Game {
   onFighterEvent(f, type, data) {
     const pos = f.center(new THREE.Vector3());
     const isP = f === this.player;
+    const skillVisual = ['action', 'active', 'swing', 'slam', 'buff', 'form'].includes(type) && this.vfx.skillEvent?.(f, type, data) === true;
     switch (type) {
       case 'action': {
         const d = data.def;
@@ -328,31 +376,44 @@ export class Game {
           this.hud.announce(`${f.name}「${d.name}」`, f.team === this.player?.team ? 'ally' : 'enemy'); this.sfx('magic_cast', pos, 1.2);
           const dist = this.player ? f.pos.distanceTo(this.player.pos) : 0;
           voice.ult(d.name, isP ? 1 : Math.max(0.25, 0.9 - dist / 40));
-          this.vfx.ultAura(f.pos, f.cls.look?.accent || '#ffd27a');
+          if (!skillVisual) this.vfx.ultAura(f.pos, f.cls.look?.accent || '#ffd27a');
         }
+        const accA = f.cls.look?.accent || '#e8f4ff';
+        f._vfxPower = d.ult ? 2.2 : data.slot === 'atk' ? 1 : 1.6;
+        if (data.slot !== 'atk' || d.ult) {
+          const tp = new THREE.Vector3(); if (f.weapon?.tip) f.weapon.tip.getWorldPosition(tp); else tp.copy(pos);
+          if (!skillVisual) this.vfx.charge(tp, accA, d.ult ? 44 : 24, d.ult ? 1.7 : 1.0, Math.max(0.18, (d.wind || 200) / 1000 * 0.9));
+          if (isP) { this.post?.pulse(d.ult ? 0.9 : 0.35); }
+        }
+        if (d.ult && !skillVisual) this.flashScreen(accA, 0.4);
         if (d.tele) this.spawnTelegraph(f, d);
         if (isP && data.slot !== 'atk') this.hud.skillFlash(data.slot);
         break;
       }
+      case 'nostamina': if (isP) this.hud.toast('体力不足，稍停片刻恢复'); break;
+      case 'statusblocked': if (isP && this.time >= (f.statusNoticeAt || 0)) { f.statusNoticeAt = this.time + .7; this.hud.toast(data.type === 'silence' ? '技能已被封印，仍可普攻' : '受到控制，暂时无法出招'); } break;
       case 'active': {
         const d = data.def;
         if (d.sfx && !d.proj) this.sfx(d.sfx, pos, 1, rand(0.95, 1.05));
         const acc = f.cls.look?.accent || '#e8f4ff';
-        if (d.vfx === 'ult_dragon') this.vfx.dragon(f, acc);
+        if (skillVisual) { /* 职业技能效果已绘制 */ }
+        else if (d.vfx === 'ult_dragon') this.vfx.dragon(f, acc);
         else if (d.vfx === 'ult_blades') this.vfx.blades(f, acc);
         else if (d.vfx === 'ult_fists') { this.vfx.shock(f.center(new THREE.Vector3()).addScaledVector(f.forward(), 1.2), f.yaw, acc); }
-        else if (d.vfx && !d.slamOnLand && d.hits) this.vfx.slash(f, d.vfx, acc, (d.hits[0]?.range || 2.4) * 0.9);
+        else if (d.vfx && !d.slamOnLand && d.hits) this.vfx.slash(f, d.vfx, acc, (d.hits[0]?.range || 2.4) * 0.9, f._vfxPower || 1);
+        if (isP && (f._vfxPower || 1) > 1.2) { this.fovPunch = Math.min(this.fovPunch || 0, -0.035 * (f._vfxPower - 1)); this.post?.pulse(0.5); this.shake(f.pos, 0.18 * f._vfxPower); }
         break;
       }
       case 'swing': {
         const d = data.def; const acc = f.cls.look?.accent || '#e8f4ff';
         this.sfx(d.sfx || 'swing_light', pos, 0.8);
-        if (d.vfx === 'ult_blades') this.vfx.blades(f, acc);
+        if (skillVisual) { /* 每段只绘制一次 */ }
+        else if (d.vfx === 'ult_blades') this.vfx.blades(f, acc);
         else if (d.vfx === 'ult_fists') { this.vfx.shock(f.center(new THREE.Vector3()).addScaledVector(f.forward(), 1.2), f.yaw, acc); this.vfx.sprite(f.center(new THREE.Vector3()).addScaledVector(f.forward(), 1.1), acc, 0.6, 0.1, 2); }
-        else if (d.vfx && d.hits) this.vfx.slash(f, data.i % 2 ? 'slashL' : 'slashR', acc, (d.hits[0]?.range || 2.4) * 0.9);
+        else if (d.vfx && d.hits) this.vfx.slash(f, data.i % 2 ? 'slashL' : 'slashR', acc, (d.hits[0]?.range || 2.4) * 0.9, f._vfxPower || 1);
         break;
       }
-      case 'slam': this.vfx.ring(f.pos, (data.def.hits?.[0]?.range || 3) * 1.1, f.cls.look?.accent || '#ffffff', 0.4); this.vfx.dust(f.pos, 24); this.sfx('boss_slam', f.pos); this.shake(f.pos, 0.6); break;
+      case 'slam': if (!skillVisual) { this.vfx.ring(f.pos, (data.def.hits?.[0]?.range || 3), f.cls.look?.accent || '#ffffff', 0.4); this.vfx.dust(f.pos, 24); } this.sfx('boss_slam', f.pos); this.shake(f.pos, 0.6); break;
       case 'jump': this.sfx('jump', f.pos, 0.6); break;
       case 'fullcharge': this.sfx('parry', pos, 0.6, 1.4); this.vfx.sprite(f.center(new THREE.Vector3()), '#ffc040', 1.2, 0.2, 2); break;
       case 'land': this.sfx('land', f.pos, 0.7); this.vfx.dust(f.pos, 6); if (isP) this.camDip = Math.min(0.12, (data.impact || 6) * 0.012); break;
@@ -363,7 +424,7 @@ export class Game {
       case 'protect': this.hud.floatText(pos, '保护', 'armor'); break;
       case 'heal': this.hud.floatText(pos, '+' + data.amount, 'heal'); break;
       case 'absorb': if (Math.random() < 0.5) this.hud.floatText(pos, '吸收', 'blocked'); break;
-      case 'buff': this.sfx('magic_cast', pos, 0.8); this.vfx.ring(f.pos, 1.6, data.def.buffColor || '#ff5a4a', 0.5); break;
+      case 'buff': this.sfx('magic_cast', pos, 0.8); if (!skillVisual) this.vfx.ring(f.pos, 1.6, data.def.buffColor || '#ff5a4a', 0.5); break;
       case 'cleanse': this.hud.floatText(pos, '净化', 'tech'); break;
       case 'form': if (!data.silent) { this.sfx('form_switch', pos, 0.9); if (data.form === 'shield') this.sfx('umbrella_open', pos, 0.7); } if (isP) this.hud.setForm(data.form); break;
       case 'parry': this.sfx('parry', pos, 1.2); this.vfx.parrySpark(pos.clone().add(f.forward().multiplyScalar(0.6))); this.hud.floatText(pos, data.zhen ? '振刀！' : '完美格挡', 'parry'); if (data.zhen) { this.shake(pos, 0.5); this.post && this.post.kick(0, 0.015); } this.hitstop = Math.max(this.hitstop, 0.12); break;
@@ -385,6 +446,7 @@ export class Game {
         break;
       }
       case 'death': {
+        this.summons.removeOwner(f);
         this.sfx('knockdown', pos, 1.2);
         if (f.kind === 'hero' || f.kind === 'boss') this.slowMo(f.kind === 'boss' ? 1.6 : 1.0);
         if (this.mode && this.mode.onDeath) this.mode.onDeath(f, data.src);
@@ -417,12 +479,16 @@ export class Game {
   }
 
   onHit(att, t, res, hit, def, ranged = false, at = null) {
+    // 客机重放 onHit 只做反馈；职业资源完全服从主机快照。
+    if (!this.netGuest) battleMageHit(att, t, res, hit, def, ranged);
+    if (res === 'hit' || res === 'armor') att.shadowVictim = t;
     const p = at ? at.clone() : t.center(new THREE.Vector3());
     if (!at) { p.x += (att.pos.x - t.pos.x) * 0.25; p.z += (att.pos.z - t.pos.z) * 0.25; p.y += 0.2; }
     const color = att.cls.look?.accent || '#ffe0a0';
     const heavy = (hit.dmg || 0) >= 130 || hit.launch || hit.down;
     if (res === 'hit' || res === 'armor') {
       this.vfx.hitSpark(p, res === 'armor' ? '#ffd27a' : color, heavy);
+      if (att === this.player || t === this.player) this.post?.pulse(heavy ? 0.45 : 0.18);
       const snd = t.kind === 'mob' || t.kind === 'boss' ? (t.cls.metal ? 'hit_metal' : 'mob_hit') : heavy ? 'hit_heavy' : 'hit_flesh';
       this.sfx(snd, p, heavy ? 1.1 : 0.9);
       if (hit.launch && res === 'hit') this.sfx('launch', p, 0.7);
@@ -440,21 +506,32 @@ export class Game {
       att.stackT = 5000;
     }
     // 附加状态
-    if (hit.effect && (res === 'hit' || res === 'armor') && t.alive) {
-      const e = { ...hit.effect, src: att, debuff: true };
+    const statuses = [...(hit.effects || []), ...(hit.effect ? [hit.effect] : [])];
+    if ((res === 'hit' || res === 'armor') && t.alive) for (const status of statuses) {
+      if (status.type === 'blind' && hit.eyeOnlyBlind && !sandBlinds(att, t, hit, this.world)) continue;
+      if (hit.headOnlyStatus && hit.contact?.region !== 'head') continue;
+      if (hit.frontOnlyStatus && !incomingFromFront(att, t, hit)) continue;
+      const e = { ...status, src: att, debuff: true };
       if (att.clsId === 'witch') e.t *= 1.2;
-      t.addEffect(e);
-      const names = { slow: '减速', root: '定身', weak: '虚弱', fear: '恐惧', blind: '致盲', dot: '持续伤害', silence: '沉默' };
-      if (names[e.type]) this.hud.floatText(t.center(new THREE.Vector3()).setY(t.pos.y + 2), names[e.type], 'enemy');
+      if (!t.addEffect(e)) continue;
+      this.vfx.statusTarget?.(t, e);
+      if (t === this.player && e.type === 'blind') this.lockTarget = null;
+      this.hud.floatText(t.center(new THREE.Vector3()).setY(t.pos.y + t.height + .15), statusLabel(e), 'enemy');
     }
     if (this.mode && this.mode.onHit) this.mode.onHit(att, t, res, hit, def);
   }
   onWhiff(att, def) { /* 挥空 */ }
   onFire(att, p, def, visual, dir) {
+    const gun = gunProfile(att, p, def);
+    const kick = applyGunRecoil(this, att, p, def, dir, { physics: false });
+    if (gun && !kick) return;
+    this.mode?.onFire?.(att, p, def, visual, dir);
     this.sfx(def.sfx || 'gun_shot', visual, p.kind === 'shell' ? 1.1 : 0.85, rand(0.95, 1.05));
-    const mf = p.kind === 'bullet' ? '#ffe6a0' : '#ffb35a';
-    this.vfx.sprite(visual.clone().addScaledVector(dir, 0.15), mf, p.kind === 'shell' ? 0.8 : 0.35, 0.06, 1.5);
-    if (att === this.player) this.shake(null, p.kind === 'shell' ? 0.25 : 0.05);
+    if (gun) {
+      const heavy = p.kind === 'shell' || p.kind === 'beam';
+      this.vfx.sprite(visual.clone().addScaledVector(dir, 0.08), p.kind === 'beam' ? '#c2edf1' : '#ffe3a1', heavy ? 0.48 : 0.22, 0.045, 1.1);
+      if (att === this.player) this.shake(null, heavy ? 0.13 : 0.025);
+    }
   }
 
   // ---- 主循环 ----
@@ -537,11 +614,11 @@ export class Game {
     this.viewYaw -= mx * s;
     this.viewPitch -= my * s * (this.settings.invertY ? -1 : 1);
     this.viewPitch = clamp(this.viewPitch, -85 * DEG, 85 * DEG);
-    // 锁定目标：视线柔和跟随
+    // 默认只观察目标血条；练习辅助需主动开启，命中仍取实际瞄准方向。
     if (this.lockTarget) {
       const t = this.lockTarget;
-      if (!t.alive) this.lockTarget = null;
-      else {
+      if (!t.alive || !visibleTo(p, t, this.world)) this.lockTarget = null;
+      else if (this.settings.aimAssist) {
         const want = Math.atan2(t.pos.x - p.pos.x, t.pos.z - p.pos.z);
         const k = 1 - Math.exp(-7 * dt);
         this.viewYaw += wrapAngle(want - this.viewYaw) * k;
@@ -562,6 +639,9 @@ export class Game {
     for (const f of this.fighters) if (f.ai && !this.aiFrozen && !(f === p && !this.autoPlayer)) f.ai.update(dt);
     for (const f of this.fighters) f.update(dt);
     this.separate();
+    this.summons.tick(dt);
+    this.combat.updateMelee?.(dt);
+    this.updateShadowSteps(dt);
     this.combat.updateProjectiles(dt);
     this.combat.updateAoes(dt);
     if (this.mode && this.mode.tick) this.mode.tick(dt);
@@ -575,6 +655,17 @@ export class Game {
     }
   }
 
+  updateShadowSteps(dt) {
+    for (const attacker of this.fighters) {
+      const victim = attacker.shadowVictim;
+      if (victim && shadowStep(attacker, victim, this.world)) {
+        attacker.shadowTime = (attacker.shadowTime || 0) + dt;
+        attacker.stats.shadowSeconds = (attacker.stats.shadowSeconds || 0) + dt;
+        if (attacker === this.player && attacker.shadowTime > .45) this.mode?.goal?.('shadow');
+      } else attacker.shadowTime = 0;
+    }
+  }
+
   playerControl(p, dt) {
     p.yaw = this.viewYaw;
     p.pitch = this.viewPitch;
@@ -583,6 +674,9 @@ export class Game {
     const [mx, my] = input.moveAxes();
     p.moveInput.set(mx, my);
     p.wantGuard = input.held('special');
+    if (p.cls.special?.type === 'chaser') { p.wantGuard = false; if (input.consume('special', 180)) p.wantChaser = true; }
+    p.wantSprint = input.held('sprint');
+    p.jumpHeld = input.held('jump');
     if (input.consume('jump', 150)) {
       if (p.state === 'air' || p.state === 'down') p.requestTech();
       else p.wantJump = true;
@@ -601,24 +695,24 @@ export class Game {
       if (p.action) { p.action = null; p.state = 'idle'; }
       p.startCharge();
     }
-    else if (input.held('attack') && !p.action && (p.state === 'idle' || p.state === 'move') && p.chain && p.chain[0].proj) p.tryUse('atk'); // 远程按住连射
+    else if (input.held('attack') && !p.action && (p.state === 'idle' || p.state === 'move' || p.state === 'jump') && p.chain && p.chain[0].proj) p.tryUse('atk'); // 远程空中也可持射，支持飞枪/飛炮
     for (const s of ['s1', 's2', 's3', 's4', 's5', 's6', 'ult']) if (input.consume(s, 200)) p.tryUse(s);
     if (input.consume('lockon', 200)) this.toggleLock();
   }
 
   toggleLock() {
-    if (this.lockTarget) { this.lockTarget = null; this.hud.toast('取消锁定'); return; }
-    const p = this.player; if (!p) return;
+    if (this.lockTarget) { this.lockTarget = null; this.hud.toast('取消观察'); return; }
+    const p = this.player; if (!p || p.hasEffect('blind')) return;
     let best = null, bs = 1e9;
     for (const f of this.fighters) {
-      if (f.team === p.team || !f.alive || f.kind === 'dummy' && false) continue;
+      if (f.team === p.team || !f.alive || !visibleTo(p, f, this.world)) continue;
       const dx = f.pos.x - p.pos.x, dz = f.pos.z - p.pos.z;
       const a = Math.abs(wrapAngle(Math.atan2(dx, dz) - this.viewYaw));
       const s = a * 10 + Math.hypot(dx, dz);
       if (a < 70 * DEG && s < bs) { bs = s; best = f; }
     }
     this.lockTarget = best;
-    if (best) this.hud.toast(`锁定：${best.name}`);
+    if (best) this.hud.toast(`观察：${best.name}`);
   }
 
   // 角色之间的推挤
@@ -628,15 +722,16 @@ export class Game {
       const a = fs[i]; if (a.dead || a.state === 'down') continue;
       for (let j = i + 1; j < fs.length; j++) {
         const b = fs[j]; if (b.dead || b.state === 'down') continue;
-        if (Math.abs(a.pos.y - b.pos.y) > 1.5) continue;
+        if (a.pos.y + a.collisionHeight <= b.pos.y || b.pos.y + b.collisionHeight <= a.pos.y) continue;
         const dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
         const d = Math.hypot(dx, dz), min = a.radius + b.radius;
-        if (d >= min || d < 1e-5) continue;
+        if (d >= min) continue;
         const push = (min - d);
         const wa = a.kind === 'boss' || a.kind === 'dummy' ? 0 : b.kind === 'boss' || b.kind === 'dummy' ? 1 : 0.5;
-        const nx = dx / d, nz = dz / d;
+        const nx = d > 1e-5 ? dx / d : (a.id < b.id ? 1 : -1), nz = d > 1e-5 ? dz / d : 0;
         a.pos.x -= nx * push * wa; a.pos.z -= nz * push * wa;
         b.pos.x += nx * push * (1 - wa); b.pos.z += nz * push * (1 - wa);
+        for (const f of [a, b]) { const r = this.world.resolve(f, f.pos.x, f.pos.y, f.pos.z); f.pos.set(r.x, r.y, r.z); }
       }
     }
   }
@@ -645,15 +740,15 @@ export class Game {
     if (!this.settings.showTrails) return;
     for (const [f, tr] of this.trails) {
       const a = f.action;
-      const emitting = !!a && a.stage === 'active' && !!a.def.hits && !(f === this.player && this.firstPerson);
+      const emitting = !!a && a.stage === 'active' && !!a.def.hits && !(f === this.player && this.firstPerson && !this.fpBody);
       tr.update(dt, f.weapon.base, f.weapon.tip, emitting);
     }
     const p = this.player;
     if (p && this.fpTrail && p.fp) {
       const a = p.action;
-      const emitting = this.firstPerson && !!a && a.stage === 'active' && !!a.def.hits;
+      const emitting = this.firstPerson && !this.fpBody && !!a && a.stage === 'active' && !!a.def.hits;
       this.camera.updateMatrixWorld(true);
-      this.fpTrail.update(dt, p.fp.weapon.base, p.fp.weapon.tip, emitting);
+      this.fpTrail.update(dt, this.fpBody ? p.weapon.base : p.fp.weapon.base, this.fpBody ? p.weapon.tip : p.fp.weapon.tip, emitting);
     }
   }
 
@@ -667,6 +762,8 @@ export class Game {
       const dashing = p.state === 'dash' || (p.action && p.action.def.dash && p.action.stage === 'active');
       this.fovKick = (this.fovKick || 0) + ((dashing ? 0.07 : 0) - (this.fovKick || 0)) * Math.min(1, dt * (dashing ? 10 : 5));
       this.fovPunch = (this.fovPunch || 0) * Math.exp(-dt * 10);
+      this.shotHeat = (this.shotHeat || 0) * Math.exp(-dt * 9);
+      this.shotRoll = (this.shotRoll || 0) * Math.exp(-dt * 14);
       this.updateFov(this._zoom * (1 + this.fovKick - this.fovPunch));
       this.camDip = (this.camDip || 0) * Math.exp(-dt * 9);
       // 抖动
@@ -675,6 +772,7 @@ export class Game {
       // 团队赛阵亡后观战队友（第三人称跟随）
       const spec = p.dead && this.spectate && this.spectate.alive ? this.spectate : null;
       const cine = this.cinematic;
+      if (cine || spec || !this.firstPerson) this._fpEyeOwner = null;
       if (cine) {
         cine.t += dt;
         const k = cine.orbit ? 0.35 : Math.min(1, cine.t / cine.dur);
@@ -702,18 +800,23 @@ export class Game {
       } else if (this.firstPerson) {
         p.eyePos(this.tmp);
         // 眼睛略前移，避免看到脖子内部
-        this.tmp.x += Math.sin(this.viewYaw) * 0.08; this.tmp.z += Math.cos(this.viewYaw) * 0.08;
+        const fwd = 0.08;
+        this.tmp.x += Math.sin(this.viewYaw) * fwd; this.tmp.z += Math.cos(this.viewYaw) * fwd;
         this.camPos = this.camPos || this.tmp.clone();
-        // 纵向平滑（倒地/起身时不突跳）
+        // 跳跃/飞行的世界位移与身体同步；仅平滑动作引起的相对眼高。
+        // 平滑绝对 y 会让起跳时镜头落入自己的肩衣，瞬移时甚至留在腰下。
+        const eyeHeight = this.tmp.y - p.pos.y;
+        if (this._fpEyeOwner !== p.id) { this._fpEyeOwner = p.id; this._fpEyeHeight = eyeHeight; }
+        this._fpEyeHeight += (eyeHeight - this._fpEyeHeight) * Math.min(1, dt * 18);
         this.camPos.x = this.tmp.x; this.camPos.z = this.tmp.z;
         if (this.camFade) this.camFade.value = 0;
-        this.camPos.y += (this.tmp.y - this.camPos.y) * Math.min(1, dt * 18);
+        this.camPos.y = p.pos.y + this._fpEyeHeight;
         cam.position.copy(this.camPos);
         cam.position.y -= this.camDip || 0;
       } else {
         const tp = this.viewMode === 'tp';
         if (this.camFade) this.camFade.value = 1.25;
-        const back = tp ? 4.4 : 2.9, up = tp ? 0.75 : 0.08, shoulder = tp ? 0 : 0.7;
+        const back = tp ? (3.3 + (4.4 - 3.3) * clamp((cam.aspect - .55) / .45, 0, 1)) : 2.9, up = tp ? (.75 - .20 * (1 - clamp((cam.aspect - .55) / .45, 0, 1))) : 0.08, shoulder = tp ? 0 : 0.7;
         const cp = Math.cos(this.viewPitch);
         const target = new THREE.Vector3(p.pos.x, p.pos.y + (tp ? 1.45 : 1.5), p.pos.z);
         const dir = new THREE.Vector3(Math.sin(this.viewYaw) * cp, Math.sin(this.viewPitch), Math.cos(this.viewYaw) * cp);
@@ -724,10 +827,10 @@ export class Game {
         const hit = this.world.raycast(target, want.clone().sub(target).normalize(), target.distanceTo(want), null);
         cam.position.copy(hit.dist < target.distanceTo(want) ? hit.point.lerp(target, 0.1) : want);
       }
-      cam.rotation.set(this.viewPitch + (Math.random() - 0.5) * sh * 0.03, this.viewYaw + Math.PI + (Math.random() - 0.5) * sh * 0.03, 0);
-      if (p.fp) {
+      cam.rotation.set(this.viewPitch + (Math.random() - 0.5) * sh * 0.03, this.viewYaw + Math.PI + (Math.random() - 0.5) * sh * 0.03, this.settings.shake ? this.shotRoll : 0);
+      if (p.fp && !this.fpBody) {
         p.fp.sync(p.rig, dt, this.settings.bob ? Math.hypot(p.vel.x, p.vel.z) * (p.onGround ? 1 : 0) : 0, this.lastMouse[0], this.lastMouse[1], this.settings.bob);
-        p.fp.root.visible = this.firstPerson && !p.dead && p.state !== 'down';
+        p.fp.root.visible = this.firstPerson && !this.fpBody && !p.dead && p.state !== 'down';
       }
       audio.setListener(cam.position.x, cam.position.y, cam.position.z, this.viewYaw);
       // 阴影相机跟随玩家
@@ -743,22 +846,30 @@ export class Game {
   render(dt = 1 / 60) {
     if (this.contextLost) return;
     this._renderDirty = false;
-    // 录制工具用：外部接管机位（宣传片运镜），游戏本身不设置
-    if (this.camHook) { try { this.camHook(this.camera, this); } catch (e) { this.camHook = null; console.warn('camHook', e); } }
-    if (this.settings.post !== false && this.post) { this.post.render(dt); return; }
-    const r = this.renderer;
-    r.autoClear = true;
-    r.render(this.scene, this.camera);
-    if (this.player && this.firstPerson && this.player.fp && this.player.fp.root.visible) {
-      r.autoClear = false;
-      const sm = r.shadowMap.autoUpdate; r.shadowMap.autoUpdate = false;
-      r.clearDepth();
-      const bg = this.scene.background, fog = this.scene.fog;
-      this.scene.background = null;
-      r.render(this.scene, this.vmCamera);
-      this.scene.background = bg; this.scene.fog = fog;
-      r.shadowMap.autoUpdate = sm;
+    const smooth = !this.manual && !this.paused && this.fpBody;
+    if (smooth) for (const f of this.fighters) f.renderPose?.present(this.acc / STEP);
+    try {
+      // 录制工具用：外部接管机位（宣传片运镜），游戏本身不设置
+      if (this.camHook) { try { this.camHook(this.camera, this); } catch (e) { this.camHook = null; console.warn('camHook', e); } }
+      if (this.settings.post !== false && this.post) { this.post.render(dt); return; }
+      const r = this.renderer;
       r.autoClear = true;
+      r.render(this.scene, this.camera);
+      if (this.player && this.firstPerson && (!this.fpBody && this.player.fp && this.player.fp.root.visible)) {
+        r.autoClear = false;
+        const sm = r.shadowMap.autoUpdate; r.shadowMap.autoUpdate = false;
+        r.clearDepth();
+        const bg = this.scene.background, fog = this.scene.fog;
+        this.scene.background = null;
+        r.render(this.scene, this.vmCamera);
+        this.scene.background = bg; this.scene.fog = fog;
+        r.shadowMap.autoUpdate = sm;
+        r.autoClear = true;
+      }
+    } finally {
+      if (smooth) for (const f of this.fighters) {
+        f.renderPose?.restore(); f.rig.root.updateMatrixWorld(true);
+      }
     }
   }
 }

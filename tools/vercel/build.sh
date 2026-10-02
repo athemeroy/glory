@@ -28,8 +28,18 @@ else
   ' dist/index.html > dist/index.html.tmp
   mv dist/index.html.tmp dist/index.html
 fi
-rsync -a index.html style.css src vendor assets dist/play/
+rsync -a --exclude='/assets/models/_cmp/' index.html style.css styles src vendor assets dist/play/
 cp api/sig.js dist/api/ && cp server/sig-core.mjs dist/server/
 cp tools/vercel/vercel.json dist/
 printf '{ "private": true, "type": "module" }\n' > dist/package.json
+# 将当前提交写入部署，方便核对 GitHub 与线上版本。
+node --input-type=module - <<'JS'
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0;
+const version = JSON.stringify({ commit, dirty, builtAt: new Date().toISOString() }) + '\n';
+writeFileSync('dist/version.json', version);
+writeFileSync('dist/play/version.json', version);
+JS
 du -sh dist

@@ -1,14 +1,13 @@
 // 可弯曲的近景握持手。旧精模只有 Hand 骨，不能把张开的手指收成握持姿势。
 import * as THREE from 'three';
 import { TwoBoneIK } from './ik.js';
+import { markSharedResource } from './model.js';
 
-const sphere = new THREE.SphereGeometry(1, 12, 8);
-const segment = new THREE.CapsuleGeometry(1, 1, 4, 8);
+const sphere = new THREE.SphereGeometry(1, 20, 12);
 sphere.userData.shared = true;
-segment.userData.shared = true;
 const DOWN = new THREE.Vector3(0, -1, 0);
 const handSamples = new WeakMap();
-
+const gripGeometries = new Map();
 function surface(geometry, material, parent, position, scale) {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.set(...position); mesh.scale.set(...scale);
@@ -82,11 +81,31 @@ export function buildGripHand(side, color) {
       else bone.position.set(0, -new THREE.Vector3(...points[i]).distanceTo(new THREE.Vector3(...points[i - 1])), 0);
       const closed = previousWorld.clone().invert().multiply(orientation);
       bone.quaternion.copy(closed); parent.add(bone);
-      surface(segment, material, bone, [0, -length / 2, 0], [radius, length / 3, radius]);
-      surface(sphere, i === 0 ? material : crease, bone, [0, 0, 0], [radius * 0.96, radius * 0.75, radius * 0.98]);
       joints.push({ bone, closed, open: new THREE.Quaternion() });
       previousWorld.copy(orientation); parent = bone;
     }
+    // One continuous skinned tube per finger. Separate capsule caps and joint
+    // spheres made short phalanges read as beads in first-person closeups.
+    const digitBones = joints.slice(-(points.length - 1)).map(joint => joint.bone);
+    const pathPoints = points.map(point => new THREE.Vector3(point[0] * sign, point[1], point[2]));
+    const curve = new THREE.CatmullRomCurve3(pathPoints, false, 'centripetal');
+    const rings = 36, radial = 14, tube = new THREE.TubeGeometry(curve, rings, radius, radial, false);
+    const position = tube.attributes.position, spans = [], total = curve.getLength();
+    let distance = 0;for(let i=0;i<pathPoints.length-1;i++){distance += pathPoints[i].distanceTo(pathPoints[i+1]);spans.push(distance)}
+    const spanTotal = distance, vertexBindings=[];
+    for(let ring=0;ring<=rings;ring++){
+      const u=ring/rings,center=curve.getPointAt(u),along=u*spanTotal;
+      let segment=spans.findIndex(end=>along<=end);if(segment<0)segment=spans.length-1;
+      let other=segment,blend=0;const transition=.007;
+      if(segment>0&&along-spans[segment-1]<transition){other=segment-1;blend=.5*(1-(along-spans[segment-1])/transition)}
+      else if(segment<spans.length-1&&spans[segment]-along<transition){other=segment+1;blend=.5*(1-(spans[segment]-along)/transition)}
+      const tip = Math.min(1,(1-u)*total/(radius*1.12)), taper=(1-.18*u)*Math.sin(Math.PI*.5*tip);
+      for(let sideIndex=0;sideIndex<=radial;sideIndex++){
+        const index=ring*(radial+1)+sideIndex,p=new THREE.Vector3().fromBufferAttribute(position,index).sub(center).multiplyScalar(taper).add(center);position.setXYZ(index,p.x,p.y,p.z);
+        vertexBindings.push({bones:[digitBones[segment],digitBones[other]],weights:[1-blend,blend]});
+      }
+    }
+    tube.computeVertexNormals();const skin=surface(tube,material,root,[0,0,0],[1,1,1]);skin.userData.gripBoneWeights=vertexBindings;
   };
   for (let i = 0; i < 4; i++) {
     const z = 0.03 - i * 0.02, size = i === 3 ? 0.008 : 0.009;
@@ -100,6 +119,8 @@ export function buildGripHand(side, color) {
   root.updateMatrixWorld(true);
   const pieces = [];
   root.traverse(object => { if (object.isMesh && object !== wrist) pieces.push(object); });
+  let geometry = gripGeometries.get(side);
+  if (!geometry) {
   const vertexCount = pieces.reduce((n,mesh)=>n+mesh.geometry.attributes.position.count,0);
   const positions = new Float32Array(vertexCount*3), normals = new Float32Array(vertexCount*3);
   const indices = new Uint16Array(vertexCount*4), weights = new Float32Array(vertexCount*4);
@@ -112,7 +133,9 @@ export function buildGripHand(side, color) {
     for (let i=0;i<position.count;i++) {
       point.fromBufferAttribute(position,i).applyMatrix4(mesh.matrixWorld).toArray(positions,(offset+i)*3);
       normal.fromBufferAttribute(sourceNormal,i).applyNormalMatrix(normalMatrix).toArray(normals,(offset+i)*3);
-      indices[(offset+i)*4]=boneIndex; weights[(offset+i)*4]=1;
+      const binding=mesh.userData.gripBoneWeights?.[i];
+      if(binding)for(let k=0;k<binding.bones.length;k++){indices[(offset+i)*4+k]=Math.max(0,bones.indexOf(binding.bones[k]));weights[(offset+i)*4+k]=binding.weights[k]}
+      else {indices[(offset+i)*4]=boneIndex; weights[(offset+i)*4]=1;}
     }
     const list=triangles[mesh.material===crease?1:0];
     if (geometry.index) for (const index of geometry.index.array) list.push(offset+index);
@@ -120,13 +143,15 @@ export function buildGripHand(side, color) {
     offset+=position.count;
     mesh.removeFromParent();
   }
-  const geometry=new THREE.BufferGeometry();
+  geometry=new THREE.BufferGeometry();
   geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));
   geometry.setAttribute('normal',new THREE.BufferAttribute(normals,3));
   geometry.setAttribute('skinIndex',new THREE.BufferAttribute(indices,4));
   geometry.setAttribute('skinWeight',new THREE.BufferAttribute(weights,4));
   geometry.setIndex([...triangles[0],...triangles[1]]);
   geometry.addGroup(0,triangles[0].length,0); geometry.addGroup(triangles[0].length,triangles[1].length,1);
+  markSharedResource(geometry); gripGeometries.set(side, geometry);
+  } else for (const piece of pieces) piece.removeFromParent();
   const mesh=new THREE.SkinnedMesh(geometry,[material,crease]); mesh.name=side+'GripSkin';
   mesh.frustumCulled=false; root.add(mesh); mesh.bind(new THREE.Skeleton(bones));
   root.userData.grip = true;
@@ -148,7 +173,8 @@ export function buildGripHand(side, color) {
       const materials = new Set([material, crease]);
       root.traverse(object => { if (object.isMesh) for (const m of [].concat(object.material)) materials.add(m); });
       for (const m of materials) m.dispose();
-      mesh.geometry.dispose(); mesh.skeleton.dispose();
+      // 同侧所有实例共享只读曲面，骨骼/材质各自独立。
+      mesh.skeleton.dispose();
       root.removeFromParent();
     },
   };
@@ -195,11 +221,11 @@ export function installGripHands(body, sockets, weaponType, characterScale = 1) 
   return hands;
 }
 
-const gripOffset=new THREE.Vector3(), gripWrist=new THREE.Vector3(), gripFrame=new THREE.Quaternion();
+const gripOffset=new THREE.Vector3(), gripWrist=new THREE.Vector3(), gripFrame=new THREE.Quaternion(), gripWristFrame=new THREE.Quaternion();
 export function fitWorldGripHands(body, hands, weapon=null, leftWeapon=null) {
   for(const hand of hands) {
     const bone=body.bones[hand.side+'Hand'];
-    let supported=false;
+    let supportAmount=0;
     if(hand.support && weapon?.offhandGrip && !leftWeapon) {
       const support=hand.support, arm=body.bones.LeftArm, fore=body.bones.LeftForeArm;
       support.goal.copy(weapon.offhandGrip); weapon.obj.localToWorld(support.goal);
@@ -207,16 +233,21 @@ export function fitWorldGripHands(body, hands, weapon=null, leftWeapon=null) {
       support.goal.sub(support.offset);
       bone.getWorldQuaternion(support.handWorld);
       support.upper.copy(arm.quaternion); support.lower.copy(fore.quaternion);
-      supported=support.solver.solve(arm,fore,bone,support.goal)<0.02;
-      if(!supported) {arm.quaternion.copy(support.upper);fore.quaternion.copy(support.lower);arm.updateMatrixWorld(true);}
+      const error=support.solver.solve(arm,fore,bone,support.goal);
+      // A binary reach cutoff snapped the hand back by half a meter. Keep the
+      // same bone lengths and fade smoothly to the authored pose at the limit.
+      supportAmount=1-THREE.MathUtils.smoothstep(error,.01,.09);
+      arm.quaternion.slerp(support.upper,1-supportAmount);fore.quaternion.slerp(support.lower,1-supportAmount);arm.updateMatrixWorld(true);
       fore.getWorldQuaternion(bone.quaternion).invert().multiply(support.handWorld); bone.updateMatrixWorld(true);
     }
     const mount=bone.children.find(child=>child.name===hand.side+'WeaponSocket');
-    if(supported) {
-      weapon.obj.getWorldQuaternion(gripFrame).multiply(hand.orientation);
-      bone.getWorldQuaternion(hand.root.quaternion).invert().multiply(gripFrame);
-    } else if(mount) hand.root.quaternion.copy(mount.quaternion).multiply(hand.orientation);
+    if(mount) hand.root.quaternion.copy(mount.quaternion).multiply(hand.orientation);
     else hand.root.quaternion.setFromUnitVectors(DOWN,gripOffset.copy(hand.socket).normalize());
+    if(supportAmount>0){
+      weapon.obj.getWorldQuaternion(gripFrame).multiply(hand.orientation);
+      bone.getWorldQuaternion(gripWristFrame).invert().multiply(gripFrame);
+      hand.root.quaternion.slerp(gripWristFrame,supportAmount);
+    }
     hand.root.position.copy(hand.socket).sub(gripOffset.copy(hand.grip).applyQuaternion(hand.root.quaternion).multiplyScalar(hand.root.scale.x));
     hand.root.updateMatrixWorld(true);
     hand.connectWrist(hand.root.worldToLocal(bone.getWorldPosition(gripWrist)));

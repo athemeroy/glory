@@ -229,7 +229,7 @@ export function buildCharacter(lookIn = {}) {
   for (const [s, sh, el, ha] of [[1, shL, elL, haL], [-1, shR, elR, haR]]) {
     const sleeveM = st === 'vest' ? skin : (st === 'armor' ? mat(look.top.color, { rough: 0.35, metal: 0.75 }) : topM);
     add(mesh(taper(0.29, 0.056 * W, 0.046, 16), sleeveM, sh, 0, 0, 0));
-    add(mesh(taper(0.26, 0.044, 0.035, 16), glovesM === skin ? skin : (st === 'robe' ? topM : skin), el, 0, 0, 0));
+    add(mesh(taper(0.26, 0.044, 0.035, 16), glovesM === skin ? skin : (st === 'robe' || look.forearmSleeves ? topM : skin), el, 0, 0, 0));
     // 护腕
     const cuff = add(mesh(new THREE.CylinderGeometry(0.043, 0.04, 0.1, 16), glovesM, el, 0, -0.2, 0));
     cuff.scale.z = 0.95;

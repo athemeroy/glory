@@ -1,0 +1,99 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查中…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator, splitForFirstPerson, handSocket } from '../src/game/mocap.js';
+import { repairClothWeights } from '../src/game/cloth.js';
+import { repairAttachmentWeights } from '../src/game/attachment.js';
+import { repairSleeveWeights, sampleArmWeights } from '../src/game/sleeve.js';
+
+import { disposeRig } from '../src/game/model.js';
+import { CLASSES } from '../src/data/classes.js';
+import { MOBS } from '../src/data/enemies.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,label)=>{if(!ok)throw Error(label);__results.push(label)};
+const weights=geometry=>Array.from({length:geometry.attributes.skinIndex.count*4},(_,i)=>[geometry.attributes.skinIndex.getComponent(Math.floor(i/4),i%4),geometry.attributes.skinWeight.getComponent(Math.floor(i/4),i%4)]);
+const point=(mesh,i)=>mesh.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(mesh.matrixWorld);
+const update=(body,anim,state)=>{for(let i=0;i<60;i++)anim.update(1/60,state);body.model.updateMatrixWorld(true);for(const mesh of body.meshes)mesh.skeleton.update()};
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');
+  const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/frostcaster.glb')).scene;
+  let sourceMesh;source.traverse(object=>{if(object.isSkinnedMesh&&!sourceMesh)sourceMesh=object});
+  const sourceGeometry=sourceMesh.geometry,original=JSON.stringify(weights(sourceGeometry));
+  delete source.userData.gloryClass;const baseline=createMocapBody(source);repairClothWeights(baseline,'frostcaster');repairAttachmentWeights(baseline,'frostcaster');
+  source.userData.gloryClass='frostcaster';const fixed=createMocapBody(source);
+  check(!!fixed.sleeve,'游戏统一入口先修袖，再允许握点与第一视角划分');
+  const firstRepair=fixed.sleeve,firstGeometry=fixed.meshes[0].geometry;
+  check(repairSleeveWeights(fixed,'frostcaster')===firstRepair&&fixed.meshes[0].geometry===firstGeometry,'重复调用不重新混合权重或替换实例geometry');
+  const before=baseline.meshes[0],after=fixed.meshes[0],si=before.geometry.attributes.skinIndex,sw=before.geometry.attributes.skinWeight,ai=after.geometry.attributes.skinIndex,aw=after.geometry.attributes.skinWeight,mask=after.userData.sleeveComponent,strength=after.userData.sleeveStrength,names=after.skeleton.bones.map(bone=>bone.name);
+  check(fixed.sleeve?.changed>2000&&fixed.sleeve.changed<5000,'只识别霜法师外袍近臂袖区');
+  check(sourceMesh.geometry===sourceGeometry&&JSON.stringify(weights(sourceGeometry))===original,'GLB源geometry与权重保持原样');
+  const bind=[];before.skeleton.update();after.skeleton.update();let invalid=0,protectedVertices=0,bindError=0,full=0;
+  for(let i=0;i<ai.count;i++) {
+    let sum=0;
+    for(let k=0;k<4;k++) {
+      const weight=aw.getComponent(i,k),index=ai.getComponent(i,k);sum+=weight;
+      if(!Number.isFinite(weight)||weight<0||index>=names.length)invalid++;
+      if(!mask[i]&&(index!==si.getComponent(i,k)||weight!==sw.getComponent(i,k)))throw Error('非目标顶点权重改变 '+i);
+      if(strength[i]>=.999999&&weight>0&&!(/^(Left|Right)(Shoulder|Arm|ForeArm|Hand)$/.test(names[index])||/^(Spine|Spine01|Spine02|neck)$/.test(names[index])))throw Error('袖面残留头/胸/腿权重 '+i);
+      if(strength[i]>=.999999&&/Hand$/.test(names[index])&&weight>.350001)throw Error('袖口Hand过强误当手掌 '+i);
+    }
+    if(Math.abs(sum-1)>1e-5)invalid++;
+    if(!mask[i])protectedVertices++;if(strength[i]>=.999999)full++;
+    bind.push(point(before,i));bindError=Math.max(bindError,bind[i].distanceTo(point(after,i)));
+  }
+  check(invalid===0&&full>2000,'连续臂段权重有效且袖口Hand不超过35%');
+  check(protectedVertices===ai.count-fixed.sleeve.changed,'全部非目标顶点逐项原绑');
+  check(bindError<1e-5,'修复保持绑定形状');
+  const cells=new Map(),parent=[],welded=bind.map(p=>{const key=[p.x,p.y,p.z].map(v=>Math.round(v/.00005)).join(',');let id=cells.get(key);if(id===undefined){id=parent.length;parent.push(id);cells.set(key,id)}return id});
+  const root=id=>{while(parent[id]!==id){parent[id]=parent[parent[id]];id=parent[id]}return id};
+  const index=before.geometry.index;for(let i=0;i<index.count;i+=3){const a=root(welded[index.getX(i)]),b=root(welded[index.getX(i+1)]),c=root(welded[index.getX(i+2)]);parent[b]=a;parent[c]=a}
+  const components=new Map();for(let i=0;i<ai.count;i++){const id=root(welded[i]);if(!components.has(id))components.set(id,[]);components.get(id).push(i)}
+  for(const count of [1600,1611,2647]) {
+    const targets=[...components.values()].filter(vertices=>vertices.length===count);check(targets.length===1,'独立识别真实组件 '+count);
+    for(const i of targets[0])if(mask[i])throw Error('真实手掌/腿脚组件被更改 '+i);
+    check(true,'真实组件 '+count+' 全权重保持原样');
+  }
+  const robeRoot=root(welded[5279]);for(let i=0;i<ai.count;i++)if(mask[i]&&root(welded[i])!==robeRoot)throw Error('外袍之外组件被修改 '+i);
+  check(true,'只修认证外袍组件，头颈与独立真人网格受保护');
+  const handTriangles=mesh=>{const geo=mesh.geometry,i=geo.attributes.skinIndex,w=geo.attributes.skinWeight;let count=0;for(let at=0;at<geo.index.count;at+=3){const verts=[0,1,2].map(k=>geo.index.getX(at+k));if(!verts.every(v=>root(welded[v])===robeRoot))continue;const hand=verts.filter(v=>{let best=0;for(let k=1;k<4;k++)if(w.getComponent(v,k)>w.getComponent(v,best))best=k;return /Hand$/.test(names[i.getComponent(v,best)])}).length;if(hand>=2)count++}return count};
+  const oldHidden=handTriangles(before),newHidden=handTriangles(after);__metrics.push({oldHiddenSleeveTriangles:oldHidden,newHiddenSleeveTriangles:newHidden,changed:fixed.sleeve.changed,full});
+  check(oldHidden>1000&&newHidden===0,'认证袖面的三角不再被误识别为原手掌');
+  let formerHands=0;
+  for(let i=0;i<ai.count;i++)if(root(welded[i])===robeRoot){
+    let oldBest=0,newBest=0;for(let k=1;k<4;k++){if(sw.getComponent(i,k)>sw.getComponent(i,oldBest))oldBest=k;if(aw.getComponent(i,k)>aw.getComponent(i,newBest))newBest=k}
+    if(/Hand$/.test(names[si.getComponent(i,oldBest)])){formerHands++;if(!/(Arm|ForeArm)$/.test(names[ai.getComponent(i,newBest)]))throw Error('恢复袖面被改成躯干或手掌主导 '+i)}
+  }
+  check(formerHands===2179,'2179个原Hand污染袖点均为臂段主导，继续保留第一视角袖面');
+  for(const side of ['Left','Right']) {
+    const chain={arm:baseline.bones[side+'Arm'].getWorldPosition(new THREE.Vector3()),elbow:baseline.bones[side+'ForeArm'].getWorldPosition(new THREE.Vector3()),wrist:baseline.bones[side+'Hand'].getWorldPosition(new THREE.Vector3())};
+    const direction=new THREE.Vector3().subVectors(chain.wrist,chain.arm).normalize(),a=sampleArmWeights(chain.elbow.clone().addScaledVector(direction,-.001),chain),b=sampleArmWeights(chain.elbow.clone().addScaledVector(direction,.001),chain);
+    check(Math.max(...a.weights.map((weight,k)=>Math.abs(weight-b.weights[k])))<.04,side+': 肘两侧连续过渡');
+    const socket=handSocket(fixed,side),hand=fixed.bones[side+'Hand'],handIndex=after.skeleton.bones.indexOf(hand),center=new THREE.Vector3();let total=0;
+    for(const vertices of components.values())if(vertices.length===1600||vertices.length===1611)for(const i of vertices){let weight=0;for(let k=0;k<4;k++)if(ai.getComponent(i,k)===handIndex)weight+=aw.getComponent(i,k);if(weight>=.5){center.addScaledVector(bind[i],weight);total+=weight}}
+    check(total>0&&[socket.x,socket.y,socket.z].every(Number.isFinite)&&hand.localToWorld(socket.clone()).distanceTo(center.divideScalar(total))<1e-5,side+': 武器握点等于真实手掌质心，袖面不再污染');
+  }
+  const shared=createMocapBody(source);check(shared.meshes[0].geometry===after.geometry,'缓存geometry与skin属性只读共享');
+  const edges=[[5279,5265],[5269,5260]],rest=edges.map(([a,b])=>point(before,a).distanceTo(point(before,b))),allEdges=[],seen=new Set(),ba=new MocapAnimator(baseline),fa=new MocapAnimator(fixed);
+  for(let at=0;at<index.count;at+=3)for(const [a,b]of [[index.getX(at),index.getX(at+1)],[index.getX(at+1),index.getX(at+2)],[index.getX(at+2),index.getX(at)]]){const key=Math.min(a,b)+':'+Math.max(a,b);if(seen.has(key))continue;seen.add(key);const length=bind[a].distanceTo(bind[b]);if(length>=.005)allEdges.push({a,b,rest:length})}
+  const poseChecks=[];
+  for(const pose of ['stance','run','attack','overhead','down']) {
+    const state={speed:pose==='run'?5.6:0,fwd:1,onGround:true,stance:(CLASSES.frostcaster||MOBS.frostcaster).stance,pitch:0,react:pose==='down'?{type:'down',t:.8,dur:1}:null,action:pose==='attack'?{clip:'slash1',stage:'active',t:.65,key:'proof'}:pose==='overhead'?{clip:'jumpslam',stage:'wind',t:1,key:'proof'}:null};
+    update(baseline,ba,state);update(fixed,fa,state);
+    for(let k=0;k<edges.length;k++){const [a,b]=edges[k],oldLength=point(before,a).distanceTo(point(before,b)),newLength=point(after,a).distanceTo(point(after,b));__metrics.push({pose,a,b,rest:rest[k],before:oldLength,after:newLength});poseChecks.push({ok:newLength<rest[k]*2.5,label:pose+': 肘边不再被头/手腕撕开'})}
+    const oldPoints=bind.map((_,i)=>point(before,i)),newPoints=bind.map((_,i)=>point(after,i)),newSpikes=[];
+    for(const edge of allEdges){const oldLength=oldPoints[edge.a].distanceTo(oldPoints[edge.b]),newLength=newPoints[edge.a].distanceTo(newPoints[edge.b]);if(newLength>oldLength+.10&&newLength>edge.rest*1.8)newSpikes.push({...edge,before:oldLength,after:newLength,delta:newLength-oldLength})}
+    newSpikes.sort((a,b)=>b.delta-a.delta);__metrics.push({pose,edges:allEdges.length,newSpikes:newSpikes.length,worstNew:newSpikes.slice(0,10)});
+    poseChecks.push({ok:newSpikes.length===0,label:pose+': 与已验证下袍版本逐边比较无新增10cm裂口'});
+  }
+  for(const result of poseChecks)check(result.ok,result.label);
+  ba.mixer.stopAllAction();fa.mixer.stopAllAction();const geo=after.geometry,skinWeight=geo.attributes.skinWeight;let disposed=0;geo.addEventListener('dispose',()=>disposed++);
+  const partitions=splitForFirstPerson(fixed);check(partitions.arms.length>0,'修复后存在第一视角手臂网格');
+  const splitGeometry=fixed.meshes.find(mesh=>mesh.geometry.attributes.skinWeight===skinWeight).geometry;let retained=false;splitGeometry.addEventListener('dispose',()=>{retained=!Object.values(splitGeometry.attributes).includes(skinWeight)});
+  disposeRig({root:fixed.model},{sharedRoots:[source]});check(disposed===0&&retained&&splitGeometry.attributes.skinWeight===skinWeight,'释放实例保留缓存skin属性与源GPU缓冲');
+  disposeRig({root:baseline.model},{sharedRoots:[source]});disposeRig({root:shared.model},{sharedRoots:[source]});
+  check(repairSleeveWeights({meshes:[]},'swordmaster')===null,'其他职业不进入霜法师袖修复');
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

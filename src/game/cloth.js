@@ -1,5 +1,6 @@
 // 修复已审计角色的披风/裙摆错绑：保留人体关节，仅重绑远离肢体的布面。
 import * as THREE from 'three';
+import { getRepairPosition } from './repair-position.js';
 import { markSharedResource } from './model.js';
 
 const profiles = {
@@ -46,7 +47,7 @@ function prepare(mesh, body, profile) {
     for (let k = 0; k < 4; k++) { indices[i * 4 + k] = si.getComponent(i, k); weights[i * 4 + k] = sw.getComponent(i, k); }
     // 狂剑士宽护腿虽离骨段超过13cm，原完整拓扑与同侧腿骨权重已认证是真硬甲。
     if (mesh.userData.clothProtectedLimbMask?.[i]) { protectedLimbVertices++; continue; }
-    mesh.getVertexPosition(i, point).applyMatrix4(mesh.matrixWorld);
+    getRepairPosition(mesh, i, point).applyMatrix4(mesh.matrixWorld);
     let protectedHand = false;
     for (const hand of hands) {
       let weight = 0;
@@ -96,6 +97,9 @@ export function repairClothWeights(body, classId) {
   let changed = 0, protectedLimbVertices = 0;
   for (const mesh of body.meshes) {
     const source = mesh.geometry;
+    // The replacement assets merge clothing and limbs; this legacy field was
+    // certified on separate garments and must not override their fused skin.
+    if (classId === 'skeleton' && source.attributes.position.count === 53524) continue;
     let byClass = prepared.get(source);
     if (!byClass) { byClass = new Map(); prepared.set(source, byClass); }
     if (!byClass.has(classId)) byClass.set(classId, prepare(mesh, body, profile));

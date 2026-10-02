@@ -3,6 +3,9 @@ import * as THREE from 'three';
 import { input, keyLabel } from '../engine/input.js';
 import { SLOT_ORDER } from '../data/classes.js';
 import { fmtTime, clamp } from '../engine/util.js';
+import { visibleTo } from '../game/perception.js';
+import { statusLabel, hasStatusFlag } from '../game/statuses.js';
+import { CHASERS, CHASER_RULES } from '../game/battle-mage.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 function el(tag, cls, parent, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; if (parent) parent.appendChild(e); return e; }
@@ -31,13 +34,17 @@ export class HUD {
     this.teamBox = el('div', 'team-frame', root);
     // 左下：自己
     this.selfBox = el('div', 'self-frame', root, `
-      <div class="sf-head"><img class="sf-portrait" alt=""><div><div class="sf-name"></div><div class="sf-cls"></div></div></div>
+      <div class="sf-head"><span class="sf-portrait" aria-hidden="true"></span><div><div class="sf-name"></div><div class="sf-cls"></div></div></div>
       <div class="bar hp big"><i></i><em></em><span></span></div>
       <div class="bar mp"><i></i><span></span></div>
-      <div class="sf-effects"></div>`);
+      <div class="bar stamina" aria-label="体力"><i></i><span></span></div>
+      <div class="sf-effects"></div><div class="class-context"></div>`);
+    this.classContext = $('.class-context', this.selfBox);
     // 技能栏
     this.skillBar = el('div', 'skill-bar', root);
     this.formBar = el('div', 'form-bar', root);
+    this.castBox = el('div', 'cast-frame', root, '<div class="cast-label"><span></span><small></small></div><div class="cast-track"><i></i></div>');
+    this.castBox.hidden = true;
     // 右侧：连击与 APM
     this.comboBox = el('div', 'combo-box', root, '<div class="combo-n"></div><div class="combo-l">连击</div><div class="combo-d"></div>');
     this.apmBox = el('div', 'apm-box', root, '<span class="apm-n">0</span><span class="apm-l">APM</span><span class="fps"></span>');
@@ -81,6 +88,9 @@ export class HUD {
     this.setTeams(null, null); this.setBoss(null); this.setGoals(null);
     this.setPrompt(''); this.setHint(''); this.showStats(false);
     this.targetBox.style.display = this.lockMark.style.display = 'none';
+    this.castBox.hidden = true;
+    this.classContext.textContent = '';
+    this._chaserHtml = null;
     for (const node of [this.comboBox, this.toastBox, this.announceBox, this.center]) node.classList.remove('show', 'pop');
     this.hitmark.classList.remove('on', 'heavy');
     for (const node of [this.hurtBox, this.blindBox, this.dirBox]) node.style.opacity = 0;
@@ -93,20 +103,24 @@ export class HUD {
     this.targetBox.style.display = this.lockMark.style.display = 'none';
     $('.sf-name', this.selfBox).textContent = p.name;
     $('.sf-cls', this.selfBox).textContent = `${p.cls.name}${account ? ' · ' + account.weaponName : ''}`;
+    this.selfBox.dataset.class = p.clsId;
+    this.selfBox.title = `${p.cls.role || p.cls.name} · ${p.cls.passive || ''}`;
     const img = $('.sf-portrait', this.selfBox);
-    img.src = `assets/portraits/${p.cls.portrait || p.clsId}.jpg`;
+    img.style.backgroundImage = `url(assets/portraits/avatars/${p.clsId}.png)`;
     this.skillBar.innerHTML = '';
     this.slots = {};
     const mk = (slot, name, icon, keyName, extra = '') => {
       const s = el('button', 'slot ' + extra, this.skillBar, `<img src="assets/icons/${icon}.svg" alt=""><div class="cd"></div><div class="cdn"></div><div class="key">${keyName}</div><div class="nm">${name}</div>`);
       s.type = 'button'; s.dataset.action = slot === 'atk' ? 'attack' : slot;
+      s.dataset.name = name;
       s.setAttribute('aria-label', name);
+      if (slot === 'special') el('span', 'slot-state', s);
       this.slots[slot] = s;
       return s;
     };
     const chain = p.chain;
     mk('atk', '普攻', p.cls.forms ? FORM_ICONS[p.form] : (chain?.[0]?.proj ? 'target' : p.cls.weapon === 'gauntlet' ? 'fist' : p.cls.weapon === 'spear' ? 'spear' : 'sword'), keyLabel(input.binds.attack), 'basic');
-    mk('special', p.cls.special?.name || '特技', p.cls.special?.type === 'aim' ? 'crosshair' : 'guard', keyLabel(input.binds.special), 'basic');
+    mk('special', p.cls.special?.name || '特技', p.cls.special?.type === 'aim' ? 'crosshair' : p.cls.special?.type === 'chaser' ? 'cast' : 'guard', keyLabel(input.binds.special), 'basic');
     const accent = p.cls.look?.accent || '#4d9d9a';
     const usedGlyph = new Set();
     this.skillBar.style.setProperty('--accent', accent);
@@ -119,6 +133,9 @@ export class HUD {
       usedGlyph.add(glyph);
       el('span', 'glyph', s, glyph);
       s.title = `${d.name}（${(d.cd / 1000).toFixed(1)}s，${d.mp || 0} 法力）\n${d.desc || ''}`;
+      s.dataset.help = s.title;
+      el('span', 'slot-cost', s, d.mp ? `${d.mp}` : '');
+      el('span', 'slot-state', s);
       if (d.form) el('div', 'form-tag', s, FORM_NAMES[d.form]);
     }
     this.formBar.innerHTML = '';
@@ -138,8 +155,12 @@ export class HUD {
   }
   skillFlash(slot) { const s = this.slots[slot]; if (!s) return; s.classList.remove('flash'); void s.offsetWidth; s.classList.add('flash'); }
 
-  setTeams(allies, enemies) { this.allies = allies; this.enemies = enemies; this.teamBox.innerHTML = ''; this._teamHtml = null; }
-  setTop(left, mid, right, sub = '') { this.topL.innerHTML = left; this.timer.innerHTML = mid; this.topR.innerHTML = right; this.sub.innerHTML = sub; }
+  setTeams(allies, enemies) { this.allies = allies; this.enemies = enemies; this.teamBox.innerHTML = ''; this._teamHtml = null; this.teamBox.setAttribute('aria-label', '队伍状态'); }
+  setTop(left, mid, right, sub = '') {
+    const values = [left, mid, right, sub], nodes = [this.topL, this.timer, this.topR, this.sub];
+    for (let i = 0; i < values.length; i++) if (this._topValues?.[i] !== values[i]) nodes[i].innerHTML = values[i];
+    this._topValues = values;
+  }
   setBoss(f, phaseText = '') { this.boss = f; this.bossBox.style.display = f ? 'block' : 'none'; if (f) { $('.bf-name', this.bossBox).textContent = f.name; $('.bf-phase', this.bossBox).textContent = phaseText; } }
   setPrompt(t) { if (this._prompt !== t) { this._prompt = t; this.prompt.innerHTML = t || ''; this.prompt.style.display = t ? 'block' : 'none'; } }
   setHint(t) { this.hint.innerHTML = t || ''; this.hint.style.display = t ? '' : 'none'; }
@@ -196,10 +217,12 @@ export class HUD {
     (this.floats || (this.floats = [])).push(it);
   }
 
-  setGoals(list) {
+  setGoals(list, title = '训练目标') {
     if (!list) { this.goalBox.style.display = 'none'; return; }
     this.goalBox.style.display = 'block';
-    const html = '<div class="gb-title">训练目标</div>' + list.map((g) => `<div class="g ${g.done ? 'done' : ''}"><i></i>${g.text}</div>`).join('');
+    const done = list.filter(g => g.done).length;
+    const shown = list.length > 3 ? list.filter(g => !g.done).slice(0, 3) : list;
+    const html = `<div class="gb-title">${title}${list.length > 3 ? `<small>${done} / ${list.length}</small>` : ''}</div>` + (shown.length ? shown.map(g => `<div class="g ${g.done ? 'done' : ''}"><i></i>${g.text}</div>`).join('') : '<div class="g done"><i></i>训练完成，自由试招吧</div>');
     if (html !== this._goalHtml) { this._goalHtml = html; this.goalBox.innerHTML = html; }
   }
 
@@ -208,9 +231,10 @@ export class HUD {
     const seen = new Set();
     for (const f of game.fighters) {
       if (f === p || f.kind === 'dummy' && !f.comboTaken) continue;
+      if (p && !visibleTo(p, f, game.world)) continue;
       const d = p ? f.pos.distanceTo(p.pos) : 0;
       if (d > 45 || (f.dead && f.kind !== 'hero')) continue;
-      const sp = this.project(this.v.set(f.pos.x, f.pos.y + (f.state === 'down' ? 0.8 : 2.05 * f.scale), f.pos.z));
+      const sp = this.project(this.v.set(f.pos.x, f.pos.y + f.collisionHeight + .18, f.pos.z));
       if (!sp) continue;
       seen.add(f);
       let e = this.plates.get(f);
@@ -250,31 +274,34 @@ export class HUD {
       $('em', hpBar).style.width = (this._hpLag * 100) + '%';
       $('span', hpBar).textContent = `${Math.ceil(p.hp)} / ${p.maxHp}`;
       $('i', mpBar).style.width = (clamp(p.mp / p.maxMp, 0, 1) * 100) + '%';
-      $('span', mpBar).textContent = `${Math.floor(p.mp)}`;
+      $('span', mpBar).textContent = `法力 ${Math.floor(p.mp)} / ${p.maxMp}`;
+      const staminaBar = $('.stamina', this.selfBox);
+      $('i', staminaBar).style.width = (clamp(p.stamina / p.maxStamina, 0, 1) * 100) + '%';
+      $('span', staminaBar).textContent = `体力 ${Math.floor(p.stamina)} / ${p.maxStamina}`;
+      staminaBar.classList.toggle('low', p.stamina < 22);
       hpBar.classList.toggle('low', hpR < 0.3);
+      this.updateClassContext(p, game);
       // 状态
       const eff = [];
-      if (p.hasEffect('swordIntent')) eff.push('<b class="buff">剑意</b>');
+      for (const e of p.effects) if (e.t > 0) eff.push(`<b class="${e.debuff ? 'debuff' : 'buff'}">${statusLabel(e)} ${Math.ceil(e.t / 1000)}s</b>`);
       if (p.stacks > 0) eff.push(`<b class="buff">百家×${p.stacks}</b>`);
-      if (p.hasEffect('slow')) eff.push('<b class="debuff">减速</b>');
-      if (p.hasEffect('weak')) eff.push('<b class="debuff">虚弱</b>');
-      if (p.hasEffect('root')) eff.push('<b class="debuff">定身</b>');
-      if (p.hasEffect('fear')) eff.push('<b class="debuff">恐惧</b>');
-      if (p.hasEffect('blind')) eff.push('<b class="debuff">致盲</b>');
-      if (p.hasEffect('dot')) eff.push('<b class="debuff">中毒</b>');
-      if (p.hasEffect('berserk')) eff.push('<b class="buff">狂暴</b>');
-      if (p.hasEffect('shield')) eff.push('<b class="buff">护盾</b>');
-      if (p.hasEffect('hot')) eff.push('<b class="buff">回复</b>');
       if (p.armor > 0) eff.push('<b class="buff">霸体</b>');
+      if (p.invuln > 0) eff.push('<b class="buff">无敌</b>');
+      if (p.shadowTime >= .2) eff.push('<b class="buff">遮影步</b>');
       if (p.parryT > 0) eff.push('<b class="buff">回锋！</b>');
       const effHtml = eff.join('');
       if (this._eff !== effHtml) { this._eff = effHtml; $('.sf-effects', this.selfBox).innerHTML = effHtml; }
       // 技能冷却
+      const skillLocked = hasStatusFlag(p, 'skillLock');
+      const actionLocked = hasStatusFlag(p, 'actionLock') || hasStatusFlag(p, 'attackLock');
       for (const slot in this.slots) {
         const s = this.slots[slot];
         let cd = 0, max = 1, ready = true, mpOk = true, active = false;
         if (slot === 'atk') { active = p.action && p.action.slot === 'atk'; }
-        else if (slot === 'special') { active = p.state === 'guard' || p.aiming; }
+        else if (slot === 'special') {
+          active = p.state === 'guard' || p.aiming;
+          if (p.cls.special?.type === 'chaser') { cd = Math.max(0, (p.chaserCd || 0) * 1000); max = CHASER_RULES.cooldown * 1000; ready = cd <= 0; active = p.chaserWindow > 0 && p.chasers?.some(c => c.bornHit < p.chaserHitSerial); }
+        }
         else {
           const d = p.cls.skills[slot];
           cd = Math.max(0, p.cd[slot] || 0); max = d.cd;
@@ -286,7 +313,19 @@ export class HUD {
         const cdEl = s.children[1];
         cdEl.style.background = frac > 0 ? `conic-gradient(rgba(10,14,20,.78) ${frac * 360}deg, transparent 0)` : 'transparent';
         s.children[2].textContent = frac > 0 ? (cd > 1000 ? Math.ceil(cd / 1000) : (cd / 1000).toFixed(1)) : '';
+        const sealed = skillLocked && (slot !== 'atk' && slot !== 'special' || slot === 'special' && p.cls.special?.type === 'chaser');
+        const blocked = actionLocked;
+        const noChaser = slot === 'special' && p.cls.special?.type === 'chaser' && !active;
+        const reason = p.dead ? '已阵亡' : blocked ? '受控中' : sealed ? '技能封印' : noChaser ? (p.chasers?.length ? '命中后可发' : '未生成炫纹') : !mpOk ? '法力不足' : !ready ? '冷却中' : '';
+        if (s.dataset.unavailable !== reason) {
+          s.dataset.unavailable = reason;
+          s.setAttribute('aria-disabled', String(!!reason));
+          s.setAttribute('aria-label', s.dataset.name + (reason ? '，' + reason : ''));
+          s.title = (s.dataset.help || s.dataset.name) + (reason ? '\n' + reason : '');
+          const state = $('.slot-state', s); if (state) state.textContent = reason && reason !== '冷却中' ? reason : '';
+        }
         s.classList.toggle('nomp', !mpOk);
+        s.classList.toggle('sealed', sealed || blocked || p.dead);
         s.classList.toggle('active', !!active);
         if (s._wasReady === false && ready && slot !== 'atk' && slot !== 'special') { s.classList.remove('ready'); void s.offsetWidth; s.classList.add('ready'); }
         s._wasReady = ready;
@@ -294,13 +333,14 @@ export class HUD {
       // 目标：锁定 > 准星所指 > 最近攻击者
       if (this._aimT && !game.fighters.includes(this._aimT)) { this._aimT = null; this._aimKeep = 0; }
       let tgt = game.lockTarget;
-      if (!tgt) {
+      if (!tgt && !p.hasEffect('blind')) {
         const o = p.eyePos(new THREE.Vector3());
         const r = game.world.raycast(o, p.aimDir, 40, game.fighters, p.team, p);
         if (r.fighter) { this._aimT = r.fighter; this._aimKeep = 2; }
         else if (this._aimKeep > 0) this._aimKeep -= dt;
         tgt = this._aimKeep > 0 ? this._aimT : (p.lastHitBy && p.lastHitBy.alive && p.lastHitBy !== p ? p.lastHitBy : null);
       }
+      if (tgt && !visibleTo(p, tgt, game.world)) tgt = null;
       if (tgt && tgt.kind !== 'boss' && (tgt.alive || tgt.kind === 'hero')) {
         this.targetBox.style.display = 'block';
         $('.tf-name', this.targetBox).innerHTML = `${tgt.name} <small>${tgt.cls.name || ''}</small>`;
@@ -310,7 +350,7 @@ export class HUD {
         $('.tf-state', this.targetBox).textContent = st;
       } else this.targetBox.style.display = 'none';
       // 锁定标记
-      if (game.lockTarget) {
+      if (game.lockTarget && visibleTo(p, game.lockTarget, game.world)) {
         const sp = this.project(game.lockTarget.center(this.v.clone()).setY(game.lockTarget.pos.y + 1.2));
         if (sp) { this.lockMark.style.display = 'block'; this.lockMark.style.transform = `translate(${sp[0]}px, ${sp[1]}px)`; } else this.lockMark.style.display = 'none';
       } else this.lockMark.style.display = 'none';
@@ -320,8 +360,19 @@ export class HUD {
       this._apmT = (this._apmT || 0) - dt;
       if (this._apmT <= 0) { this._apmT = 0.5; $('.apm-n', this.apmBox).textContent = input.apm(); $('.fps', this.apmBox).textContent = game.settings.showFps ? Math.round(game.fps) + ' FPS' : ''; }
       // 准星
-      this.cross.style.display = game.settings.crosshair && game.firstPerson ? '' : 'none';
+      this.cross.style.display = game.settings.crosshair && game.firstPerson && !p.hasEffect('blind') ? '' : 'none';
       this.cross.classList.toggle('aim', !!p.aiming);
+      this.cross.style.setProperty('--recoil-scale', String(1 + (game.shotHeat || 0) * .25));
+      // 只给需要读条的施法/蓄力显示进度，短普攻不会每次闪烁一条黑框。
+      const a = p.action, cast = a && (a.def.charge || a.def.beam || a.def.wind >= 250) && (a.stage === 'wind' || a.stage === 'active' && a.def.beam);
+      this.castBox.hidden = !cast;
+      if (cast) {
+        const duration = a.stage === 'wind' ? (a.def.charge?.max || a.def.wind) : a.def.active;
+        const progress = clamp(a.t / Math.max(1, duration), 0, 1);
+        $('.cast-label span', this.castBox).textContent = a.def.name;
+        $('.cast-label small', this.castBox).textContent = a.stage === 'active' ? '持续施放' : a.def.charge ? '蓄力' : '准备施放';
+        $('.cast-track i', this.castBox).style.width = `${progress * 100}%`;
+      }
     }
     // Boss
     if (this.boss) {
@@ -358,7 +409,9 @@ export class HUD {
     }
     // 致盲
     const blind = p && p.effects.find((e) => e.type === 'blind');
-    this.blindBox.style.opacity = blind ? Math.min(0.92, blind.t / 400) : 0;
+    this.blindBox.style.opacity = blind && blind.t > 0 ? 1 : 0;
+    this.floatLayer.style.visibility = blind ? 'hidden' : '';
+    this.lockMark.style.visibility = blind ? 'hidden' : '';
     // 受伤
     if (this.hurtT > 0) { this.hurtT = Math.max(0, this.hurtT - dt * 1.6); }
     this.hurtBox.style.opacity = this.hurtT;
@@ -373,6 +426,58 @@ export class HUD {
     if (this.announceT > 0) { this.announceT -= dt; if (this.announceT <= 0) this.announceBox.classList.remove('show'); }
     if (this.centerT > 0) { this.centerT -= dt; if (this.centerT <= 0) this.center.classList.remove('show'); }
     if (this.stats.style.display !== 'none') { this._statT = (this._statT || 0) - dt; if (this._statT <= 0) { this._statT = 0.5; this.showStats(true, game); } }
+  }
+
+  updateClassContext(p, game) {
+    let text = p.cls.role || p.cls.name, chaserHtml = null;
+    let jump = '跳跃', jumpHelp = '跳跃或受身', dash = '闪避', dashHelp = '闪避冲刺';
+    if (p.clsId === 'witch') {
+      const flight = p.flight;
+      if (p.flightActive) {
+        text = `扫帚飞行 · ${Math.max(0, (flight.maxDuration || 5.5) - flight.elapsed).toFixed(1)} 秒 · 松手缓降`;
+        jump = '上升'; jumpHelp = '按住上升，松开缓降'; dash = '收帚'; dashHelp = '收起扫帚落地';
+      } else if (!p.onGround && !flight?.used) {
+        jump = '骑帚'; jumpHelp = '再次跳跃骑上扫帚，按住上升'; text = input.touchMode ? '再点骑帚 · 按住上升' : `再按 ${keyLabel(input.binds.jump)} 骑帚 · 按住上升`;
+      } else if (!p.onGround && flight?.used) {
+        text = '落地后恢复扫帚飞行'; jump = '受身';
+      } else text = input.touchMode ? '起跳后再点跳跃骑帚' : `${keyLabel(input.binds.jump)} 起跳 → 再按骑帚飞行`;
+    } else if (p.clsId === 'battlemage') {
+      const chasers = p.chasers || [];
+      text = `炫纹 ${chasers.length}/${CHASER_RULES.max} · 意志 ${p.battleWill?.tier || 0} 阶`;
+      chaserHtml = `<span class="chaser-dots">${chasers.map(c => `<i style="--orb:${CHASERS[c.type]?.color || CHASERS.neutral.color}" title="${CHASERS[c.type]?.name || '炫纹'}"></i>`).join('')}</span><span>${text}</span>`;
+      const available = p.chaserWindow > 0 && p.chaserCd <= 0 && !hasStatusFlag(p, 'skillLock') && !hasStatusFlag(p, 'actionLock') && chasers.some(c => c.bornHit < p.chaserHitSerial);
+      this.classContext.classList.toggle('can-fire', available);
+      this.classContext.title = available ? `按 ${keyLabel(input.binds.special)} 发射已有炫纹` : '真实命中生成炫纹；之后再次命中，才能发射之前储存的炫纹';
+    } else if (p.clsId === 'summoner') {
+      const summons = game.summons?.summary?.(p) || p.summonState;
+      if (summons) {
+        const mode = summons.mode === 'focus' ? `集火 ${summons.targetName || '目标'}` : summons.mode === 'escort' ? `护卫 ${summons.targetName || '队友'}` : summons.mode === 'guard' ? '驻守位置' : summons.mode === 'follow' ? '跟随召回' : '自由攻击';
+        text = `召唤 ${summons.count}/${summons.max || 4} · ${summons.formation > 0 ? '四兽阵 ' + Math.ceil(summons.formation) + ' 秒' : mode}`;
+      } else text = '召唤兽协同 · 印记集火';
+    } else if (p.clsId === 'sharpshooter' || p.clsId === 'launcher' || p.form === 'gun') {
+      text = `${p.clsId === 'launcher' ? '飞炮' : '飞枪'}：空中反向开枪 · 远距抬枪`;
+    }
+    if (chaserHtml !== null) {
+      if (this._chaserHtml !== chaserHtml) { this.classContext.innerHTML = chaserHtml; this._chaserHtml = chaserHtml; }
+    } else {
+      if (this.classContext.textContent !== text) this.classContext.textContent = text;
+      this.classContext.classList.remove('can-fire'); this.classContext.title = ''; this._chaserHtml = null;
+    }
+    this.classContext.classList.toggle('flying', !!p.flightActive);
+    // HUD 与触控共用这一份职业上下文；文字变化不会替换被手指捕获的按钮。
+    const controls = document.getElementById('touch-controls');
+    if (controls) {
+      if (this._touchRoot !== controls) {
+        this._touchRoot = controls;
+        this._jumpButton = $('[data-action="jump"]', controls);
+        this._dashButton = $('[data-action="dash"]', controls);
+        this._interactButton = $('.touch-interact', controls);
+      }
+      for (const [button, label, help] of [[this._jumpButton, jump, jumpHelp], [this._dashButton, dash, dashHelp]]) if (button && button.getAttribute('aria-label') !== help) {
+        button.textContent = label; button.setAttribute('aria-label', help);
+      }
+      if (this._interactButton) this._interactButton.hidden = !this._prompt || !/换装|镜/.test(this._prompt);
+    }
   }
 }
 

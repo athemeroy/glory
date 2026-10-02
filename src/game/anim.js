@@ -29,9 +29,13 @@ export const STANCES = {
 
 // ---------- 技能动作片段：wind（蓄力末）/ strike（生效末），可选 mid ----------
 export const CLIPS = {
+  // 剑客样板：上撩、反手横扫、过顶下劈。专用第一人称姿势与世界动捕分别驱动。
+  pilotRise: { wind: { chest: [14, 28, -6], shR: [-18, -32, -8], elR: [-48, 0, 0], gripR: [170, 0, 0], shL: [-35, -20, 18], elL: [-95, 0, 0] }, strike: { chest: [-16, -30, 4], shR: [-150, 28, -8], elR: [-16, 0, 0], gripR: [158, 0, 0], shL: [-28, -24, 20], elL: [-85, 0, 0] } },
+  pilotSweep: { wind: { chest: [0, -42, 8], shR: [-78, 65, 0], elR: [-85, 0, 0], gripR: [235, 0, 0], shL: [-40, -35, 18], elL: [-90, 0, 0] }, strike: { chest: [8, 48, -6], shR: [-95, -75, -6], elR: [-12, 0, 0], gripR: [185, 0, 0], shL: [-25, -10, 26], elL: [-70, 0, 0] } },
+  pilotChop: { wind: { chest: [-15, 8, 0], shR: [-168, 5, -8], elR: [-46, 0, 0], gripR: [175, 0, 0], shL: [-55, -22, 20], elL: [-95, 0, 0] }, strike: { chest: [30, -12, 0], shR: [-45, 4, -8], elR: [-14, 0, 0], gripR: [182, 0, 0], shL: [-28, -24, 24], elL: [-78, 0, 0] } },
   // 剑（右手）
   slash1: { wind: { chest: [0, 35, 0], shR: [-95, -75, 0], elR: [-20, 0, 0], gripR: [190, 0, 0] }, strike: { chest: [0, -40, 0], shR: [-90, 65, 0], elR: [-10, 0, 0], gripR: [180, 0, 0] } },
-  slash2: { wind: { chest: [0, -35, 0], shR: [-90, 55, 0], elR: [-70, 0, 0], gripR: [240, 0, 0] }, strike: { chest: [0, 35, 0], shR: [-95, -75, 0], elR: [-10, 0, 0], gripR: [185, 0, 0] } },
+  slash2: { wind: { chest: [0, -35, 0], shR: [-75, 55, 0], elR: [-50, 0, 0], gripR: [215, 0, 0] }, strike: { chest: [0, 35, 0], shR: [-78, -75, 0], elR: [-10, 0, 0], gripR: [178, 0, 0] } },
   slash3: { wind: { chest: [-10, 0, 0], shR: [-165, 10, 0], elR: [-40, 0, 0], gripR: [175, 0, 0] }, strike: { chest: [25, 0, 0], shR: [-60, 5, 0], elR: [-10, 0, 0], gripR: [185, 0, 0] } },
   upslash: { wind: { chest: [15, 20, 0], shR: [-15, -25, 0], elR: [-10, 0, 0], gripR: [165, 0, 0], knL: [30, 0, 0], knR: [30, 0, 0] }, strike: { chest: [-18, -10, 0], shR: [-160, 10, 0], elR: [-10, 0, 0], gripR: [160, 0, 0] } },
   thrust: { wind: { chest: [0, 25, 0], shR: [-40, -25, 0], elR: [-110, 0, 0], gripR: [240, 0, 0] }, strike: { chest: [8, -20, 0], shR: [-88, 8, 0], elR: [-3, 0, 0], gripR: [181, 0, 0], shL: [-20, 0, 30] } },
@@ -164,6 +168,14 @@ export class Animator {
       T.shR[0] += bob; T.shL[0] -= bob;
     }
     if (st.guard) set(GUARDS[st.guardKind] || GUARDS.sword);
+    if (st.flight && !st.react) {
+      // 骑帚收腿与轻微侧倾；仍使用同一世界骨架供第一人称和镜面观察。
+      set({ thL: [-54, 0, 13], thR: [-50, 0, -13], knL: [100, 0, 0], knR: [95, 0, 0],
+        ftL: [-12, 0, 0], ftR: [-12, 0, 0], hips: [0, 0, 0], spine: [8, 0, 0],
+        chest: [4, 0, -(st.side || 0) * 5], bodyY: -.035 });
+      if (!st.action) set({ shR: [-12, 8, 0], elR: [-68, 0, 0], gripR: [170, 0, 0],
+        shL: [-22, -8, 0], elL: [-62, 0, 0] });
+    }
 
     // ---- 技能动作 ----
     let spin = 0;

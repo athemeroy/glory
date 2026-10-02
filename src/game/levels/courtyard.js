@@ -323,6 +323,7 @@ export function buildCourtyard(ctx) {
     bounds: { minX: -BX, maxX: BX, minZ: -BZ, maxZ: BZ },
     spawns: { player: [0, 0, 12, Math.PI], enemy: [0, 0, -12, 0] },
     markers: {
+      story: { waypoint: [0, 0, -7], encounter: [0, 0, -12], exit: [0, 0, -18] },
       center: [0, 0],
       duelRadius: 7.5,
       platforms,

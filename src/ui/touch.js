@@ -11,20 +11,25 @@ export class TouchControls {
     this.root.innerHTML = `
       <div class="touch-toolbar" aria-label="游戏菜单">
         <button type="button" data-command="view" aria-label="切换视角">视角</button>
+        <button type="button" data-command="more" aria-label="展开更多操作" aria-expanded="false">更多</button>
+        <button type="button" data-command="pause" aria-label="暂停游戏">暂停</button>
+      </div>
+      <div class="touch-more" hidden aria-label="更多操作">
         <button type="button" data-command="stats" aria-label="显示或关闭战斗数据" aria-pressed="false">数据</button>
         <button type="button" data-command="fullscreen" aria-label="全屏游戏">全屏</button>
-        <button type="button" data-command="pause" aria-label="暂停游戏">暂停</button>
+        <button type="button" data-action="lockon" aria-label="观察或取消观察目标">观察</button>
+        <button type="button" data-command="goals" aria-label="显示或关闭关卡目标" aria-pressed="false">目标</button>
       </div>
       <div class="touch-stick" role="group" aria-label="拖动摇杆移动">
         <span class="stick-ring"></span><span class="stick-knob"></span><span class="stick-label">移动</span>
       </div>
       <div class="touch-movement" aria-label="战斗动作">
-        <button type="button" data-action="lockon" aria-label="锁定或取消锁定目标">锁定</button>
         <button type="button" data-action="jump" aria-label="跳跃或受身">跳跃</button>
         <button type="button" data-action="dash" aria-label="闪避冲刺">闪避</button>
+        <button type="button" data-action="sprint" aria-label="按住疾跑消耗体力">疾跑</button>
       </div>
       <button type="button" class="touch-interact" data-action="interact" aria-label="镜前换装">换装</button>
-      <div class="touch-look-hint">右侧空白处拖动视角</div>`;
+      <div class="touch-look-hint"><i></i>空白处拖动视角</div>`;
     document.body.appendChild(this.root);
     this.stick = this.root.querySelector('.touch-stick');
     this.knob = this.root.querySelector('.stick-knob');
@@ -74,6 +79,8 @@ export class TouchControls {
     const button = e.target.closest('#hud [data-action], #touch-controls [data-action]');
     let pointer;
     if (button) {
+      const reason = button.dataset.unavailable;
+      if (reason && reason !== '冷却中') this.app.hud.toast?.(reason);
       pointer = { kind: 'action', action: button.dataset.action, el: button };
       button.classList.add('touch-held');
       input.touchHold(pointer.action, true);
@@ -91,7 +98,8 @@ export class TouchControls {
     } else return;
     e.preventDefault();
     this.pointers.set(e.pointerId, pointer);
-    pointer.el.setPointerCapture(e.pointerId);
+    // DOM 操作或系统手势可能在事件抵达前已取消指针。
+    try { pointer.el.setPointerCapture(e.pointerId); } catch { this.up(e.pointerId, true); }
   }
 
   move(e) {
@@ -145,12 +153,30 @@ export class TouchControls {
     input.mouseDX = 0; input.mouseDY = 0;
     this.knob.style.transform = '';
     this.root.querySelector('[data-command="stats"]').setAttribute('aria-pressed', 'false');
+    this.root.querySelector('.touch-more').hidden = true;
+    this.root.querySelector('[data-command="more"]').setAttribute('aria-expanded', 'false');
+    this.root.querySelector('[data-command="goals"]').setAttribute('aria-pressed', 'false');
+    document.body.classList.remove('touch-objectives');
     this.app.hud.showStats(false, this.app.game);
   }
 
   command(command) {
+    if (command === 'more') {
+      const menu = this.root.querySelector('.touch-more');
+      menu.hidden = !menu.hidden;
+      this.root.querySelector('[data-command="more"]').setAttribute('aria-expanded', String(!menu.hidden));
+      return;
+    }
     if (command === 'pause') this.app.pause();
     if (command === 'view') this.app.game.toggleView();
+    if (command === 'goals') {
+      const goals = this.app.hud.goalBox;
+      if (!goals || goals.style.display === 'none') { this.app.hud.toast?.('当前没有阶段目标'); return; }
+      const on = document.body.classList.toggle('touch-objectives');
+      this.root.querySelector('[data-command="goals"]').setAttribute('aria-pressed', String(on));
+      this.root.querySelector('.touch-more').hidden = true;
+      this.root.querySelector('[data-command="more"]').setAttribute('aria-expanded', 'false');
+    }
     if (command === 'stats') {
       const on = this.app.hud.stats.style.display === 'none';
       this.app.hud.showStats(on, this.app.game);

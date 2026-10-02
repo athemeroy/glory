@@ -1,0 +1,734 @@
+{
+  "characters": [
+    {
+      "class": "unspecialized",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 2262,
+          "facePixelsRepaired": 24866,
+          "fragmentRepair": {
+            "pixels": 19251,
+            "darkCrackPixels": 838,
+            "skinTone": [
+              143.0,
+              110.0,
+              94.0
+            ]
+          },
+          "sourceHash": "3950ef3ceca334eef4629332a6c1bf8d6635b556a78a92dd235eb69873f6cc4b",
+          "outputHash": "2335d4e5aae6339e4276252263cab9e038a157aff991c125b77ff51253d481e9"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.72,
+        "roughness": 0.94
+      },
+      "sha256Output": "036cd98c4828d34e9c8669c05e021ed29122625fe8914d15e741a49d706bed76",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "swordmaster",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 6331,
+          "facePixelsRepaired": 75740,
+          "fragmentRepair": {
+            "pixels": 52531,
+            "darkCrackPixels": 5822,
+            "skinTone": [
+              209.0,
+              171.0,
+              131.0
+            ]
+          },
+          "sourceHash": "cd2627406dceb2df725e7b1bf0e8140c2040d3a73409bae599f527f2a9be666c",
+          "outputHash": "bf72336606f2d4b902af93215dab35365f61a979cdf5cfcb3a84205dbec02657"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.8,
+        "roughness": 0.93
+      },
+      "sha256Output": "c212d76b885b80c3059efa7e82b443748c366b486e7e1984a7f1c67a3c46364e",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "battlemage",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 2057,
+          "facePixelsRepaired": 63222,
+          "fragmentRepair": {
+            "pixels": 51193,
+            "darkCrackPixels": 167,
+            "skinTone": [
+              163.0,
+              133.0,
+              114.0
+            ]
+          },
+          "sourceHash": "4c64f68bd5c3b7c744fbc98862ccd0db3965d87cf7566c98a36f3ef97fd8b2a9",
+          "outputHash": "d51323974c86bc7d1707b47437e801864c6de3a33a40c6eeb00f38d82edca402"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.84,
+        "roughness": 0.92
+      },
+      "sha256Output": "7943558dd908e999abf457d95175b22778b63a8f35a3132a5b00e9791ff70168",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "striker",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 2856,
+          "facePixelsRepaired": 23782,
+          "fragmentRepair": {
+            "pixels": 15432,
+            "darkCrackPixels": 400,
+            "skinTone": [
+              162.0,
+              122.0,
+              95.0
+            ]
+          },
+          "sourceHash": "0dbaa190943e586d403053c0b5c765241f5e0f5f20b0413dd6ac1798fc741459",
+          "outputHash": "95ba76084c549d88b16b85fbe7cf9b0058ff3d5a3203be3a78b6b5a18fb81573"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.48,
+        "roughness": 0.97
+      },
+      "sha256Output": "f14439e6a7f22da3d33fca5f6868048b188768736a63103d924cd01222b790de",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "sharpshooter",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 2358,
+          "facePixelsRepaired": 61743,
+          "fragmentRepair": {
+            "pixels": 20055,
+            "darkCrackPixels": 64,
+            "skinTone": [
+              152.0,
+              117.0,
+              99.0
+            ]
+          },
+          "sourceHash": "ec692cc64e062b3e9696112334071f8d8e58c61a9abe62adcf3d6cb048a784a4",
+          "outputHash": "27470cd8064730e438468295688c475ba753e8784ca0d7c159fdb67f847132b2"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.67,
+        "roughness": 0.94
+      },
+      "sha256Output": "6777593ce5956eb17e0bcd85fd005d3ca5b3e0af52d2bfec786d91cc49c9deca",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "launcher",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 1651,
+          "facePixelsRepaired": 36021,
+          "fragmentRepair": {
+            "pixels": 26882,
+            "darkCrackPixels": 547,
+            "skinTone": [
+              165.0,
+              135.0,
+              122.0
+            ]
+          },
+          "sourceHash": "85d13825fd75b569c44366014cf52f81a114b4f0a671e68e3dc1556abba2ac46",
+          "outputHash": "776c0a0878e30257ff6680b45e9021aa3f362c15b295f0100e60585e3f9395a7"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0,
+        "roughness": 0.94
+      },
+      "sha256Output": "26f032b2108e98217cf320f6abea08d620dd49a3070f20264511df2c4ee26f39",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "doubleSided": true,
+          "pbrMetallicRoughness": {
+            "roughnessFactor": 0.75,
+            "metallicFactor": 0,
+            "baseColorTexture": {
+              "index": 0
+            }
+          },
+          "emissiveFactor": [
+            1,
+            1,
+            1
+          ],
+          "emissiveTexture": {
+            "index": 0
+          },
+          "extensions": {
+            "KHR_materials_ior": {
+              "ior": 1.4500000476837158
+            },
+            "KHR_materials_specular": {
+              "specularColorFactor": [
+                2,
+                2,
+                2
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "warlock",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 1522,
+          "facePixelsRepaired": 23612,
+          "fragmentRepair": {
+            "pixels": 17308,
+            "darkCrackPixels": 571,
+            "skinTone": [
+              150.0,
+              126.0,
+              112.0
+            ]
+          },
+          "sourceHash": "ab4e7497c63cdbf0d266fb5082127fbec80d3b582c666fa2ddf49b6d18aee5fb",
+          "outputHash": "758fb18fa690d52442fc1359218c841d88d813016f6678d3ba259fae08be0f99"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.56,
+        "roughness": 0.98
+      },
+      "sha256Output": "77940092417eaa45d5c38e47a88b8d115846e17fa3d2860b1be82a796d0c350e",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "cleric",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 3749,
+          "facePixelsRepaired": 68101,
+          "fragmentRepair": {
+            "pixels": 43100,
+            "darkCrackPixels": 1950,
+            "skinTone": [
+              159.0,
+              143.0,
+              132.0
+            ]
+          },
+          "sourceHash": "91800e267486c400e16ed8136ac43f9c75df74cc321ea44977c3a748c4d11f6d",
+          "outputHash": "58faa51d8c1b60d8dd85bcd3554e4428352a764bdf8f8f55f0b8e5815b7e50e8"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0,
+        "roughness": 0.96
+      },
+      "sha256Output": "a8e8b1046f14d0c9cdb663879fc9712fe28b4e39c243a5e93233602a99ff6342",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "doubleSided": true,
+          "pbrMetallicRoughness": {
+            "roughnessFactor": 0.75,
+            "metallicFactor": 0,
+            "baseColorTexture": {
+              "index": 0
+            }
+          },
+          "emissiveFactor": [
+            1,
+            1,
+            1
+          ],
+          "emissiveTexture": {
+            "index": 0
+          },
+          "extensions": {
+            "KHR_materials_ior": {
+              "ior": 1.4500000476837158
+            },
+            "KHR_materials_specular": {
+              "specularColorFactor": [
+                2,
+                2,
+                2
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "witch",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 1141,
+          "facePixelsRepaired": 26604,
+          "fragmentRepair": {
+            "pixels": 20205,
+            "darkCrackPixels": 687,
+            "skinTone": [
+              163.0,
+              121.0,
+              94.0
+            ]
+          },
+          "sourceHash": "cf809a7bf18f3830dfa4c7ad0a2d41e14e36449546d8a91c6f686b81b980046a",
+          "outputHash": "f5ee917c669517ded4cf81f278dfb257b6d34c72bb002a5dc00b7ee88601e3f7"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.56,
+        "roughness": 0.98
+      },
+      "sha256Output": "2bf5dd72b42c123fb189495487b67f3c848f1066830c9dca3c2b962f5f50a714",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "berserker",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 3918,
+          "facePixelsRepaired": 31557,
+          "fragmentRepair": {
+            "pixels": 24020,
+            "darkCrackPixels": 1612,
+            "skinTone": [
+              125.0,
+              84.0,
+              72.0
+            ]
+          },
+          "sourceHash": "ee6563d9f01960e644aa3f1e422643dabd6cd28fd0cba37bd759874c87697a5c",
+          "outputHash": "c1b1e3c20d31dd5f2d8564cdcacf4aa58b5feece6fd1bbbe9e35faf527e3b16f"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.88,
+        "roughness": 0.92
+      },
+      "sha256Output": "db0212d840d36e479b682373a62d8fbbc07ad06fb67e10a04cf56747c66e4f28",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "assassin",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 2654,
+          "facePixelsRepaired": 50791,
+          "fragmentRepair": {
+            "pixels": 34356,
+            "darkCrackPixels": 1984,
+            "skinTone": [
+              162.0,
+              130.0,
+              116.0
+            ]
+          },
+          "sourceHash": "1a4dda8005d636a341b2927a878d6aee88487eaa81b2f45d11b40d56e81a3c13",
+          "outputHash": "6d45493ba94441d85a4f65be2db32dc08f242a4bede3f2309db3023f815deb56"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.54,
+        "roughness": 0.97
+      },
+      "sha256Output": "704af4073cb4898b1ec0f9d7c07e6deec171e150a5cd7113a859953d6d867cf2",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "thug",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 1557,
+          "facePixelsRepaired": 21471,
+          "fragmentRepair": {
+            "pixels": 14079,
+            "darkCrackPixels": 378,
+            "skinTone": [
+              130.0,
+              92.0,
+              79.0
+            ]
+          },
+          "sourceHash": "723443b65d29151fa51d9c11879b3b60f3b373962f51ac74bdf0a7cfb2fb3ab3",
+          "outputHash": "3e40c38bab134748670487801bd412df80dca6518692a7e911d4e6a6bd93b722"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.54,
+        "roughness": 0.97
+      },
+      "sha256Output": "1e3f2fe5a04a267413004559fa003292c7d66d9b72df03e411b308af257de002",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "frostcaster",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 1890,
+          "facePixelsRepaired": 59864,
+          "fragmentRepair": {
+            "pixels": 632,
+            "darkCrackPixels": 0,
+            "skinTone": [
+              158.0,
+              145.0,
+              148.0
+            ]
+          },
+          "sourceHash": "acd4651b71ee209d57830d5afb3c5aeca41f04374910fe53ae852f998b218b3a",
+          "outputHash": "e9c4981e2a231956fc8831a7614996510dcc771d8c66e7e8d224bf1c4fe2729d"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.82,
+        "roughness": 0.94
+      },
+      "sha256Output": "074e7446bf30f52e6fc2bdbf18686c58f5178bbae9b7549f2bcb020eb5997f85",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "boss",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 1339,
+          "facePixelsRepaired": 48745,
+          "fragmentRepair": {
+            "pixels": 105,
+            "darkCrackPixels": 0,
+            "skinTone": [
+              94.0,
+              92.0,
+              92.0
+            ]
+          },
+          "sourceHash": "eebc920bb45eb72d02146561a6cbffe44c4727eb6b7023017d5235114369a4b7",
+          "outputHash": "bf67f5945af5b32da18bc0d8e39c6a4456382da2a3432b110a0c265a9986df51"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.88,
+        "roughness": 0.94
+      },
+      "sha256Output": "1173e865efe54da7b8384c1dd17e714fbdd8e579c3769b796e8652f1673ed5a3",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "class": "skeleton",
+      "textures": [
+        {
+          "sourceSize": [
+            2048,
+            2048
+          ],
+          "outputSize": [
+            2048,
+            2048
+          ],
+          "faceTriangles": 2237,
+          "facePixelsRepaired": 55007,
+          "fragmentRepair": {
+            "pixels": 157,
+            "darkCrackPixels": 0,
+            "skinTone": [
+              90.0,
+              79.0,
+              70.0
+            ]
+          },
+          "sourceHash": "28697ca3ddfcd574b21eb27edb865fd8871e9ad2a55e77f9916e227e10a07620",
+          "outputHash": "31980b6004d7a9c38f1a2fc449aa2b183407fa871b08b00e281dbbcd9b2b1d04"
+        }
+      ],
+      "materialFactors": {
+        "metallic": 0.84,
+        "roughness": 0.96
+      },
+      "sha256Output": "6458288bdd4eaa736fab1e81eb3755643bb37cde33b584354cccb2aa5412e3e0",
+      "sourceMaterials": [
+        {
+          "name": "Material_1",
+          "pbrMetallicRoughness": {
+            "baseColorTexture": {
+              "index": 0
+            },
+            "metallicRoughnessTexture": {
+              "index": 1
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,139 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Frost certified torso sheet trial</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">对照已发布袖场检查完整倒地/起身…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { loadClipLibrary, createMocapBody, MocapAnimator } from '../src/game/mocap.js';
+import { MOBS } from '../src/data/enemies.js';
+import { repairAttachmentWeights } from '../src/game/attachment.js';
+import { repairTorsoTrial } from './frost-torso-trial.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const query=new URLSearchParams(location.search),profile={mode:query.get('mode')||'harmonic',gain:Number(query.get('gain')??1),pin:query.get('pin')!=='0',domain:query.get('domain')||'sheet',pinMode:query.get('pinMode')||'all'};
+const check=(ok,label)=>(ok?__results:__errors).push(label);
+const point=new THREE.Vector3(),normal=new THREE.Vector3(),part=new THREE.Vector3();
+function samples(body){
+  body.model.updateMatrixWorld(true);const mesh=body.meshes[0],g=mesh.geometry;mesh.skeleton.update();
+  const transforms=mesh.skeleton.bones.map((_,i)=>new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().fromArray(mesh.skeleton.boneMatrices,i*16)));
+  const bind=new THREE.Matrix3().setFromMatrix4(mesh.bindMatrix),inverse=new THREE.Matrix3().setFromMatrix4(mesh.bindMatrixInverse),world=new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld);
+  const points=new Float32Array(g.attributes.position.count*3),normals=new Float32Array(points.length),si=g.attributes.skinIndex,sw=g.attributes.skinWeight;
+  for(let i=0;i<si.count;i++){
+    mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld).toArray(points,i*3);
+    point.fromBufferAttribute(g.attributes.normal,i).applyMatrix3(bind);normal.set(0,0,0);
+    for(let k=0;k<4;k++){const weight=sw.getComponent(i,k);if(weight)normal.addScaledVector(part.copy(point).applyMatrix3(transforms[si.getComponent(i,k)]),weight)}
+    normal.applyMatrix3(inverse).applyMatrix3(world).normalize().toArray(normals,i*3);
+  }
+  return {points,normals};
+}
+const distance=(p,a,b)=>Math.hypot(p[a*3]-p[b*3],p[a*3+1]-p[b*3+1],p[a*3+2]-p[b*3+2]);
+function face(p,a,b,c){
+  const ax=p[b*3]-p[a*3],ay=p[b*3+1]-p[a*3+1],az=p[b*3+2]-p[a*3+2],bx=p[c*3]-p[a*3],by=p[c*3+1]-p[a*3+1],bz=p[c*3+2]-p[a*3+2];
+  return normal.set(ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx);
+}
+function faceValue(sample,tri){
+  face(sample.points,tri.a,tri.b,tri.c);const area=normal.length(),p=sample.normals;
+  point.set(p[tri.a*3]+p[tri.b*3]+p[tri.c*3],p[tri.a*3+1]+p[tri.b*3+1]+p[tri.c*3+1],p[tri.a*3+2]+p[tri.b*3+2]+p[tri.c*3+2]).normalize();
+  return {ratio:area/tri.area,dot:area>1e-12?normal.divideScalar(area).dot(point)*tri.sign:0};
+}
+
+try{
+  await loadClipLibrary('../assets/anim/anims.glb');
+  const cls='frostcaster',source=(await new GLTFLoader().loadAsync('../assets/models/rigged/frostcaster.glb')).scene;
+  let sourceMesh;source.traverse(object=>{if(object.isSkinnedMesh&&!sourceMesh)sourceMesh=object});
+  const sourceGeometry=sourceMesh.geometry,sourceIndices=sourceGeometry.attributes.skinIndex.array.slice(),sourceWeights=sourceGeometry.attributes.skinWeight.array.slice();
+  source.userData.gloryClass=cls;const original=createMocapBody(source),candidate=createMocapBody(source);
+  check(original.sleeve?.changed===3503,'基线为已发布12袖根与下袍入口');
+  const certificate=repairTorsoTrial(candidate,profile,sourceGeometry),domainCount=profile.domain==='strip'?242:profile.domain==='union'?180:118;check(certificate.rawVertices===66&&certificate.aliasVertices===domainCount,'候选仅认证66原sheet及指定73/103躯干衣料闭包');
+  if(['union','strip'].includes(profile.domain))check(certificate.islandVertices===73,'新增仅精确73原始索引躯干衣料/滚边证书');
+  if(profile.domain==='strip')check(certificate.stripVertices===103&&certificate.sleeveExceptions.join(',')==='16758,16759,16760,16761,16762,16763','严格43原片/103闭包及仅6个已认证袖根例外');
+  if(['union','strip'].includes(profile.domain)){
+    const modified=createMocapBody(source),native=new THREE.BufferGeometry();
+    native.setIndex(sourceGeometry.index);native.setAttribute('position',sourceGeometry.attributes.position);native.setAttribute('skinIndex',sourceGeometry.attributes.skinIndex);native.setAttribute('skinWeight',sourceGeometry.attributes.skinWeight.clone());
+    native.attributes.skinWeight.setX(16708,native.attributes.skinWeight.getX(16708)+.000001);
+    let rejected=false;try{repairTorsoTrial(modified,profile,native)}catch(error){rejected=/source weights changed 16708/.test(error.message)}
+    check(rejected,'原GLB73岛任一SW槽变化即拒绝认证，缓存命中仍校验原源');disposeRig({root:modified.model},{sharedRoots:[source]});
+    native.setIndex(null);native.deleteAttribute('position');native.deleteAttribute('skinIndex');native.dispose();
+  }
+  if(profile.domain==='strip'){
+    const modified=createMocapBody(source),native=new THREE.BufferGeometry();
+    native.setIndex(sourceGeometry.index);native.setAttribute('position',sourceGeometry.attributes.position);native.setAttribute('skinIndex',sourceGeometry.attributes.skinIndex);native.setAttribute('skinWeight',sourceGeometry.attributes.skinWeight.clone());
+    native.attributes.skinWeight.setX(16163,native.attributes.skinWeight.getX(16163)+.000001);
+    let rejected=false;try{repairTorsoTrial(modified,profile,native)}catch(error){rejected=/source weights changed 16163/.test(error.message)}
+    check(rejected,'新增103原源任一SW槽变化即拒绝，腰界锁点与缓存命中也不能跳过认证');disposeRig({root:modified.model},{sharedRoots:[source]});
+    native.setIndex(null);native.deleteAttribute('position');native.deleteAttribute('skinIndex');native.dispose();
+  }
+  check(certificate.changed>0&&certificate.changed<=domainCount,'候选只修改认证小域未锁定顶点');
+  const bind=samples(original),fixed=candidate.meshes[0].geometry,candidateBind=samples(candidate);let bindError=0;
+  check(candidate.sleeve?.changed===3503,'候选保留12袖根修复标记');
+  for(let i=0;i<sourceGeometry.attributes.position.count;i++)bindError=Math.max(bindError,Math.hypot(bind.points[i*3]-candidateBind.points[i*3],bind.points[i*3+1]-candidateBind.points[i*3+1],bind.points[i*3+2]-candidateBind.points[i*3+2]));
+  check(bindError<1e-5,'全顶点绑定外形误差小于0.01mm');
+  check(fixed.index===sourceGeometry.index&&original.meshes[0].geometry.index===sourceGeometry.index&&fixed.attributes.position===sourceGeometry.attributes.position&&fixed.attributes.normal===sourceGeometry.attributes.normal,'已发布场与候选使用同完整原始索引/位置/法线');
+  const beforeGeometry=original.meshes[0].geometry,mask=candidate.meshes[0].userData.torsoTrialStrength;
+  for(let i=0;i<fixed.attributes.skinIndex.count;i++)if(!mask[i])for(let k=0;k<4;k++)if(fixed.attributes.skinIndex.getComponent(i,k)!==beforeGeometry.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==beforeGeometry.attributes.skinWeight.getComponent(i,k))throw Error('躯干小域外改变 '+i);
+  check(true,'所有躯干小域外权重逐项保持12发布状态');
+  if(profile.mode==='harmonic'){
+    const boundary=candidate.meshes[0].userData.torsoTrialBoundary,healthy=candidate.meshes[0].userData.torsoTrialHealthy;let protectedBoundary=0,protectedHealthy=0;
+    for(let i=0;i<mask.length;i++)if(healthy[i]||(profile.pin&&boundary[i])){if(healthy[i])protectedHealthy++;if(boundary[i])protectedBoundary++;if(mask[i])throw Error('改变固定原邻域 '+i);for(let k=0;k<4;k++)if(fixed.attributes.skinIndex.getComponent(i,k)!==beforeGeometry.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==beforeGeometry.attributes.skinWeight.getComponent(i,k))throw Error('固定边界/正常neck场改变 '+i)}
+    check(protectedHealthy===certificate.healthyVertices&&protectedHealthy>0,'正常neck/Spine原归属点全部逐槽原样');
+    if(profile.pin)check(protectedBoundary===certificate.boundaryVertices&&protectedBoundary>0,profile.pinMode==='foreign'?'所有连外侧同Hips/Leg原归属的焊接边界逐槽原样':'认证域所有焊接三角外邻边界逐槽原样');
+  }
+  const sleeve=original.meshes[0].userData.sleeveComponent,exceptions=new Set(certificate.sleeveExceptions);let sleeveCount=0,exceptionCount=0;
+  for(let i=0;i<fixed.attributes.skinIndex.count;i++)if(sleeve?.[i]){if(exceptions.has(i)){exceptionCount++;continue}sleeveCount++;if(mask[i])throw Error('改变已发布袖点 '+i);for(let k=0;k<4;k++)if(fixed.attributes.skinIndex.getComponent(i,k)!==beforeGeometry.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==beforeGeometry.attributes.skinWeight.getComponent(i,k))throw Error('袖点绑定改变 '+i)}
+  check(sleeveCount===(profile.domain==='strip'?3497:3503)&&exceptionCount===(profile.domain==='strip'?6:0),'除逐点认证6个躯干例外，其余3497已发布袖点逐槽保护');
+  if(profile.domain==='strip'){
+    const expected=[15939,15940,15941,16054,16055,16163,16164,16165,16166,16320,16321,16322,16346,16347];
+    check([...certificate.waistBoundary].sort((a,b)=>a-b).join(',')===expected.join(','),'腰饰遮挡的exact14低端原点列为固定边界');
+    for(const i of expected)for(let k=0;k<4;k++)if(mask[i]||fixed.attributes.skinIndex.getComponent(i,k)!==beforeGeometry.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==beforeGeometry.attributes.skinWeight.getComponent(i,k)||fixed.attributes.skinIndex.getComponent(i,k)!==sourceGeometry.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==sourceGeometry.attributes.skinWeight.getComponent(i,k))throw Error('不明腰界原绑改变 '+i);
+    check(true,'exact14腰界源SI/SW与发布状态完全相同，不更改遮挡硬件');
+    const second=createMocapBody(source),repeated=repairTorsoTrial(second,profile,sourceGeometry);check(repeated===repairTorsoTrial(second,profile,sourceGeometry)&&second.meshes[0].geometry===fixed,'单一242候选在新实例共享只读缓存，同实例幂等');disposeRig({root:second.model},{sharedRoots:[source]});
+  }
+  const cells=new Map(),parent=[],welded=[];
+  for(let i=0;i<fixed.attributes.position.count;i++){const key=[0,1,2].map(k=>Math.round(bind.points[i*3+k]/.00005)).join(',');let id=cells.get(key);if(id===undefined){id=parent.length;parent.push(id);cells.set(key,id)}welded.push(id)}
+  const root=id=>{while(parent[id]!==id){parent[id]=parent[parent[id]];id=parent[id]}return id};
+  for(let at=0;at<sourceGeometry.index.count;at+=3){const a=root(welded[sourceGeometry.index.getX(at)]),b=root(welded[sourceGeometry.index.getX(at+1)]),c=root(welded[sourceGeometry.index.getX(at+2)]);parent[b]=a;parent[c]=a}
+  const components=new Map();for(let i=0;i<welded.length;i++){const id=root(welded[i]);if(!components.has(id))components.set(id,[]);components.get(id).push(i)}
+  for(const count of [1600,1611,2647]){const targets=[...components.values()].filter(vertices=>vertices.length===count);check(targets.length===1,'独立识别真实手/脚组件 '+count);for(const i of targets[0])for(let k=0;k<4;k++)if(mask[i]||fixed.attributes.skinIndex.getComponent(i,k)!==sourceGeometry.attributes.skinIndex.getComponent(i,k)||fixed.attributes.skinWeight.getComponent(i,k)!==sourceGeometry.attributes.skinWeight.getComponent(i,k))throw Error('真实组件改变 '+count+':'+i);check(true,'真实组件 '+count+' 所有原GLB权重不变')}
+  const index=sourceGeometry.index,edges=[],triangles=[],seen=new Set();
+  for(let i=0;i<index.count;i+=3){
+    const a=index.getX(i),b=index.getX(i+1),c=index.getX(i+2);
+    for(const[x,y]of[[a,b],[b,c],[c,a]]){const key=Math.min(x,y)+':'+Math.max(x,y);if(!seen.has(key)){seen.add(key);const rest=distance(bind.points,x,y);if(rest>=.005)edges.push({a:x,b:y,rest})}}
+    const area=face(bind.points,a,b,c).length();if(area<1e-8)continue;
+    const tri={a,b,c,area,sign:1};const value=faceValue(bind,tri);tri.sign=value.dot<0?-1:1;tri.orientationReliable=Math.abs(value.dot)>.05;triangles.push(tri);
+  }
+  const touchedFaces=triangles.filter(t=>mask[t.a]||mask[t.b]||mask[t.c]).length,boundaryFaces=triangles.filter(t=>[t.a,t.b,t.c].some(v=>mask[v])&&[t.a,t.b,t.c].some(v=>!mask[v])).length;
+  check(touchedFaces>0&&boundaryFaces>0,'检查完整原三角包含全部候选小域跨边界');
+  if(query.get('guardOnly')==='1'){
+    __metrics.push({certificate,touchedFaces,boundaryFaces,profile});
+    for(const body of [original,candidate])disposeRig({root:body.model},{sharedRoots:[source]});
+    document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);window.__ready=true;
+    throw Object.assign(new Error('Guard-only complete'),{guardOnly:true});
+  }
+  const C=MOBS.frostcaster,pairs=[original,candidate].map(body=>{const rig=buildCharacter(C.look),proc=new Animator(rig);proc.breath=0;return {body,rig,proc,anim:new MocapAnimator(body,rig)}}),state={speed:0,fwd:1,onGround:true,stance:C.stance,pitch:0};
+  const known=[[16706,16708]];
+  function compare(pose){
+    const before=samples(original),after=samples(candidate),newSpikes=[],newFolds=[],newCollapsed=[],counts={beforeFolded:0,afterFolded:0};
+    let maxBefore=1,maxAfter=1;
+    for(const edge of edges){const oldLength=distance(before.points,edge.a,edge.b),newLength=distance(after.points,edge.a,edge.b);maxBefore=Math.max(maxBefore,oldLength/edge.rest);maxAfter=Math.max(maxAfter,newLength/edge.rest);if(newLength>oldLength+.1&&newLength>edge.rest*1.8)newSpikes.push({...edge,before:oldLength,after:newLength})}
+    for(const tri of triangles){
+      const old=faceValue(before,tri),next=faceValue(after,tri);if(!Number.isFinite(next.ratio)||!Number.isFinite(next.dot))throw Error('非有限面 '+tri.a);
+      if(tri.orientationReliable&&old.dot<-.1&&old.ratio>=.05)counts.beforeFolded++;if(tri.orientationReliable&&next.dot<-.1&&next.ratio>=.05)counts.afterFolded++;
+      if(tri.orientationReliable&&next.dot<-.1&&next.ratio>=.05&&old.dot>=-.1)newFolds.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
+      if(next.ratio<.05&&old.ratio>=.05)newCollapsed.push({a:tri.a,b:tri.b,c:tri.c,before:old,after:next});
+    }
+    const metric={certificate,touchedFaces,boundaryFaces,profile,cls,pose,edges:edges.length,faces:triangles.length,maxBefore,maxAfter,newSpikes:newSpikes.length,newFolds:newFolds.length,newCollapsed:newCollapsed.length,counts,known:known.map(([a,b])=>({a,b,rest:distance(bind.points,a,b),before:distance(before.points,a,b),after:distance(after.points,a,b)})),worstNew:newSpikes.slice(0,10),worstFold:newFolds.slice(0,10),worstCollapsed:newCollapsed.slice(0,10)};__metrics.push(metric);
+    check(!newSpikes.length,cls+' '+pose+': 全网格无新增>10cm拉伸边');check(!newFolds.length&&!newCollapsed.length,cls+' '+pose+': 相同原三角集合无新增折返/压扁');
+  }
+  for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,state);pair.anim.update(1/60,state)}
+  compare('stance');
+  for(const[phase,frames,duration]of[['down',39,.65],['getup',6,.45]])for(let frame=1;frame<=frames;frame++){
+    const st={...state,react:{type:phase,t:(frame-1)/60,dur:duration}};for(const pair of pairs){pair.proc.update(1/60,st);pair.anim.update(1/60,st)}
+    if((phase==='down'&&frame===8)||(phase==='getup'&&frame===6))compare(phase+'-'+frame);
+  }
+  for(const[pose,st]of[['run',{...state,speed:5.6}],['attack',{...state,action:{clip:C.chain[0].anim,stage:'active',t:.65,key:'trial'}}],['overhead',{...state,action:{clip:'jumpslam',stage:'wind',t:1,key:'trial'}}],['down-held',{...state,react:{type:'down',t:.8,dur:1}}]]){for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,st);pair.anim.update(1/60,st)}compare(pose)}
+  check(sourceGeometry.attributes.skinIndex.array.every((v,i)=>v===sourceIndices[i])&&sourceGeometry.attributes.skinWeight.array.every((v,i)=>v===sourceWeights[i]),cls+': 原GLB蒙皮数据未被修复实例覆盖');
+  for(const pair of pairs){pair.anim.mixer.stopAllAction();disposeRig({root:pair.body.model},{sharedRoots:[source]});disposeRig(pair.rig)}
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){if(!error.guardOnly){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}}
+window.__ready=true;
+</script></body></html>

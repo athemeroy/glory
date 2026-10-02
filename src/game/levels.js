@@ -5,12 +5,16 @@ import { buildTraining } from './levels/training.js';
 import { buildCourtyard } from './levels/courtyard.js';
 import { buildColdiron } from './levels/coldiron.js';
 import { buildArena } from './levels/arena.js';
+import { buildClocktower } from './levels/clocktower.js';
+import { buildFrostbridge } from './levels/frostbridge.js';
 
 const BUILDERS = {
   training: buildTraining,
   courtyard: buildCourtyard,
   coldiron: buildColdiron,
   arena: buildArena,
+  clocktower: buildClocktower,
+  frostbridge: buildFrostbridge,
 };
 
 export const LEVEL_IDS = Object.keys(BUILDERS);

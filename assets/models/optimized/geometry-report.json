@@ -1,0 +1,425 @@
+{
+  "method": "Blender temporary welded sculpt; original GLB attribute patch",
+  "characters": [
+    {
+      "class": "unspecialized",
+      "blender": "4.5.9 LTS",
+      "source": "unspecialized.glb",
+      "sha256Source": "a6b1a7c63a42423cde73f31fad873cc1359d6128ff2b7c41d4c8a021bbe2075a",
+      "sha256Output": "ed4ce2e0a1c52f32eb2972bfb9352a511acee27d990740436d3c4affaf576751",
+      "vertices": 50920,
+      "temporaryWeldedVertices": 26993,
+      "triangles": 56430,
+      "bones": 24,
+      "maxMoveMillimeters": 6.000054534524679,
+      "meanMoveMillimeters": 1.7591876676306129,
+      "faceMaxMoveMillimeters": 6.0000005178153515,
+      "facialSculptVertices": 328,
+      "meanNormalChangeDegrees": 5.3178943608786025,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "a6053f3a69db64ca3fa784b8c6c653d0f944fef33c41fc9b28f7a0ef1e7ac53f",
+        "JOINTS_0": "56537737b790b6a685e8743aa009ef6700d31dac6cb7dc94fc6323e9ba4de483",
+        "WEIGHTS_0": "75f38dc5ba1a5ca642cc8fa215db50339ab65c943a7372f31d9180bf33264c4b"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.34,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.0032,
+        "normalBlend": 0.62
+      }
+    },
+    {
+      "class": "swordmaster",
+      "blender": "4.5.9 LTS",
+      "source": "swordmaster.glb",
+      "sha256Source": "782dd81350a0ceafa5d44ae67a78d782087f3214e77f71e84fac0007dc05f56b",
+      "sha256Output": "7c44b3e25fd14f98302eca81b615d6952b6775c82eb0958035dfc8d6e346a4ed",
+      "vertices": 48650,
+      "temporaryWeldedVertices": 27724,
+      "triangles": 57035,
+      "bones": 24,
+      "maxMoveMillimeters": 8.000052534043789,
+      "meanMoveMillimeters": 1.6003266209736466,
+      "faceMaxMoveMillimeters": 8.000001311302185,
+      "facialSculptVertices": 887,
+      "meanNormalChangeDegrees": 4.915142864958692,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "143c9a0129e59b369fb513272df9b8d6fc666fec2e5db7a4b7560dc69044b6a5",
+        "JOINTS_0": "b23a4a03ee9a2e05faf9b49b03369c52deaab30cc24061e74d8b30cd0c994c74",
+        "WEIGHTS_0": "dbb160662c65c00c553c4a045fa3168aca46df91a80416ee3712e42bd04af2d5"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.32,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.003,
+        "normalBlend": 0.6
+      }
+    },
+    {
+      "class": "battlemage",
+      "blender": "4.5.9 LTS",
+      "source": "battlemage.glb",
+      "sha256Source": "fbe856c9ad63d0ff0ba4aab90676213a47f62ee121ac62498419ccdc27db437b",
+      "sha256Output": "5cfd332a9dab3f6c0c933573aeaf92c1e10aa2e81ddda3ee9e6ce6eea7bff131",
+      "vertices": 48183,
+      "temporaryWeldedVertices": 27292,
+      "triangles": 55888,
+      "bones": 24,
+      "maxMoveMillimeters": 8.000051602721214,
+      "meanMoveMillimeters": 1.7878684448078275,
+      "faceMaxMoveMillimeters": 8.000001311302185,
+      "facialSculptVertices": 1107,
+      "meanNormalChangeDegrees": 4.851051357995054,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "3005ef8474b64f9c73d9c578e96c3ce3aa6b116e72e0595aaf44120445ad3edb",
+        "JOINTS_0": "68a79bdf54336e0c2706c1b808088347c4d0282f0c3b3cff5ad2cdf0e0e8588f",
+        "WEIGHTS_0": "9723b9c6ec5499a9af25a929823abf81074b4f5fe778e748ea44c2a1f21cc3c8"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.3,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.003,
+        "normalBlend": 0.56
+      }
+    },
+    {
+      "class": "striker",
+      "blender": "4.5.9 LTS",
+      "source": "striker.glb",
+      "sha256Source": "1c834d58999444f5888d39539e79864f23bdf112420a1fe3350e35fd8a52c6e5",
+      "sha256Output": "48b89206ca0f485061a184e1d8c5b713d4233f61b52b2a56d992d713a2295eaf",
+      "vertices": 45722,
+      "temporaryWeldedVertices": 29102,
+      "triangles": 59464,
+      "bones": 24,
+      "maxMoveMillimeters": 7.000054698437452,
+      "meanMoveMillimeters": 1.451296964660287,
+      "faceMaxMoveMillimeters": 7.000001147389412,
+      "facialSculptVertices": 305,
+      "meanNormalChangeDegrees": 3.134146065998714,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "8387f4f888e2d4e6e2dd1c258b4c346357351ab69e9b43cde788819c01b09116",
+        "JOINTS_0": "207b2dfcaf9bd47e82e32be7441a618ada3788e424c31532a789cb07210ec3c6",
+        "WEIGHTS_0": "6a830289fc88bc19035c84c467f3fc96d25ee57710eb670ce490252d7b35437a"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.34,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.0028,
+        "normalBlend": 0.6
+      }
+    },
+    {
+      "class": "sharpshooter",
+      "blender": "4.5.9 LTS",
+      "source": "sharpshooter.glb",
+      "sha256Source": "f8d1c1ba4b6d844a4a229033eebeaa991ce7011fdcb6c0ad3ce562c074fea0c8",
+      "sha256Output": "ccb047b7f761e05e9fb76f02ee97ad9aff305f0e1cecd303e1e41ea481185710",
+      "vertices": 52665,
+      "temporaryWeldedVertices": 25739,
+      "triangles": 55746,
+      "bones": 24,
+      "maxMoveMillimeters": 6.000055931508541,
+      "meanMoveMillimeters": 1.6370422672480345,
+      "faceMaxMoveMillimeters": 6.0000005178153515,
+      "facialSculptVertices": 366,
+      "meanNormalChangeDegrees": 4.807491399676474,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "24cd3c79ffd4da67d60769d07f36f425d1884ff4b9d4977edfea3786f8ac9563",
+        "JOINTS_0": "2942cfb5be1655fdc4fbcba009a70e110643280a57a6db04283e0fadb8c55193",
+        "WEIGHTS_0": "581268a1b729201d7d2b31dfc2dc75269b017e9c2e4e435ad18dd0c03cb70e58"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.34,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.0032,
+        "normalBlend": 0.62
+      }
+    },
+    {
+      "class": "launcher",
+      "blender": "4.5.9 LTS",
+      "source": "launcher.glb",
+      "sha256Source": "982d7b53851d8df95832a038e0f74ecad93d157cf3a4ca0a2596fb9b8b26a45c",
+      "sha256Output": "3c9c3a5138df201dea838db08207280884319fb7a86edc993330d1538b9acba6",
+      "vertices": 28668,
+      "temporaryWeldedVertices": 9550,
+      "triangles": 19292,
+      "bones": 24,
+      "maxMoveMillimeters": 6.000050343573093,
+      "meanMoveMillimeters": 2.3437112104147673,
+      "faceMaxMoveMillimeters": 6.0000005178153515,
+      "facialSculptVertices": 579,
+      "meanNormalChangeDegrees": 29.112100148386492,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "225eb175026261c3c58d0b9db84bc093e182ef7d8adb7f10ae0a79bcdc3bc9f6",
+        "JOINTS_0": "03dd9466a682b43bbc6bc893cd2ac13e2eeeff9a246a0df5d2345ce300711ae0",
+        "WEIGHTS_0": "31a2ec831dc710e6eb186231ce19aba4ca4cfa39769653d1c044979ea87d97e1"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.32,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.003,
+        "normalBlend": 0.6
+      }
+    },
+    {
+      "class": "warlock",
+      "blender": "4.5.9 LTS",
+      "source": "warlock.glb",
+      "sha256Source": "f9daf2837778f50401257f061dc09ef7ee312124017d29fba2f192d40b06c08e",
+      "sha256Output": "74e131fd69bfc5549f4b4dc5c65e035447d6a183d6caa0caf94bb08ea3dafe4b",
+      "vertices": 48819,
+      "temporaryWeldedVertices": 27216,
+      "triangles": 55958,
+      "bones": 24,
+      "maxMoveMillimeters": 6.000055465847254,
+      "meanMoveMillimeters": 1.9910819828510284,
+      "faceMaxMoveMillimeters": 6.000000983476639,
+      "facialSculptVertices": 345,
+      "meanNormalChangeDegrees": 5.169179371419445,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "a4fe1ddaba98deeedceff5aad140eff9e37fba60fe34f1b7e24d2d4df7647979",
+        "JOINTS_0": "cad957e383ad9a0463085e7bfda29104805aa6fc8dd5fbbaffed907d188f3f8b",
+        "WEIGHTS_0": "2a769540d54338bc792d6c52270aa9e5a2ccdccc553243ca92f8ba171a7733e4"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.36,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.004,
+        "normalBlend": 0.68
+      }
+    },
+    {
+      "class": "cleric",
+      "blender": "4.5.9 LTS",
+      "source": "cleric.glb",
+      "sha256Source": "88eafa6dd00c1bf96f0854226df03a14b5247094cada7acb947874ba42e5da4a",
+      "sha256Output": "e0e38976bc1aeb0c30a5b2f961fde2c6af7e97805bf3328266f3c50f87b2a16c",
+      "vertices": 27026,
+      "temporaryWeldedVertices": 9705,
+      "triangles": 18677,
+      "bones": 24,
+      "maxMoveMillimeters": 10.000054724514484,
+      "meanMoveMillimeters": 2.25785537622869,
+      "faceMaxMoveMillimeters": 10.000000707805157,
+      "facialSculptVertices": 645,
+      "meanNormalChangeDegrees": 13.461366264405195,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "caf222e4a78ba1554e2bbf76d16ff078357763ba2f70fe9094c1d5da7419f162",
+        "JOINTS_0": "500e5af3e6c0369fc6d655809b73fe36ae343489bf174247ffed4bda263025af",
+        "WEIGHTS_0": "b13e8d7aaad4b383fbcf936ca32c4d8fb65b7c5c9ac395490aeb115d97bf9c2b"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.38,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.004,
+        "normalBlend": 0.72
+      }
+    },
+    {
+      "class": "witch",
+      "blender": "4.5.9 LTS",
+      "source": "witch.glb",
+      "sha256Source": "792e83585a399766947fb8c1b2da109d6ed2ed4d1a3814abdb398ae757841025",
+      "sha256Output": "fb623c54b282b970abf6306ac31139b95bd8b9c4840a5ebd64e106b30b4a82c1",
+      "vertices": 50147,
+      "temporaryWeldedVertices": 26944,
+      "triangles": 56606,
+      "bones": 24,
+      "maxMoveMillimeters": 6.000051740556955,
+      "meanMoveMillimeters": 1.8086991040036082,
+      "faceMaxMoveMillimeters": 6.000000983476639,
+      "facialSculptVertices": 350,
+      "meanNormalChangeDegrees": 4.717790098419874,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "2ee044919d41bf36cf2f8681583deb0ae1d5360ee511165a08d3acb2183ef6a9",
+        "JOINTS_0": "fb772fb2a24c06cfb047d014a412f7494758d626f3108c988bf29c6d6724ebd3",
+        "WEIGHTS_0": "2b6f58e0e954b80d7bfed79c4dcad72e3c397507fce58a9fbb92b3a7421c7935"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.36,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.0038,
+        "normalBlend": 0.68
+      }
+    },
+    {
+      "class": "berserker",
+      "blender": "4.5.9 LTS",
+      "source": "berserker.glb",
+      "sha256Source": "d4a293ef39ced9fa51b548bbad15eb9822c7040594ad41926750ba9a86dad94e",
+      "sha256Output": "ef360a966ccec306d6452f99f3989ec4bee6738ee2ec5c111e1419dcd1f6f762",
+      "vertices": 50163,
+      "temporaryWeldedVertices": 27613,
+      "triangles": 56665,
+      "bones": 24,
+      "maxMoveMillimeters": 5.000052507966757,
+      "meanMoveMillimeters": 1.2381948763504624,
+      "faceMaxMoveMillimeters": 5.000000819563866,
+      "facialSculptVertices": 331,
+      "meanNormalChangeDegrees": 3.6142291771449204,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "db87fddaedcf0bd7c2227af9e4ba63e68b92d2bd461a4bdbe28982cfe5c58fb7",
+        "JOINTS_0": "82cc9a15cbf41b47a67badeab5a8cecf655f5ec49ab9bec96d63b13d50053bd9",
+        "WEIGHTS_0": "db3e5a5893b847c1b481449840de6b6a9f5497b8d27d653f6f887f3b1c8a4aea"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.25,
+        "iterations": 3,
+        "maxDisplacementMeters": 0.002,
+        "normalBlend": 0.46
+      }
+    },
+    {
+      "class": "assassin",
+      "blender": "4.5.9 LTS",
+      "source": "assassin.glb",
+      "sha256Source": "8230601aba589fee6e7c75e6412f0cf024ee0c581ebbb3e9eb924e4d3fe24a02",
+      "sha256Output": "ddff32c57590f328a6b5e53e57d3e55ec503b2fe7f3befcf90bbe4691c1eb08c",
+      "vertices": 49210,
+      "temporaryWeldedVertices": 28668,
+      "triangles": 59049,
+      "bones": 24,
+      "maxMoveMillimeters": 6.000053603202105,
+      "meanMoveMillimeters": 1.4622703893110156,
+      "faceMaxMoveMillimeters": 6.0000005178153515,
+      "facialSculptVertices": 690,
+      "meanNormalChangeDegrees": 4.35988477081662,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "36c7a89dcd455fb839c993b960cb8c793de19e99b2f6411d11e048a02a8dd7b4",
+        "JOINTS_0": "76c0c146c231534a52ec38192fec7a1f523728bf821d8b0479cd539033cb6194",
+        "WEIGHTS_0": "d15497ed9b1e611b58767fc2f253f72154957c36e42f3d226efda7a941d914bc"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.32,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.0028,
+        "normalBlend": 0.6
+      }
+    },
+    {
+      "class": "thug",
+      "blender": "4.5.9 LTS",
+      "source": "thug.glb",
+      "sha256Source": "bd079e289d707338cecd19d83902ec85f4a7c0249f3f17cc1fd042a3a63c1f3f",
+      "sha256Output": "d8a1d80f5b7b91f47f72820f0114f3b895e4f4be7be91efe5cd64e97b37dda60",
+      "vertices": 54068,
+      "temporaryWeldedVertices": 28184,
+      "triangles": 58937,
+      "bones": 24,
+      "maxMoveMillimeters": 6.00004568696022,
+      "meanMoveMillimeters": 1.8445708556100726,
+      "faceMaxMoveMillimeters": 6.0000005178153515,
+      "facialSculptVertices": 260,
+      "meanNormalChangeDegrees": 5.03178627428323,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "39197a627eb3cf51602d8d674f6f8c85adfcd646d92732c86499512b78a2d7fc",
+        "JOINTS_0": "5f8bcfd40fffb09f826b0bdaa5078c6738cf0238513082b4ceff2d1ffcc9d271",
+        "WEIGHTS_0": "b61e2f74eccb6e71541f8013897ae8e48554ea46671772ba1f10ac97c1274595"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.34,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.0032,
+        "normalBlend": 0.62
+      }
+    },
+    {
+      "class": "frostcaster",
+      "blender": "4.5.9 LTS",
+      "source": "frostcaster.glb",
+      "sha256Source": "6490bcd748a23c4cb5e61570e8b6a422be74782eec8abcd6c8aa57626ace6b2e",
+      "sha256Output": "acee74a1ce0cd86fea33b2cf40b2aa54d6e0e2092666d6eec05a6ebd8575ef97",
+      "vertices": 46717,
+      "temporaryWeldedVertices": 27473,
+      "triangles": 56741,
+      "bones": 24,
+      "maxMoveMillimeters": 3.0000561382621527,
+      "meanMoveMillimeters": 1.815199269913137,
+      "faceMaxMoveMillimeters": 3.0000004917383194,
+      "facialSculptVertices": 807,
+      "meanNormalChangeDegrees": 4.444676446720451,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "763b6e445e2b9dd3a9d45b11404d67fa482b8002eb3b35d5e8c7d6d486991dc6",
+        "JOINTS_0": "a7b37eeb83af5f0c8932379e231da8025c125b35b6bb9bbb701959bf211c93d4",
+        "WEIGHTS_0": "3d6ea0374fce322d5e7c324669cc8a584fe4f4235172586aa2425ce321c66817"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.32,
+        "iterations": 4,
+        "maxDisplacementMeters": 0.003,
+        "normalBlend": 0.6
+      }
+    },
+    {
+      "class": "boss",
+      "blender": "4.5.9 LTS",
+      "source": "boss.glb",
+      "sha256Source": "ef42096d9d1d59fe12e16feda4ca70f7806a8661f2695cdb31313c45089de701",
+      "sha256Output": "c81f8ec7882fb84df99607a3e8bd30bfee33fa32e152e184af651cbc633fcffa",
+      "vertices": 54295,
+      "temporaryWeldedVertices": 28244,
+      "triangles": 58382,
+      "bones": 24,
+      "maxMoveMillimeters": 3.0000563710927963,
+      "meanMoveMillimeters": 1.3561310479417443,
+      "faceMaxMoveMillimeters": 3.0000002589076757,
+      "facialSculptVertices": 482,
+      "meanNormalChangeDegrees": 4.100158716777246,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "f1a9eaff2945a44d2ef0cf66b59bd095d4e12467ff9ba7eb061733c446e495ca",
+        "JOINTS_0": "447b13a45a2dbf0f36d7fc84058483ba9644ddc71379a0bd6a3580440ed7a8fa",
+        "WEIGHTS_0": "4e417937c3c97d21c58c9c64bd8d3bebfb5cea62c524af9b45f40849b69bd483"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.24,
+        "iterations": 3,
+        "maxDisplacementMeters": 0.002,
+        "normalBlend": 0.44
+      }
+    },
+    {
+      "class": "skeleton",
+      "blender": "4.5.9 LTS",
+      "source": "skeleton.glb",
+      "sha256Source": "f276df011c8722f08a500e5d8cf466e9a945e66fd9786d16d5616acc0bbcd511",
+      "sha256Output": "85c2eefb14c6ed1827deb29de5992537c8f64cf9dc664e8569a5766864cb4b0c",
+      "vertices": 53524,
+      "temporaryWeldedVertices": 27663,
+      "triangles": 57368,
+      "bones": 24,
+      "maxMoveMillimeters": 2.000059699639678,
+      "meanMoveMillimeters": 1.1612828820943832,
+      "faceMaxMoveMillimeters": 2.0000003278255463,
+      "facialSculptVertices": 203,
+      "meanNormalChangeDegrees": 3.5229755019560227,
+      "unchangedAttributes": {
+        "TEXCOORD_0": "b25a68a2781edeabade3c10ad792b8daf656152bcba6886244ba0794dc48c5f5",
+        "JOINTS_0": "10fbd056839ea45c5f310b675fda38a5f28401ec60c3e9917f03c9d68135e08a",
+        "WEIGHTS_0": "bee690b7511a3139840a00ff98625681d2e88bf574655db329dd09b293a07969"
+      },
+      "rigUVWeightsIndicesUnchanged": true,
+      "settings": {
+        "factor": 0.22,
+        "iterations": 3,
+        "maxDisplacementMeters": 0.0018,
+        "normalBlend": 0.4
+      }
+    }
+  ]
+}

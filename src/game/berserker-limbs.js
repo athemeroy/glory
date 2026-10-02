@@ -1,5 +1,6 @@
 // 原绑定姿态认证的狂剑士护腿不参与衣摆重绑；只缓存只读掩码。
 import * as THREE from 'three';
+import { getRepairPosition } from './repair-position.js';
 
 const prepared = new WeakMap();
 const profiles = [
@@ -15,7 +16,7 @@ function prepare(mesh) {
   const root = id => { while (parent[id] !== id) { parent[id] = parent[parent[id]]; id = parent[id]; } return id; };
   mesh.skeleton.update();
   for (let i = 0; i < position.count; i++) {
-    mesh.getVertexPosition(i, point).applyMatrix4(mesh.matrixWorld).toArray(points, i * 3);
+    getRepairPosition(mesh, i, point).applyMatrix4(mesh.matrixWorld).toArray(points, i * 3);
     const key = `${Math.round(point.x / .00005)},${Math.round(point.y / .00005)},${Math.round(point.z / .00005)}`;
     let id = cells.get(key);
     if (id === undefined) { id = parent.length; parent.push(id); cells.set(key, id); }

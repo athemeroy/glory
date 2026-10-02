@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><title>Guard pose regression</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script><pre id="result">检查中…</pre>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from '../vendor/GLTFLoader.js';
+import {loadClipLibrary,createMocapBody,MocapAnimator} from '../src/game/mocap.js';
+import {buildCharacter} from '../src/game/model.js';
+import {Animator} from '../src/game/anim.js';
+window.__results=[];window.__errors=[];
+const check=(ok,message,metrics={})=>(ok?window.__results:window.__errors).push({message,...metrics});
+try {
+ await loadClipLibrary('../assets/anim/anims.glb');
+ const parsed=(await new GLTFLoader().loadAsync('../assets/anim/anims.glb')).scene;
+ const tree=o=>{const n=o.parent&&o.name&&o.name!=='Armature'?new THREE.Bone():new THREE.Group();n.name=o.name;n.position.copy(o.position);n.quaternion.copy(o.quaternion);n.scale.copy(o.scale);for(const c of o.children)n.add(tree(c));return n};
+ const source=tree(parsed),idle={onGround:true,speed:0,stance:'sword'};
+ for(const dt of [1/30,1/60,1/120]) for(const pitch of [0,.45,-.45]) {
+  const body=createMocapBody(source),anim=new MocapAnimator(body),st={...idle,guard:true,pitch};
+  for(let i=0;i<Math.ceil(.5/dt);i++)anim.update(dt,st);
+  body.model.updateMatrixWorld(true);const q=anim.spine.quaternion.clone(),head=body.bones.Head.getWorldPosition(new THREE.Vector3());
+  let angle=0,drift=0;
+  for(let i=0;i<Math.ceil(10/dt);i++){anim.update(dt,st);body.model.updateMatrixWorld(true);angle=Math.max(angle,q.angleTo(anim.spine.quaternion));drift=Math.max(drift,head.distanceTo(body.bones.Head.getWorldPosition(new THREE.Vector3())))}
+  check(angle<1e-5&&drift<1e-5,'持续格挡10秒保持头部与上身姿势',{dt,pitch,angle,drift});
+  for(let i=0;i<Math.ceil(.5/dt);i++)anim.update(dt,{...st,pitch:0});
+  const fresh=new MocapAnimator(createMocapBody(source));for(let i=0;i<Math.ceil(.5/dt);i++)fresh.update(dt,{...st,pitch:0});
+  check(anim.spine.quaternion.angleTo(fresh.spine.quaternion)<1e-5,'俯仰归零不残留累计旋转',{dt,pitch});
+ }
+ // 平滑握持/IK也必须以每帧动画姿态为基准，不能反复改写上一次修正后的姿势。
+ for(const stance of ['fist','spear','greatsword','pistol']) {
+  const body=createMocapBody(source),rig=buildCharacter({}),proc=new Animator(rig),anim=new MocapAnimator(body,rig);
+  const st={...idle,stance,guard:true,pitch:.35};
+  for(let i=0;i<90;i++){proc.update(1/60,st);anim.update(1/60,st)}
+  body.model.updateMatrixWorld(true);const q=anim.spine.quaternion.clone();
+  for(let i=0;i<600;i++){proc.update(1/60,st);anim.update(1/60,st)}
+  check(q.angleTo(anim.spine.quaternion)<1e-5,'职业握持退出后持续格挡无累积旋转',{stance,angle:q.angleTo(anim.spine.quaternion)});
+ }
+} catch(e){window.__errors.push({message:e.stack})}
+window.__done=true;document.querySelector('#result').textContent=JSON.stringify({results:window.__results,errors:window.__errors},null,2);
+</script>

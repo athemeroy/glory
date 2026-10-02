@@ -1,5 +1,5 @@
 // 动捕动画：Meshy 绑定的角色（标准 24 骨）+ 共享动作库 anims.glb。
-// 世界身体（第三人称/镜子/对手）用动捕片段混合；第一人称手臂仍用程序化动作（可读性更好）。
+// 第一人称、第三人称和镜子共用世界骨架与动作。
 import * as THREE from 'three';
 import { GLTFLoader } from '../../vendor/GLTFLoader.js';
 import * as SkeletonUtils from '../../vendor/SkeletonUtils.js';
@@ -14,6 +14,8 @@ import { repairRobeWeights } from './robe.js';
 import { repairSkirtWeights } from './skirt.js';
 import { protectBerserkerLimbs } from './berserker-limbs.js';
 import { cachedFootIndices } from './foot-indices.js';
+import { measureBodyShape } from './body-shape.js';
+import { TwoBoneIK } from './ik.js';
 
 const loader = new GLTFLoader();
 let clipLib = null;      // name -> AnimationClip（已去掉水平根位移）
@@ -63,19 +65,73 @@ export function loadClipLibrary(url = 'assets/anim/anims.glb') {
 }
 export function hasClips() { return !!clipLib && clipLib.size > 0; }
 
+let swordPilotPromise = null;
+export function loadSwordPilotClips(url = 'assets/anim/swordmaster-pilot.json') {
+  if (swordPilotPromise) return swordPilotPromise;
+  swordPilotPromise = fetch(url).then(async response => {
+    if (!response.ok) throw new Error('Sword pilot motion unavailable');
+    const data = await response.json();
+    const prepared = data.clips.map(c => ({ clip: THREE.AnimationClip.parse(c), hip: c.hip, impact: c.impact }));
+    for (const { clip, hip, impact } of prepared) {
+      clipLib.set(clip.name, clip);
+      hipsY.set(clip.name, { times: new Float32Array(hip.times), ys: new Float32Array(hip.ys) });
+      IMPACT[clip.name] = impact;
+    }
+    return true;
+  }).catch(error => { console.warn('剑客样板动作加载失败', error); swordPilotPromise = null; return false; });
+  return swordPilotPromise;
+}
+
 // 程序化片段名 → 动捕片段（按优先级取第一个存在的）
 const ATTACK_MAP = {
+  pilotRise: ['Sword_Pilot_Rising', 'Charged_Upward_Slash'],
+  pilotSweep: ['Sword_Pilot_Sweep', 'Left_Slash'],
+  pilotChop: ['Sword_Pilot_Chop', 'Charged_Slash'],
   slash1: ['Right_Hand_Sword_Slash', 'Attack'], slash2: ['Left_Slash', 'Attack'], slash3: ['Charged_Slash', 'Heavy_Hammer_Swing'],
   upslash: ['Charged_Upward_Slash'], thrust: ['Thrust_Slash'], dashslash: ['Right_Hand_Sword_Slash'], jumpslam: ['Charged_Axe_Chop', 'Charged_Ground_Slam'],
-  spin: ['Double_Blade_Spin', 'Axe_Spin_Attack'], punchR: ['Right_Jab_from_Guard'], punchL: ['Left_Jab_from_Guard'], uppercut: ['Right_Uppercut_from_Guard'],
+  spin: ['Axe_Spin_Attack', 'Double_Blade_Spin'], punchR: ['Right_Jab_from_Guard'], punchL: ['Left_Jab_from_Guard'], uppercut: ['Right_Uppercut_from_Guard'],
   kick: ['Roundhouse_Kick', 'Spartan_Kick'], spinkick: ['Lunge_Spin_Kick'], palm: ['Punch_Forward_with_Both_Fists'], grab: ['Shield_Push_Left', 'Elbow_Strike'],
-  spearThrust: ['Thrust_Slash'], spearUp: ['Charged_Upward_Slash'], spearSpin: ['Reaping_Swing', 'Axe_Spin_Attack'], spearSlam: ['Charged_Axe_Chop'],
+  spearThrust: ['Thrust_Slash'], spearUp: ['Charged_Upward_Slash'], spearSpin: ['Axe_Spin_Attack', 'Reaping_Swing'], spearSlam: ['Charged_Axe_Chop'],
   shoot: ['Cowboy_Quick_Draw_Shooting'], shoot2: ['Walk_Forward_While_Shooting', 'Cowboy_Quick_Draw_Shooting'], shootUp: ['Cowboy_Quick_Draw_Shooting'], cannon: ['Walk_Forward_While_Shooting'],
   cast: ['Charged_Spell_Cast_1', 'mage_soell_cast'], castUp: ['mage_soell_cast', 'Charged_Spell_Cast'], throw: ['Crouch_Pull_and_Throw'], heal: ['mage_soell_cast_2', 'mage_soell_cast'],
-  stomp: ['Leg_Sweep', 'Spartan_Kick'],
+  stomp: ['Leg_Sweep', 'Spartan_Kick'], lowSweep: ['Leg_Sweep'],
 };
 // 射击类：固定在瞄准姿势（片段时间比例），不做时间扭曲
 const AIM_POSE = { Cowboy_Quick_Draw_Shooting: 0.5, Walk_Forward_While_Shooting: 0.4 };
+// 旋身需要完整的转身轨迹；原“速度峰值附近”窗口仅播了半次挥动。
+// Axe_Spin_Attack 源2.53s首尾为同一朝向，实际髋旋转约2π。
+// 多段技能每个伤害窗口对应一次完整旋身，战斗自身计时保持原值。
+export function attackClipPhase(name, action, impact = .42) {
+  const progress = clamp(action.t, 0, 1);
+  if (AIM_POSE[name] !== undefined) return AIM_POSE[name] + (action.stage === 'active' ? .01 * Math.sin(action.t * 20) : 0);
+  if (name === 'Axe_Spin_Attack' && /^(spin|spearSpin)$/.test(action.clip)) {
+    if (action.stage === 'wind') return .01 * progress;
+    if (action.stage === 'active') {
+      const turns = clamp(Math.round(action.strikes || 1), 1, 4);
+      const cycle = Math.min(turns - 1, Math.floor(progress * turns));
+      return .01 + .98 * (progress * turns - cycle);
+    }
+    return .99 + .01 * progress;
+  }
+  if (name === 'Lunge_Spin_Kick' && action.clip === 'spinkick') {
+    if (action.stage === 'wind') return .30 * progress;
+    if (action.stage === 'active') {
+      const kicks = clamp(Math.round(action.strikes || 1), 1, 4);
+      const cycle = Math.min(kicks - 1, Math.floor(progress * kicks));
+      return .30 + .69 * (progress * kicks - cycle);
+    }
+    return .99 + .01 * progress;
+  }
+  if (name === 'Leg_Sweep' && action.clip === 'lowSweep') {
+    if (action.stage === 'wind') return .20 * progress;
+    // The complete low sweep remains uniform; hit.t opens at its real first contact.
+    if (action.stage === 'active') return .20 + .60 * progress;
+    return .80 + .20 * progress;
+  }
+  if (action.stage === 'wind') return impact * .85 * progress;
+  if (action.stage === 'active') return impact * .85 + impact * .25 * progress;
+  return impact * 1.1 + (1 - impact * 1.1) * progress * .95;
+}
 // 各片段的“命中时刻”占片段时长的比例（粗估，未列出默认 0.42）
 const IMPACT = { Right_Hand_Sword_Slash: 0.38, Left_Slash: 0.4, Thrust_Slash: 0.42, Charged_Upward_Slash: 0.55, Charged_Slash: 0.55, Heavy_Hammer_Swing: 0.5,
   Charged_Axe_Chop: 0.55, Double_Blade_Spin: 0.35, Axe_Spin_Attack: 0.4, Right_Jab_from_Guard: 0.35, Left_Jab_from_Guard: 0.35, Right_Uppercut_from_Guard: 0.45,
@@ -135,7 +191,14 @@ export function createMocapBody(riggedScene) {
   const meshes = [];
   model.traverse((o) => {
     if (o.isBone) bones[o.name] = o;
-    if (o.isSkinnedMesh) { o.castShadow = true; o.frustumCulled = false; meshes.push(o); }
+    if (o.isSkinnedMesh) {
+      o.castShadow = true; o.frustumCulled = false; meshes.push(o);
+      // 近景斜视袖口/皮革时保留源2K/4K纹理；不再仅用单向mipmap采样。
+      for (const material of [].concat(o.material)) for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap']) {
+        const texture = material[key];
+        if (texture && texture.anisotropy < 8) { texture.anisotropy = 8; texture.needsUpdate = true; }
+      }
+    }
   });
   model.updateMatrixWorld(true);
   const body = { model, bones, meshes, sockets: new Map() };
@@ -161,6 +224,7 @@ export function createMocapBody(riggedScene) {
   repairSleeveWeights(body, riggedScene.userData.gloryClass);
   repairRobeWeights(body, riggedScene.userData.gloryClass);
   repairSkirtWeights(body, riggedScene.userData.gloryClass);
+  body.shape = measureBodyShape(body, riggedScene);
   return body;
 }
 
@@ -171,11 +235,15 @@ export function handSocket(body, side) {
   if (!hand) return null;
   body.model.updateMatrixWorld(true);
   const center = new THREE.Vector3(), vertex = new THREE.Vector3();
+  const sampled = new Set();
   let total = 0;
   for (const mesh of body.meshes) {
     const index = mesh.skeleton.bones.indexOf(hand);
     const si = mesh.geometry.attributes.skinIndex, sw = mesh.geometry.attributes.skinWeight;
     if (index < 0 || !si || !sw) continue;
+    // FP分区只改变三角索引；相同骨架/属性中的手部顶点不能重复扫描三次。
+    if (sampled.has(si)) continue;
+    sampled.add(si);
     mesh.skeleton.update();
     for (let i = 0; i < si.count; i++) {
       let weight = 0;
@@ -263,7 +331,9 @@ export function splitForFirstPerson(body) {
       ng.morphAttributes = g.morphAttributes;
       ng.morphTargetsRelative = g.morphTargetsRelative;
       ng.setIndex(lists[k]);
-      const nm = new THREE.SkinnedMesh(ng, m.material);
+      // 分区材质独立：本地躯干的裁切平面不能传给镜中的头或手臂。
+      const material = Array.isArray(m.material) ? m.material.map(mat => mat.clone()) : m.material.clone();
+      const nm = new THREE.SkinnedMesh(ng, material);
       // Fighter在拆分后创建接地检测；不能把衣料排除标记留在已移除的原网格上。
       for (const key of splitReadonlyMetadata) {
         const value = m.userData[key];
@@ -365,16 +435,36 @@ class GroundFeet {
   }
 }
 
-const HYBRID_STANCES = new Set(['pistol', 'cannon', 'umbrella_gun', 'staff', 'holy', 'broom', 'tome', 'fist', 'greatsword', 'spear']);
+const HYBRID_STANCES = new Set(['sword', 'dagger', 'umbrella_sword', 'umbrella_spear', 'umbrella_shield', 'knight', 'pistol', 'cannon', 'umbrella_gun', 'staff', 'holy', 'broom', 'tome', 'fist', 'greatsword', 'spear']);
+const DIRECTED_ATTACKS = new Set(['slash1', 'slash2', 'slash3', 'upslash', 'thrust', 'dashslash', 'jumpslam', 'punchR', 'punchL', 'uppercut', 'palm', 'grab', 'spearThrust', 'spearUp', 'spearSlam', 'cast', 'castUp', 'throw', 'heal']);
+function spineChain(body) {
+  body.model.updateMatrixWorld(true);
+  return ['Spine','Spine01','Spine02'].map(name=>body.bones[name]).filter(Boolean)
+    .sort((a,b)=>a.getWorldPosition(new THREE.Vector3()).y-b.getWorldPosition(new THREE.Vector3()).y);
+}
 
-// 闲置/移动及枪械瞄准时使用职业握持姿势，动捕仍负责下盘；近战/受击回到完整动捕。
+// 职业姿势直接校正真实世界骨架的上身与握持，移动、旋身由动捕负责。
+// 方向型攻击也使用已编排的动作：长源片段压缩时含侧跳/多次挥动，无法准确朝准星发力。
+// 旋身、踢腿、专用样板动作及受击仍保留完整动捕。
 // 程序化 rig 在创建时保持绑定姿态，左右手的坐标轴差异只测量一次。
 class StanceArms {
   constructor(body, rig) {
-    this.rig = rig; this.weight = 0;
-    this.spine = body.bones.Spine02 || body.bones.Spine01;
+    this.rig = rig; this.weight = 0; this.lowerWeight = 0;
+    const torso=spineChain(body);this.spine=torso.at(-1);
     this.chestRest = rig.bones.chest.getWorldQuaternion(new THREE.Quaternion());
     this.spineRest = this.spine.getWorldQuaternion(new THREE.Quaternion());
+    this.body = body;
+    this.hipRestInModel = body.bones.Hips.getWorldPosition(new THREE.Vector3()).applyMatrix4(new THREE.Matrix4().copy(body.model.matrixWorld).invert());
+    this.lowerChain = [['Hips', 'hips'], ...torso.slice(0,-1).map(bone=>[bone.name,'spine']), ['LeftUpLeg', 'thL'], ['LeftLeg', 'knL'], ['LeftFoot', 'ftL'], ['RightUpLeg', 'thR'], ['RightLeg', 'knR'], ['RightFoot', 'ftR']]
+      .filter(([name, source]) => body.bones[name] && rig.bones[source])
+      .map(([name, source]) => ({ bone: body.bones[name], source: rig.bones[source],
+        sourceRest: rig.bones[source].getWorldQuaternion(new THREE.Quaternion()),
+        targetRest: body.bones[name].getWorldQuaternion(new THREE.Quaternion()) }));
+    this.headChain = [['neck', 'neck'], ['Neck', 'neck'], ['Head', 'head']]
+      .filter(([name]) => body.bones[name])
+      .map(([name, source]) => ({ bone: body.bones[name], source: rig.bones[source],
+        sourceRest: rig.bones[source].getWorldQuaternion(new THREE.Quaternion()),
+        targetRest: body.bones[name].getWorldQuaternion(new THREE.Quaternion()) }));
     this.chains = [];
     for (const [side, suffix] of [['Right', 'R'], ['Left', 'L']]) {
       const P = rig.bones;
@@ -389,6 +479,7 @@ class StanceArms {
     }
     this.v1 = new THREE.Vector3(); this.v2 = new THREE.Vector3(); this.v3 = new THREE.Vector3(); this.v4 = new THREE.Vector3();
     this.q1 = new THREE.Quaternion(); this.q2 = new THREE.Quaternion(); this.q3 = new THREE.Quaternion();
+    this.aimIK = new TwoBoneIK(); this.aimGoal = new THREE.Vector3(); this.aimForward = new THREE.Vector3();
   }
   swing(bone, child, from, to, weight) {
     const { v1, v2, v3, v4, q1, q2, q3 } = this;
@@ -402,17 +493,42 @@ class StanceArms {
   }
   update(dt, st) {
     const shooting = /^(pistol|cannon|umbrella_gun)$/.test(st.stance || '') && /^(shoot|shoot2|shootUp|cannon)$/.test(st.action?.clip || '');
-    const active = HYBRID_STANCES.has(st.stance) && (shooting || (st.onGround && !st.action)) && !st.react && !st.dash && !st.guard;
+    const directed = DIRECTED_ATTACKS.has(st.action?.clip);
+    const thrust = /^(thrust|spearThrust)$/.test(st.action?.clip || '');
+    const fistAim = /^(punchR|punchL|uppercut|palm|grab)$/.test(st.action?.clip || '');
+    const aimWeight = !(thrust || fistAim) ? 0 : st.action.stage === 'wind' ? clamp(st.action.t, 0, 1) : st.action.stage === 'active' ? 1 : 1 - clamp(st.action.t, 0, 1);
+    const flying = st.flight && !st.action;
+    const active = HYBRID_STANCES.has(st.stance) && (shooting || directed || flying || (st.onGround && !st.action)) && !st.react && !st.dash && !st.guard;
+    const lowerActive = active && (directed && st.onGround || flying);
+    this.lowerWeight += ((lowerActive ? 1 : 0) - this.lowerWeight) * (1 - Math.exp(-20 * Math.max(0, dt)));
+    if (this.lowerWeight < 1e-5 || st.react || st.dash) this.lowerWeight = 0;
     this.weight += ((active ? 1 : 0) - this.weight) * (1 - Math.exp(-20 * Math.max(0, dt)));
     if (this.weight < 1e-5) this.weight = 0;
     if (this.weight > 1 - 1e-5) this.weight = 1;
     const w = this.weight, { v1, v2, v3, v4, q1, q2, q3 } = this;
+    if (this.lowerWeight) {
+      // 源长片段某些非旋身攻击含180°反向换脚；只把胸部强行转回前方
+      // 会拧坏腰袍。定向攻击同时使用已编排弓步的髋/腿，保留真实骨长。
+      this.rig.root.updateMatrixWorld(true);
+      for (const { bone, source, sourceRest, targetRest } of this.lowerChain) {
+        source.getWorldQuaternion(q1).multiply(q2.copy(sourceRest).invert()).multiply(targetRest);
+        bone.parent.getWorldQuaternion(q2).invert();bone.quaternion.slerp(q2.multiply(q1), this.lowerWeight);bone.updateMatrixWorld(true);
+      }
+      v1.copy(this.hipRestInModel);v1.y += this.rig.body.position.y;v1.z += this.rig.body.position.z;
+      this.body.model.localToWorld(v1);this.body.bones.Hips.parent.worldToLocal(v1);
+      this.body.bones.Hips.position.lerp(v1, this.lowerWeight);this.body.bones.Hips.updateMatrixWorld(true);
+    }
     if (w) {
       this.rig.root.updateMatrixWorld(true);
       this.rig.bones.chest.getWorldQuaternion(q1).multiply(q2.copy(this.chestRest).invert()).multiply(this.spineRest);
       this.spine.parent.getWorldQuaternion(q2).invert();
       this.spine.quaternion.slerp(q2.multiply(q1), w);
       this.spine.updateMatrixWorld(true);
+      // 上身已朝准星，头颈也使用同一姿势，不能继续跟随源片段的侧身转头。
+      for (const { bone, source, sourceRest, targetRest } of this.headChain) {
+        source.getWorldQuaternion(q1).multiply(q2.copy(sourceRest).invert()).multiply(targetRest);
+        bone.parent.getWorldQuaternion(q2).invert();bone.quaternion.slerp(q2.multiply(q1), w);bone.updateMatrixWorld(true);
+      }
     }
     for (const chain of this.chains) {
       const { arm, fore, hand, sh, el, ha, grip, handFrame, mount, mountRest } = chain;
@@ -422,11 +538,40 @@ class StanceArms {
         hand.parent.getWorldQuaternion(q2).invert();
         hand.quaternion.slerp(q2.multiply(q1), w);
         hand.updateMatrixWorld(true);
+        const aimSide = st.action?.clip === 'punchL' || st.action?.clip === 'palm' ? this.rig.bones.shL : this.rig.bones.shR;
+        if ((thrust || fistAim) && (chain.sh === aimSide || st.action?.clip === 'grab') && aimWeight > 0) {
+          // 直刺的握点进入身体正前方的真实可达位置；保留骨长，不能只转剑尖留下侧偏原点。
+          arm.getWorldPosition(v1);fore.getWorldPosition(v2);hand.getWorldPosition(v3);
+          const reach = v1.distanceTo(v2) + v2.distanceTo(v3);
+          this.rig.root.getWorldPosition(v4);this.rig.root.getWorldQuaternion(q2);
+          this.aimForward.set(0, 0, 1).applyQuaternion(q2);
+          const distance = v2.copy(v1).sub(v4).dot(this.aimForward) + reach * (fistAim ? .94 : .82);
+          this.aimGoal.copy(v4).addScaledVector(this.aimForward, distance);this.aimGoal.y = v3.y;
+          if (fistAim) {
+            const rise = st.action.clip === 'uppercut' ? st.action.stage === 'wind' ? .10 : st.action.stage === 'active' ? .10 + .50 * clamp(st.action.t, 0, 1) : .60 : .27;
+            v1.copy(this.hipRestInModel);v1.y += rise;this.body.model.localToWorld(v1);this.aimGoal.y = v1.y;
+            if (st.action.clip === 'grab') {this.rig.root.getWorldQuaternion(q2);v1.set(chain.sh === this.rig.bones.shR ? -.08 : .08,0,0).applyQuaternion(q2);this.aimGoal.add(v1)}
+          }
+          this.aimGoal.lerp(v3, 1 - aimWeight);
+          hand.getWorldQuaternion(q1);this.aimIK.solve(arm,fore,hand,this.aimGoal);
+          hand.parent.getWorldQuaternion(q2).invert();hand.quaternion.copy(q2.multiply(q1));hand.updateMatrixWorld(true);
+        }
+      }
+      if (flying && w > 0) {
+        this.aimGoal.set(chain.sh === this.rig.bones.shR ? -.035 : .035, .96, chain.sh === this.rig.bones.shR ? .28 : .49);
+        this.rig.root.localToWorld(this.aimGoal);
+        hand.getWorldQuaternion(q1); this.aimIK.solve(arm, fore, hand, this.aimGoal);
+        hand.parent.getWorldQuaternion(q2).invert(); hand.quaternion.copy(q2.multiply(q1)); hand.updateMatrixWorld(true);
       }
       if (!mount) continue;
       mount.quaternion.copy(mountRest);
       if (w) {
         grip.getWorldQuaternion(q1);
+        if (thrust && aimWeight > 0) {
+          v1.set(0, 1, 0).applyQuaternion(q1);
+          this.rig.root.getWorldQuaternion(q2);v2.set(0, Math.sin(st.pitch || 0), Math.cos(st.pitch || 0)).applyQuaternion(q2);
+          q2.setFromUnitVectors(v1, v2);q3.copy(q1);q1.premultiply(q2);q3.slerp(q1, aimWeight);q1.copy(q3);
+        }
         if (st.stance === 'pistol') {
           // 两把枪共用角色的前向，保留俯仰，避免左右枪管在水平方向发散。
           v1.set(0, 1, 0).applyQuaternion(q1);
@@ -440,6 +585,11 @@ class StanceArms {
         mount.quaternion.slerp(q2.multiply(q1), w);
       }
       mount.updateMatrixWorld(true);
+      if (flying && w > 0) {
+        // 两只手落在身前帚杆上，轴向与人物朝向一致，避免竖着法杖漂浮。
+        this.rig.root.getWorldQuaternion(q1); q2.setFromAxisAngle(v1.set(1, 0, 0), Math.PI / 2); q1.multiply(q2);
+        hand.getWorldQuaternion(q2).invert(); mount.quaternion.copy(q2.multiply(q1)); mount.updateMatrixWorld(true);
+      }
     }
   }
 }
@@ -452,10 +602,14 @@ export class MocapAnimator {
     this.mixer = new BlendMixer(body.model, dt => this.updateBlend(dt));
     this.actions = new Map();
     this.cur = null; this.curName = '';
-    this.spine = body.bones.Spine02 || body.bones.Spine01;
+    this.spine = spineChain(body).at(-1);
     this.hips = body.bones.Hips;
     this.hipRest = this.hips ? this.hips.position.clone() : null;
     this.pitchQ = new THREE.Quaternion();
+    // Mixer 会缓存未变化的轨道，不会重新写入暂停姿势；修正前恢复原动画值，
+    // 否则俯仰和职业握持会在上一帧修正结果上再次叠加。
+    const corrected = new Set([this.spine, ...['Hips', 'Spine', 'Spine01', 'Spine02', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'RightUpLeg', 'RightLeg', 'RightFoot', 'neck', 'Neck', 'Head', 'RightArm', 'RightForeArm', 'RightHand', 'LeftArm', 'LeftForeArm', 'LeftHand'].map(n => body.bones[n])]);
+    this.baseRotations = [...corrected].filter(Boolean).map(bone => ({ bone, q: bone.quaternion.clone() }));
     this.lastAttackKey = null;
     this.blend = null;
     this.stanceArms = proceduralRig && this.spine && ['RightArm', 'RightForeArm', 'RightHand', 'LeftArm', 'LeftForeArm', 'LeftHand'].every(n => body.bones[n])
@@ -512,6 +666,9 @@ export class MocapAnimator {
   }
 
   update(dt, st) {
+    // 冰冻保持最后一帧的完整姿态，也不重新叠加俯仰/混合握持修正。
+    if (st.frozen) return;
+    for (const { bone, q } of this.baseRotations) bone.quaternion.copy(q);
     const r = st.react, a = st.action;
     let clip = null, t01 = null, fade = 0.15, loop = true, speed = 1;
     if (r) {
@@ -533,10 +690,7 @@ export class MocapAnimator {
       if (clip) {
         // 时间扭曲：蓄力阶段走到命中帧前，生效阶段越过命中帧，收招走完剩余
         const imp = autoImpact.get(clip) ?? IMPACT[clip] ?? 0.42;
-        if (AIM_POSE[clip] !== undefined) t01 = AIM_POSE[clip] + (a.stage === 'active' ? 0.01 * Math.sin(a.t * 20) : 0);
-        else if (a.stage === 'wind') t01 = imp * 0.85 * clamp(a.t, 0, 1);
-        else if (a.stage === 'active') t01 = imp * 0.85 + imp * 0.25 * clamp(a.t, 0, 1);
-        else t01 = imp * 1.1 + (1 - imp * 1.1) * clamp(a.t, 0, 1) * 0.95;
+        t01 = attackClipPhase(clip, a, imp);
         fade = 0.08;
         // 同一片段连续两次（如连段）时重新开始
         const key = a.key;
@@ -565,6 +719,7 @@ export class MocapAnimator {
     this._restart = false;
     if (manual && act) act.time = t01 * act.getClip().duration;
     this.mixer.update(dt); // 手动控制时间的片段已暂停，只推进交叉淡入
+    for (const entry of this.baseRotations) entry.q.copy(entry.bone.quaternion);
     // 髋骨高度：静止高度 + 片段中的相对起伏（按两套骨架站立髋高之比缩放）
     if (this.hips && this.hipRest && this.cur) {
       // 与旋转使用同一套交叉淡入权重，避免切换动作时身体瞬间上下跳。
@@ -577,13 +732,13 @@ export class MocapAnimator {
       const k = this.hipRest.y / (refHipY || 1);
       this.hips.position.set(this.hipRest.x, this.hipRest.y + offset * k, this.hipRest.z);
     }
-    if (this.groundFeet) this.groundFeet.update(dt, st);
     // 视线俯仰带动上身
     if (this.spine && st.pitch && !r) {
       this.pitchQ.setFromAxisAngle(pitchAxis, -st.pitch * 0.6);
       this.spine.quaternion.multiply(this.pitchQ);
     }
     if (this.stanceArms) this.stanceArms.update(dt, st);
+    if (this.groundFeet) this.groundFeet.update(dt, this.stanceArms?.lowerWeight ? { ...st, action: null } : st);
   }
 }
 

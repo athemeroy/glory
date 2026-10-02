@@ -35,6 +35,7 @@ export class CharViewer {
     this.scene.add(new THREE.HemisphereLight('#dfe8f5', '#3a3028', 1.1));
     const key = new THREE.DirectionalLight('#fff1dc', 2.4); key.position.set(2.5, 4, 3); key.castShadow = true; key.shadow.mapSize.set(this.coarse ? 512 : 1024, this.coarse ? 512 : 1024);
     this.scene.add(key);
+    const fill = new THREE.DirectionalLight('#d9e5e9', 1.4); fill.position.set(-2, 2, 4); this.scene.add(fill);
     const rim = new THREE.DirectionalLight('#7fd6cd', 1.6); rim.position.set(-3, 2.5, -3); this.scene.add(rim);
     const floor = new THREE.Mesh(new THREE.CircleGeometry(1.2, 48), new THREE.MeshStandardMaterial({ color: '#1c232c', roughness: 0.6, metalness: 0.3, transparent: true, opacity: 0.85 }));
     floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; this.scene.add(floor);
@@ -91,12 +92,13 @@ export class CharViewer {
     const cls = CLASSES[clsId];
     if (!cls) return;
     const look = { ...cls.look, ...(store.get('look.' + clsId, {})) };
-    const rs = this.rigged?.get(clsId), glb = this.models?.get(clsId);
+    const modelKey = cls.modelKey || clsId;
+    const rs = this.rigged?.get(modelKey), glb = this.models?.get(modelKey);
     const lookKey = JSON.stringify(look), clips = hasClips();
     // 预加载会在预览打开后填充 Map；同职业也必须在资源到达或换装后更新。
     if (this.clsId === clsId && this._sourceRig === rs && this._sourceModel === glb && this._lookKey === lookKey && this._clipsReady === clips) return;
     this.clearCharacter();
-    this.clsId = clsId; this._sourceRig = rs; this._sourceModel = glb; this._lookKey = lookKey; this._clipsReady = clips;
+    this.clsId = clsId; this.modelKey = modelKey; this._sourceRig = rs; this._sourceModel = glb; this._lookKey = lookKey; this._clipsReady = clips;
     this.rig = buildCharacter(look);
     this.holder.add(this.rig.root);
     this.mocap = null;
@@ -143,8 +145,8 @@ export class CharViewer {
       this.cam.aspect = w / h; this.cam.updateProjectionMatrix();
     }
     if (!this.rig) return;
-    if (this._sourceRig !== this.rigged?.get(this.clsId) || this._sourceModel !== this.models?.get(this.clsId) || this._clipsReady !== hasClips()) this.show(this.clsId, this.pose);
-    if (this.drag === null && !this.reducedMotion) this.rot += dt * 0.35;
+    if (this._sourceRig !== this.rigged?.get(this.modelKey) || this._sourceModel !== this.models?.get(this.modelKey) || this._clipsReady !== hasClips()) this.show(this.clsId, this.pose);
+    if (this.drag === null && !this.reducedMotion && this.pose !== 'idle') this.rot += dt * 0.22;
     this.holder.rotation.y = this.rot;
     // 招式演示：每隔几秒挑一个技能播放
     this.demoT -= dt;

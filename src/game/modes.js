@@ -1,3 +1,4 @@
+import { trainingGoals } from '../data/training.js';
 // 玩法模式：训练场、个人赛、擂台赛、团队赛、副本
 import * as THREE from 'three';
 import { CLASSES, ACCOUNTS } from '../data/classes.js';
@@ -23,7 +24,7 @@ function spawnsOf(L) {
   return sp;
 }
 
-class BaseMode {
+export class BaseMode {
   constructor(app, opts) {
     this.app = app; this.game = app.game; this.hud = app.hud; this.opts = opts;
     this.t = 0; this.phase = 'intro'; this.phaseT = 0;
@@ -88,19 +89,16 @@ export class TrainingMode extends BaseMode {
     this.freeze(false);
     this.hud.announce('镜廊训练室', 'ally', 2.2);
     this.game.voice('training');
-    this.hud.setHint(`走到镜子前按 <kbd>G</kbd> 换装 · <kbd>Esc</kbd> 菜单（可切换职业、召唤陪练） · <kbd>F5</kbd> 切换视角`);
+    this.hud.setHint(input.touchMode ? '暂停菜单可切换职业、调整招式、添加陪练' : '<kbd>Esc</kbd> 训练菜单 · <kbd>G</kbd> 镜前换装');
     this.mirrorZone = L.markers.mirrorZone;
-    this.goals = [
-      { id: 'chain', text: '普攻三连（连按左键）' },
-      { id: 'launch', text: '把木桩挑上天（天击 / 上挑 / 升龙等）' },
-      { id: 'air', text: '趁木桩浮空时追击命中' },
-      { id: 'combo10', text: '打出 10 连击' },
-      { id: 'ult', text: `释放大招（${'V'}）` },
-      { id: 'mirror', text: '走到镜子前按 G 换装' },
-      { id: 'spar', text: 'Esc 菜单召唤陪练，并击败它' },
-    ];
+    this.goals = trainingGoals(this.player);
+    this._lastDamage = 0; this.sprintSeen = false; this.flightSeen = false;
   }
   goal(id) { const g = this.goals.find((x) => x.id === id); if (g && !g.done) { g.done = true; audio.play('levelup'); this.hud.toast('训练目标完成：' + g.text); } }
+  refreshGoals() {
+    const done = new Set(this.goals.filter(g => g.done).map(g => g.id));
+    this.goals = trainingGoals(this.player).map(g => ({ ...g, done: done.has(g.id) }));
+  }
   spawnDummy(x, z, yaw, i) {
     const g = this.game;
     const cls = { name: '木桩', hp: 99999, mp: 100, speed: 0, weapon: 'none', stance: 'none', chain: null, skills: {}, look: { sex: 'm', skin: '#b08a5a', hair: { style: 'bald', color: '#000' }, top: { style: 'armor', color: '#8a6a44', trim: '#5a4a34', inner: '#6a5236' }, pants: '#6a5236', boots: '#4a3a28', gloves: '#b08a5a', sash: null, shoulder: 'none', accent: '#cf624b' } };
@@ -120,9 +118,15 @@ export class TrainingMode extends BaseMode {
     this.hud.announce(`陪练「${acc.name}」加入`, 'enemy');
   }
   removeSparring() { if (this.sparring) { this.game.removeFighter(this.sparring); this.sparring = null; } }
-  onHit(att, t, res, hit) {
+  onFire(att) { if (att === this.player && !att.onGround) this.goal('airshot'); }
+  onHit(att, t, res, hit, def) {
     if (att === this.player && res !== 'miss') {
-      this.dpsLog.push([this.game.time, hit.dmg || 0]);
+      const basic = def?.charge || att.chain?.includes(def) || Object.values(att.cls.forms || {}).some(form => form.chain?.includes(def));
+      if (basic) this.goal('basic');
+      else if (def?.name && Object.values(att.cls.skills || {}).some(skill => skill.name === def.name)) this.goal('skillhit');
+      if (att.flightActive) this.goal('aircast');
+      if (att.aiming) this.goal('aimshot');
+      if (hit.chaser) this.goal('chaserhit');
       if (att.action && att.action.slot === 'atk' && att.action.chainIdx >= 2) this.goal('chain');
       if (hit.launch && t.state === 'air') this.goal('launch');
       if (t.state === 'air' && t.air.time > 0.2) this.goal('air');
@@ -153,10 +157,24 @@ export class TrainingMode extends BaseMode {
     }
     // 统计
     const now = this.game.time;
+    const total = this.player.stats.dmgDealt || 0;
+    const dealt = total >= this._lastDamage ? total - this._lastDamage : total;
+    this._lastDamage = total;
+    if (dealt > 0) this.dpsLog.push([now, dealt]);
     while (this.dpsLog.length && now - this.dpsLog[0][0] > 5) this.dpsLog.shift();
   }
   frame(dt) {
+    if (this.player.sprinting) this.sprintSeen = true;
+    if (this.sprintSeen && !this.player.wantSprint && this.player.stamina >= this.player.maxStamina - 1) this.goal('stamina');
     const p = this.player;
+    if (p.flightActive) this.flightSeen = true;
+    if (this.flightSeen && p.onGround) this.goal('flight');
+    if (p.chasers?.length) this.goal('chaser');
+    if (p.battleWill?.tier >= 1) this.goal('will');
+    if (p.summonState?.count >= 2) this.goal('summon');
+    if (['focus', 'escort', 'guard'].includes(p.summonState?.mode)) this.goal('command');
+    if (p.summonState?.formation > 0) this.goal('formation');
+    if (p.action?.def.ult && p.action.stage === 'active') this.goal('ult');
     // 镜前提示
     const mz = this.mirrorZone;
     let prompt = '';
@@ -165,10 +183,10 @@ export class TrainingMode extends BaseMode {
       if (input.consume('interact', 200)) { this.goal('mirror'); this.app.openWardrobe(); }
     }
     this.hud.setPrompt(prompt);
-    this.hud.setGoals(this.goals);
+    this.hud.setGoals(this.goals, `${p.cls.name} · 训练`);
     const dmg5 = this.dpsLog.reduce((s, x) => s + x[1], 0);
     const dps = Math.round(dmg5 / 5);
-    this.hud.setTop('<b>镜廊训练室</b>', `<span class="dps">${dps}</span><small>DPS</small>`, `最高连击 <b>${p.stats.maxCombo}</b> · 总伤害 <b>${p.stats.dmgDealt}</b>`);
+    this.hud.setTop('<b>镜廊训练室</b>', `<span class="dps">${dps}</span><small>DPS</small>`, `最高连击 <b>${p.stats.maxCombo}</b> · 总伤害 <b>${Math.round(p.stats.dmgDealt)}</b>`);
   }
 }
 
@@ -442,7 +460,7 @@ export class DungeonMode extends BaseMode {
     this.stage = 'boss';
     for (const m of this.party) if (m.ai) m.ai.goal = null;
     const c = this.L.markers.bossCenter || [0, -40];
-    const f = this.game.spawn({ name: BOSS.name, cls: BOSS, clsId: 'boss', kind: 'boss', team: 2, pos: [c[0], 0, c[1] - 4], yaw: 0, ai: this.opts.diff === 'easy' ? 'normal' : this.opts.diff === 'god' ? 'god' : 'hard', hp: BOSS.hp * (this.party.length > 1 ? 1.8 : 1) * ({ easy: 0.75, normal: 0.85, hard: 1, god: 1.15 }[this.opts.diff] || 1), scale: 1.5, radius: 0.68 });
+    const f = this.game.spawn({ name: BOSS.name, cls: BOSS, clsId: 'boss', kind: 'boss', team: 2, pos: [c[0], 0, c[1] - 4], yaw: 0, ai: this.opts.diff === 'easy' ? 'normal' : this.opts.diff === 'god' ? 'god' : 'hard', hp: BOSS.hp * (this.party.length > 1 ? 1.8 : 1) * ({ easy: 0.75, normal: 0.85, hard: 1, god: 1.15 }[this.opts.diff] || 1), scale: 1.5 });
     f.phase = 1; f.breakMeter = 0; f.breakImmune = 0; f.broken = 0; f.mpRegen = 50;
     f.ai.d = { ...f.ai.d, guardP: 0, dodgeP: 0, techP: 1, react: 400 };
     f.ai.prefRange = 2.6;

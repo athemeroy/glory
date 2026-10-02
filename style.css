@@ -309,7 +309,28 @@ tr.enemy td:first-child { color: var(--red2); font-weight: 700; }
 .toast.show { opacity: 1; }
 .prompt { position: absolute; top: 60%; left: 50%; transform: translateX(-50%); background: rgba(10,14,20,.75); padding: 8px 18px; border: 1px solid var(--teal); font-size: 15px; display: none; }
 .hud-hint { position: absolute; top: 96px; right: 22px; max-width: 380px; text-align: right; font-size: 12px; color: #d6dbe0; text-shadow: 0 1px 3px #000; line-height: 1.8; }
-.blind { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(40,32,20,.55) 0%, rgba(20,16,10,.97) 45%); opacity: 0; transition: opacity .2s; }
+.blind { position: absolute; inset: 0; background: #090909; opacity: 0; pointer-events: none; z-index: 3; transition: opacity .08s; }
+.self-frame, .skill-bar, .form-bar { z-index: 4; }
+.self-frame .bar.stamina { height: 8px; }
+.bar.stamina i { background: linear-gradient(180deg, #c0ba6d, #7d874a); }
+.bar.stamina.low i { background: #cc8154; }
+.bar.stamina span { font-size: 10px; }
+.skill-choices { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px; font-size: 12px; }
+.skill-choice { display: flex; gap: 6px; align-items: center; }
+.skill-choice select { background: #152026; color: #eee7d6; border: 1px solid #596264; padding: 5px 8px; border-radius: 3px; }
+.story-dialogue { position: absolute; z-index: 8; width: min(720px, calc(100% - 32px)); bottom: max(28px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); border: 1px solid #a99269; padding: 22px 26px; background: rgba(15,23,28,.96); box-shadow: 0 12px 48px #0006; pointer-events: auto; }
+.story-speaker { color: #d8c49a; font: 700 19px var(--serif); margin-bottom: 10px; }
+.story-line { font-size: 16px; line-height: 1.8; color: #eee8dd; margin-bottom: 16px; }
+.story-dialogue .btn { float: right; }
+.story-dialogue::after { content: ''; display: block; clear: both; }
+.story-speaking .skill-bar, .story-speaking .form-bar, .story-speaking .touch-stick, .story-speaking .touch-movement, .story-speaking .touch-interact, .story-speaking .touch-look-hint { visibility: hidden; }
+.story-chapter { display: block; width: 100%; text-align: left; border: 1px solid #596264; background: #172329e6; color: #eee7d6; padding: 20px; margin-bottom: 14px; cursor: pointer; }
+.story-chapter.on { border-color: #d8c49a; background: #263536; }
+.story-chapter p { margin: 10px 0; line-height: 1.6; }
+.story-chapter span { color: #b6af98; font-size: 12px; }
+.story-chapter:disabled { opacity: .42; cursor: default; }
+.map-choices { width: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+@media(max-width:700px) { .story-dialogue { padding: 14px 18px; } .story-line { font-size: 14px; } }
 .ft.heal { color: #8dff9a; font-size: 20px; }
 .hurt { position: absolute; inset: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(170,20,10,.55) 100%); opacity: 0; }
 .hurt-dir { position: absolute; left: 50%; top: 50%; width: 220px; height: 220px; opacity: 0; }

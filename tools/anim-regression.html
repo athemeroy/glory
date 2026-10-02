@@ -185,7 +185,14 @@ try {
       const attack = { ...state, action: { clip: 'punchR', stage: 'active', t: 0.5, key: 'attack' } };
       procedural.update(1 / 60, attack); hybrid.update(1 / 60, attack);
     }
-    check(hybrid.stanceArms.weight === 0 && mounts.every((m, i) => m.quaternion.angleTo(hybrid.stanceArms.chains[i].mountRest) < 1e-6), stance + ': 出招后回到动捕与原武器挂点');
+    // Directed punches now use the same real body/IK as the world weapon,
+    // so they keep the hybrid target. Full spinning attacks still use mocap.
+    check(hybrid.stanceArms.weight === 1 && objects[0].quaternion.angleTo(objectRotation) < 1e-6, stance + ': 定向出拳保留真实身体目标与武器内部姿态');
+    for (let i = 0; i < 60; i++) {
+      const spin = { ...state, action: { clip: 'spin', stage: 'active', t: 0.5, key: 'full-mocap-spin' } };
+      procedural.update(1 / 60, spin); hybrid.update(1 / 60, spin);
+    }
+    check(hybrid.stanceArms.weight === 0 && mounts.every((m, i) => m.quaternion.angleTo(hybrid.stanceArms.chains[i].mountRest) < 1e-6), stance + ': 全身回旋使用动捕与原武器挂点');
     rig.root.traverse(o => { if (o.isMesh) { o.geometry.dispose(); for (const material of [].concat(o.material)) material.dispose(); } });
   }
 } catch (e) { window.__errors.push(String(e)); }

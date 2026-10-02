@@ -297,6 +297,9 @@ export class Kit {
     L.shadow.normalBias = o.normalBias ?? 0.035;
     L.name = 'sun';
     this.group.add(L, L.target);
+    // Shadow targets are created lazily by the renderer. Removing the light
+    // does not free them; ownership belongs to this level, just like its meshes.
+    this.disposables.push(L.shadow);
     this.sunLight = L;
     this.sunDir = d;
     return L;

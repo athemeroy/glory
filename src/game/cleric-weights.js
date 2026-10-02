@@ -1,6 +1,7 @@
 // 牧师原绑骨漏掉整条脊柱，并把衣袍、胸条和右袖错误分配给头/异侧肢体。
 // 只重建已审计衣装片；独立真实手、腿脚和头部保持原绑定。
 import * as THREE from 'three';
+import { getRepairPosition } from './repair-position.js';
 import { markSharedResource } from './model.js';
 import { sampleArmWeights } from './sleeve.js';
 
@@ -14,7 +15,7 @@ function prepare(mesh,body) {
   const cells=new Map(),parent=[],welded=new Uint32Array(position.count);
   mesh.skeleton.update();
   for(let i=0;i<position.count;i++) {
-    mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld);point.toArray(points,i*3);
+    getRepairPosition(mesh,i,point).applyMatrix4(mesh.matrixWorld);point.toArray(points,i*3);
     const key=[point.x,point.y,point.z].map(value=>Math.round(value/.00005)).join(',');
     let id=cells.get(key);if(id===undefined){id=parent.length;parent.push(id);cells.set(key,id)}welded[i]=id;
   }

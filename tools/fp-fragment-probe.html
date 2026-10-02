@@ -1,0 +1,54 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Read-only first-person source triangle probe</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">定位第一人称可见原网格三角…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { buildCharacter } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+import { FPView } from '../src/game/fpview.js';
+import { MOBS } from '../src/data/enemies.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const point=new THREE.Vector3(),scale=new THREE.Vector3(),tan=Math.tan(Math.PI/6),aspect=3.2;
+const distance=(p,a,b)=>Math.hypot(p[a*3]-p[b*3],p[a*3+1]-p[b*3+1],p[a*3+2]-p[b*3+2]);
+const components=(si,sw,names,index)=>{const weights={};for(let k=0;k<4;k++){const weight=sw.getComponent(index,k);if(weight>.00001)weights[names[si.getComponent(index,k)]]=(weights[names[si.getComponent(index,k)]]||0)+weight}return weights};
+try{
+  const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/skeleton.glb')).scene;source.updateMatrixWorld(true);
+  let sourceMesh;source.traverse(o=>{if(o.isSkinnedMesh&&!sourceMesh)sourceMesh=o});sourceMesh.skeleton.update();
+  const bind=new Float32Array(sourceMesh.geometry.attributes.position.count*3),sourceScale=sourceMesh.getWorldScale(scale).x;
+  for(let i=0;i<bind.length/3;i++)sourceMesh.getVertexPosition(i,point).applyMatrix4(sourceMesh.matrixWorld).toArray(bind,i*3);
+  // 将硬法线/UV缝按原bind 0.05mm焊接；仅作只读语义定位，不改变几何。
+  const cells=new Map(),parents=[],welded=new Uint32Array(bind.length/3),root=i=>{while(parents[i]!==i){parents[i]=parents[parents[i]];i=parents[i]}return i};
+  for(let i=0;i<welded.length;i++){const key=[0,1,2].map(k=>Math.round(bind[i*3+k]/.00005)).join(',');let id=cells.get(key);if(id===undefined){id=parents.length;parents.push(id);cells.set(key,id)}welded[i]=id}
+  const sourceIndex=sourceMesh.geometry.index;for(let at=0;at<sourceIndex.count;at+=3){const a=root(welded[sourceIndex.getX(at)]),b=root(welded[sourceIndex.getX(at+1)]),c=root(welded[sourceIndex.getX(at+2)]);parents[b]=a;parents[c]=a}
+  const labels=Array.from(welded,i=>root(i)),componentsByRoot=new Map();
+  for(let i=0;i<labels.length;i++){let c=componentsByRoot.get(labels[i]);if(!c){c={vertices:0,min:[Infinity,Infinity,Infinity],max:[-Infinity,-Infinity,-Infinity]};componentsByRoot.set(labels[i],c)}c.vertices++;for(let k=0;k<3;k++){c.min[k]=Math.min(c.min[k],bind[i*3+k]);c.max[k]=Math.max(c.max[k],bind[i*3+k])}}
+  source.userData.gloryClass='skeleton';const C=MOBS.skeleton,rig=buildCharacter(C.look),anim=new Animator(rig),fp=new FPView(C.look,C.weapon,C.weaponOpts,source);anim.breath=0;
+  const state={onGround:true,speed:0,fwd:1,stance:C.stance,pitch:0};
+  for(const pose of new URLSearchParams(location.search).get('poses')?.split(',')||['stance']){
+    const st={...state,speed:pose==='run'?5.6:0,action:pose==='attack'?{clip:C.chain[0].anim,stage:'active',t:.65,key:'probe'}:null};
+    for(let i=0;i<60;i++){anim.update(1/60,st);fp.sync(rig,1/60,0);fp.update(1/60)}fp.root.updateMatrixWorld(true);
+    const meshes=[];fp.root.traverse(o=>{if(o.isSkinnedMesh&&o.geometry.attributes.position===sourceMesh.geometry.attributes.position)meshes.push(o)});
+    const all=[],central=[],mixed=[],headLeaks=[];
+    for(const mesh of meshes){
+      mesh.skeleton.update();const g=mesh.geometry,index=g.index,si=g.attributes.skinIndex,sw=g.attributes.skinWeight,names=mesh.skeleton.bones.map(b=>b.name),posed=new Float32Array(bind.length),seen=new Set(index.array),factor=mesh.getWorldScale(scale).x/sourceScale;
+      for(const i of seen)mesh.getVertexPosition(i,point).applyMatrix4(mesh.matrixWorld).toArray(posed,i*3);
+      for(let at=0;at<index.count;at+=3){
+        const ids=[index.getX(at),index.getX(at+1),index.getX(at+2)],edges=[[ids[0],ids[1]],[ids[1],ids[2]],[ids[2],ids[0]]];let ratio=1,maxEdge=null;
+        for(const[a,b]of edges){const rest=distance(bind,a,b),length=distance(posed,a,b);if(rest>.005&&length/(rest*factor)>ratio){ratio=length/(rest*factor);maxEdge={a,b,rest:rest*factor,posed:length}}}
+        const vertices=ids.map(i=>{const p=Array.from(posed.slice(i*3,i*3+3)),weights=components(si,sw,names,i),sourceWeights=components(sourceMesh.geometry.attributes.skinIndex,sourceMesh.geometry.attributes.skinWeight,names,i),nonArmWeight=Object.entries(weights).reduce((sum,[name,value])=>sum+(/Arm|Hand|Shoulder/.test(name)?0:value),0);return{index:i,component:componentsByRoot.get(labels[i]),bind:Array.from(bind.slice(i*3,i*3+3)),posed:p,ndc:[p[0]/(-p[2]*tan*aspect),p[1]/(-p[2]*tan)],weights,sourceWeights,nonArmWeight}});
+        // 相机位于FP根坐标原点。nearFade完全丢弃深度不足42cm的片元。
+        const visible=vertices.some(v=>v.posed[2]<-.42)&&vertices.every(v=>v.posed[2]<-.02);if(!visible)continue;
+        const center=vertices.reduce((p,v)=>[p[0]+v.ndc[0]/3,p[1]+v.ndc[1]/3],[0,0]);
+        if(Math.abs(center[0])>1||Math.abs(center[1])>1)continue;
+        const metric={mesh:mesh.name,ids,ratio,maxEdge,center,vertices};all.push(metric);if(vertices.every(v=>v.component.vertices===4176))headLeaks.push(metric);
+        if(Math.abs(center[0])<.18&&center[1]>-.8&&center[1]<.25){central.push(metric);if(vertices.some(v=>v.nonArmWeight>.15))mixed.push(metric)}
+      }
+    }
+    for(const list of [all,central,mixed,headLeaks])list.sort((a,b)=>b.ratio-a.ratio);
+    __metrics.push({pose,nativeMeshes:meshes.length,visibleFaces:all.length,centralFaces:central.length,mixedCentralFaces:mixed.length,headLeakFaces:headLeaks.length,headLeaks:headLeaks.slice(0,30),worstAll:all.slice(0,20),worstCentral:central.slice(0,20),mixedCentral:mixed.slice(0,20)});
+    __results.push(pose+': 原网格可见'+all.length+'面，中央'+central.length+'面，其中混躯干权重'+mixed.length+'面；最大源边倍率'+(all[0]?.ratio||1).toFixed(2));
+  }
+  document.querySelector('#result').textContent=__results.join('\n');
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

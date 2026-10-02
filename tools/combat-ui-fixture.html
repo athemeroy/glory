@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><base href="../"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="stylesheet" href="../style.css"><link rel="stylesheet" href="../styles/combat-ui.css">
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+<style>#game{background:linear-gradient(165deg,#71878d,#39484c 55%,#444238)}#menu{display:none}</style></head>
+<body><canvas id="game"></canvas><div id="hud"></div><script type="module">
+import * as THREE from 'three';
+import { HUD } from '../src/ui/hud.js';
+import { TouchControls } from '../src/ui/touch.js';
+import { Fighter } from '../src/game/fighter.js';
+import { CLASSES } from '../src/data/classes.js';
+import { input } from '../src/engine/input.js';
+window.__errors=[];window.addEventListener('error',e=>__errors.push(e.message));
+const canvas=document.querySelector('#game');input.attach(canvas);
+const hud=new HUD(document.querySelector('#hud'));
+const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,100);camera.position.set(0,1.5,5);camera.lookAt(0,1,0);camera.updateMatrixWorld();
+const game={scene:new THREE.Scene(),camera,settings:{crosshair:true},fighters:[],world:{raycast:()=>({fighter:null})},firstPerson:true,toggleView(){this.firstPerson=!this.firstPerson}};
+const app={canvas,hud,game,pause(){input.enabled=false}};
+const touch=new TouchControls(app);input.enabled=true;
+function bind(clsId='unspecialized') {
+  game.player?.dispose();
+  const p=new Fighter(game,{cls:CLASSES[clsId],clsId,name:'君莫笑',team:1});
+  game.player=p;game.fighters=[p];p.pos.set(0,0,0);p.onGround=true;
+  hud.bindPlayer(p);hud.show(true);hud.setTop('<span class="acc ally">君莫笑</span>','02:38','<span class="acc enemy">夜雨声烦</span>','荣耀竞技场 · 自由瞄准');
+  hud.setTeams([p],[]);hud.setGoals([{text:'命中一次普通攻击',done:true},{text:'格挡后接技能',done:false}]);
+  hud.setHint('观察对手起手 · 保持武器距离');
+  hud.update(1/60,game);return p;
+}
+window.__ui={input,hud,touch,game,bind,tick(){hud.update(1/60,game)}};
+bind();window.__ready=true;
+</script></body></html>

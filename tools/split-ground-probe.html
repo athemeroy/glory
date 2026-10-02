@@ -1,0 +1,61 @@
+<!doctype html><html><head><meta charset="utf-8"><title>First-person split ground metadata audit</title><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">拆分前、生产拆分、独立保留只读mask三路接地诊断…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, splitForFirstPerson, loadClipLibrary, MocapAnimator } from '../src/game/mocap.js';
+import { GroundReactionSupport } from '../src/game/ground-contact.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+import { CLASSES } from '../src/data/classes.js';
+import { MOBS, BOSS } from '../src/data/enemies.js';
+window.__results=[];window.__errors=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label);
+const masks=['clothProtectedLimbMask','clothStrength','attachmentStrength','attachmentComponent','firstPersonHeadMask','clericWeightMask','sleeveStrength','sleeveComponent','robeStrength','skirtStrength'];
+const excluded=['clothStrength','attachmentComponent','sleeveComponent','robeStrength','skirtStrength'];
+const params=new URLSearchParams(location.search),point=new THREE.Vector3();
+const same=(a,b)=>a.length===b.length&&a.every((v,i)=>v===b[i]);
+const probeIds=list=>[...new Set(list.map(p=>p.side+':'+p.index))].sort();
+function metadata(body){return new Map(body.meshes.map(mesh=>[mesh.geometry.attributes.position,Object.fromEntries(masks.filter(key=>mesh.userData[key]).map(key=>[key,mesh.userData[key]]))]));}
+function splitWithReadOnlyMetadata(body){const saved=metadata(body),split=splitForFirstPerson(body);for(const mesh of body.meshes)Object.assign(mesh.userData,saved.get(mesh.geometry.attributes.position));return split;}
+function armature(body,C){const rig=buildCharacter(C.look),proc=new Animator(rig);proc.breath=0;return {body,rig,proc,anim:new MocapAnimator(body,rig),support:new GroundReactionSupport(body,null,true)};}
+function excludedAt(data,index){return excluded.filter(key=>data[key]?.[index]>0);}
+function candidates(pair,data){return {sole:pair.anim.groundFeet.probes.map(p=>({index:p.index,mask:excludedAt(data,p.index)})),compact:pair.support.probes.map(p=>({index:p.index,side:p.side,mask:excludedAt(data,p.index)})),full:pair.support.fullProbes.map(p=>({index:p.index,side:p.side,mask:excludedAt(data,p.index)}))};}
+function sample(pair){const floor=pair.support.floor(),full=pair.support.floor(pair.support.fullProbes),worst=pair.support.lowestProbe;return {offset:pair.anim.groundFeet.offset,hipY:pair.body.bones.Hips.getWorldPosition(point).y,compactFloor:floor,fullFloor:full,worst:worst?{index:worst.index,side:worst.side}:null};}
+try{
+  await loadClipLibrary('../assets/anim/anims.glb');const loader=new GLTFLoader();
+  const all=await(await fetch('../assets/models/rigged/manifest.json')).json(),classes=params.get('classes')==='all'?all:params.get('classes')?.split(',')||['skeleton','striker','witch','berserker','frostcaster'];
+  for(const cls of classes){
+    const source=(await loader.loadAsync('../assets/models/rigged/'+cls+'.glb')).scene;source.userData.gloryClass=cls;
+    const unsplit=createMocapBody(source),native=createMocapBody(source),retained=createMocapBody(source),raw=unsplit.meshes[0],originalMetadata=metadata(unsplit),data=originalMetadata.get(raw.geometry.attributes.position)||{};
+    const originalIndices=Array.from(raw.geometry.index.array),sourceWeights=raw.geometry.attributes.skinWeight.array.slice();
+    splitForFirstPerson(native);splitWithReadOnlyMetadata(retained);
+    check(retained.meshes.every(mesh=>masks.every(key=>!data[key]||mesh.userData[key]===data[key])),cls+': 独立拆分方案只转移已存在只读mask数组引用');
+    check(native.meshes.every(mesh=>mesh.skeleton===native.meshes[0].skeleton)&&native.meshes[0].skeleton!==raw.skeleton,cls+': 分区保留实例骨架，跨实例不共享骨架');
+    const union=new Map();for(let at=0;at<originalIndices.length;at+=3){const key=originalIndices.slice(at,at+3).join(',');union.set(key,(union.get(key)||0)+1)}
+    for(const mesh of retained.meshes){const ids=mesh.geometry.index.array;for(let at=0;at<ids.length;at+=3){const key=Array.from(ids.slice(at,at+3)).join(',');union.set(key,(union.get(key)||0)-1)}}
+    check([...union.values()].every(n=>n===0),cls+': 所有原世界三角保留，不因转移mask变动索引');
+    const C=CLASSES[cls]||MOBS[cls]||(cls==='boss'?BOSS:null),pairs=[unsplit,native,retained].map(body=>armature(body,C)),sets=pairs.map(p=>({sole:probeIds(p.anim.groundFeet.probes),compact:probeIds(p.support.probes),full:probeIds(p.support.fullProbes)}));
+    const picks=pairs.map(p=>candidates(p,data)),state={onGround:true,speed:0,fwd:1,stance:C.stance,pitch:0};
+    const nativeLost=masks.filter(key=>data[key]&&native.meshes.some(mesh=>mesh.userData[key]!==data[key]));
+    check(same(sets[0].sole,sets[2].sole)&&same(sets[0].compact,sets[2].compact)&&same(sets[0].full,sets[2].full),cls+': 保留mask后sole/压缩/完整支撑点等于拆分前');
+    const samples=[];let retainedOffsetError=0,retainedHipError=0,nativeOffsetError=0,nativeHipError=0;
+    const step=(pose,frame,st)=>{
+      for(const pair of pairs){pair.proc.update(1/60,st);pair.anim.update(1/60,st)}
+      const values=pairs.map(sample);retainedOffsetError=Math.max(retainedOffsetError,Math.abs(values[2].offset-values[0].offset));retainedHipError=Math.max(retainedHipError,Math.abs(values[2].hipY-values[0].hipY));nativeOffsetError=Math.max(nativeOffsetError,Math.abs(values[1].offset-values[0].offset));nativeHipError=Math.max(nativeHipError,Math.abs(values[1].hipY-values[0].hipY));
+      samples.push({pose,frame,unsplit:values[0],native:values[1],retained:values[2]});
+    };
+    for(let frame=0;frame<60;frame++)step('stance',frame,state);
+    if(!params.has('quick')){
+      for(const [phase,frames,dur]of [['down',39,.65],['getup',27,.45]])for(let frame=0;frame<frames;frame++)step(phase,frame,{...state,react:{type:phase,t:frame/60,dur}});
+      for(let frame=0;frame<60;frame++)step('run',frame,{...state,speed:5.6});
+      for(let frame=0;frame<60;frame++)step('guard',frame,{...state,guard:true});
+    }
+    check(retainedOffsetError<1e-8&&retainedHipError<1e-8,cls+': 相同输入下独立保留方案的脚补偿/髋运动逐帧等于拆分前');
+    check(raw.geometry.attributes.skinWeight.array.every((v,i)=>v===sourceWeights[i]),cls+': 原只读蒙皮缓存不被独立转移方案覆盖');
+    __metrics.push({cls,availableMasks:masks.filter(key=>data[key]),nativeLost,counts:picks.map(p=>({sole:p.sole.length,compact:p.compact.length,full:p.full.length,soleCloth:p.sole.filter(v=>v.mask.length),compactCloth:p.compact.filter(v=>v.mask.length),fullCloth:p.full.filter(v=>v.mask.length)})),nativeExtra:{sole:sets[1].sole.filter(v=>!sets[0].sole.includes(v)),compact:sets[1].compact.filter(v=>!sets[0].compact.includes(v)),full:sets[1].full.filter(v=>!sets[0].full.includes(v))},nativeMissing:{sole:sets[0].sole.filter(v=>!sets[1].sole.includes(v)),compact:sets[0].compact.filter(v=>!sets[1].compact.includes(v)),full:sets[0].full.filter(v=>!sets[1].full.includes(v))},retainedOffsetError,retainedHipError,nativeOffsetError,nativeHipError,samples});
+    for(const pair of pairs){pair.anim.mixer.stopAllAction();disposeRig({root:pair.body.model},{sharedRoots:[source]});disposeRig(pair.rig)}
+  }
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n');
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

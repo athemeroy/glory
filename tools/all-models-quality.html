@@ -1,0 +1,186 @@
+<!doctype html><html><head><meta charset="utf-8"><title>All character quality audit</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+<style>html,body{margin:0;background:#435060;overflow:hidden}#info{position:absolute;top:8px;left:12px;white-space:pre;color:white;font:13px system-ui}</style></head><body><div id="info">Loading</div><script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from '../vendor/GLTFLoader.js';
+import {loadClipLibrary, createMocapBody, MocapAnimator, mountMocapWeapon, weaponTilt, handSocket, splitForFirstPerson, attackClipPhase, analyzeImpacts} from '../src/game/mocap.js';
+import {buildCharacter, disposeRig} from '../src/game/model.js';
+import {Animator} from '../src/game/anim.js';
+import {buildWeapon} from '../src/game/weapons.js';
+import {installGripHands, fitWorldGripHands, buildGripHand} from '../src/game/grip.js';
+import {CLASSES} from '../src/data/classes.js';
+import {MOBS, BOSS} from '../src/data/enemies.js';
+
+window.__errors=[]; window.addEventListener('error',e=>__errors.push(e.message));
+const renderer = new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+renderer.setSize(innerWidth, innerHeight);renderer.setPixelRatio(1); renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color('#4e5e70');
+scene.add(new THREE.HemisphereLight('#e8f2ff','#6a5145',1.8));
+for(const [color,intensity,position] of [['#fff1d7',2.6,[3,5,4]],['#b9d4ff',1.5,[-3,3,-4]]]){const light=new THREE.DirectionalLight(color,intensity);light.position.set(...position);scene.add(light);light.layers.enable(1)}
+scene.children.find(o=>o.isHemisphereLight).layers.enable(1);
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(20,20),new THREE.MeshStandardMaterial({color:'#72757c',roughness:1}));floor.rotation.x=-Math.PI/2;scene.add(floor);
+const loader=new GLTFLoader(), cache=new Map();let current=null;
+await loadClipLibrary('../assets/anim/anims.glb');
+const boneFinite=body=>Object.values(body.bones).every(b=>[...b.position.toArray(),...b.quaternion.toArray(),...b.scale.toArray()].every(Number.isFinite));
+function supportGap(){const c=current, hand=c.hands.find(h=>h.side==='Left');return !hand||!c.weapon.offhandGrip||c.left?null:hand.root.localToWorld(hand.grip.clone()).distanceTo(c.weapon.obj.localToWorld(c.weapon.offhandGrip.clone()))}
+function draw(){
+ const c=current, W=innerWidth, H=innerHeight;c.rig.root.updateMatrixWorld(true);
+ renderer.setScissorTest(true);renderer.autoClear=true;
+ const cameras=[];
+ const front=new THREE.PerspectiveCamera(35,1,.02,30);front.position.set(-.2,1.15,3.9);front.lookAt(0,.97,0);front.layers.enable(1);cameras.push(front);
+ const side=new THREE.PerspectiveCamera(35,1,.02,30);side.position.set(3.8,1.15,.4);side.lookAt(0,.97,0);side.layers.enable(1);cameras.push(side);
+ const hand=new THREE.PerspectiveCamera(37,1,.012,30), palm=c.body.bones.RightHand.getWorldPosition(new THREE.Vector3());hand.position.copy(palm).add(new THREE.Vector3(-.25,.09,.33));hand.lookAt(palm);hand.layers.enable(1);cameras.push(hand);
+ cameras.forEach((cam,i)=>{cam.aspect=W/3/(H/2);cam.updateProjectionMatrix();renderer.setViewport(i*W/3,H/2,W/3,H/2);renderer.setScissor(i*W/3,H/2,W/3,H/2);renderer.render(scene,cam)});
+ const fp=new THREE.PerspectiveCamera(64,W/(H/2),.02,30);fp.position.set(0,c.body.shape?.eyeHeight||1.62,.08);fp.lookAt(0,fp.position.y,4);
+ for(const mesh of c.split.head)mesh.layers.set(1);
+ renderer.setViewport(0,0,W,H/2);renderer.setScissor(0,0,W,H/2);renderer.render(scene,fp);
+}
+function tick(state, dt=1/60){const c=current;c.proc.update(dt,state);c.anim.update(dt,state);if(!state.frozen)fitWorldGripHands(c.body,c.hands,c.weapon,c.left);c.weapon.update?.(dt)}
+window.__load=async cls=>{
+ if(current){current.anim.mixer.stopAllAction();for(const h of current.hands)h.dispose();disposeRig(current.rig,{sharedRoots:[...cache.values()]});current=null}
+ let source=cache.get(cls);if(!source){const directory=new URLSearchParams(location.search).get('optimized')==='1'?'optimized':'rigged';source=(await loader.loadAsync(`../assets/models/${directory}/${cls}.glb`)).scene;source.userData.gloryClass=cls;cache.set(cls,source)}
+ analyzeImpacts(source);
+ const C=CLASSES[cls]||MOBS[cls]||(cls==='boss'?BOSS:null),rig=buildCharacter(C.look||{}),body=createMocapBody(source),split=splitForFirstPerson(body);
+ for(const part of rig.parts)part.visible=false;rig.root.add(body.model);scene.add(rig.root);
+ const weapon=buildWeapon(C.weapon,C.weaponOpts||{});mountMocapWeapon(body,'Right',weapon.obj,weaponTilt(weapon.type));
+ const left=weapon.makeLeft?.();if(left)mountMocapWeapon(body,'Left',left,-weaponTilt(weapon.type));
+ const hands=new URLSearchParams(location.search).get('nativeHands')==='1'?[]:installGripHands(body,{Right:handSocket(body,'Right'),Left:handSocket(body,'Left')},weapon.type);
+ current={cls,C,rig,body,split,weapon,left,hands,proc:new Animator(rig),anim:new MocapAnimator(body,rig)};
+ const state={onGround:true,speed:0,stance:C.stance,pitch:0};for(let i=0;i<60;i++)tick(state);
+ const maps=new Set(),materials=[];body.model.traverse(o=>{if(o.isMesh)for(const m of [].concat(o.material)){if(m.map&&!maps.has(m.map)){maps.add(m.map);materials.push({texture:[m.map.image?.width,m.map.image?.height],anisotropy:m.map.anisotropy,minFilter:m.map.minFilter,normal:!!m.normalMap,roughness:m.roughness})}}});
+ if(!new URLSearchParams(location.search).has('cpuOnly'))draw();return {cls,shape:body.shape,bones:Object.keys(body.bones).length,finite:boneFinite(body),materials,handVertices:hands[0]?.mesh.geometry.attributes.position.count};
+};
+window.__pose=pose=>{
+ const c=current,state={onGround:true,speed:pose==='run'?5.6:0,stance:c.C.stance,pitch:0,guard:pose==='guard',react:pose==='down'?{type:'down',t:.9,dur:1}:null};
+ if(pose==='attack')state.action={clip:(c.C.chain||c.C.forms?.spear?.chain||Object.values(c.C.forms||{})[0]?.chain)?.[0]?.anim||'slash1',stage:'active',t:.6,key:'attack'};
+ for(let i=0;i<60;i++)tick(state);
+ draw();document.querySelector('#info').textContent=`${c.cls} · ${pose} · ${c.anim.curName}\nFull front / side / actual grip closeup. First person uses the SAME body and bones.`;
+ return {cls:c.cls,pose,clip:c.anim.curName,finite:boneFinite(c.body),supportGap:supportGap()};
+};
+window.__guard=()=>{
+ const c=current,state={onGround:true,speed:0,stance:c.C.stance,pitch:.4,guard:true};for(let i=0;i<60;i++)tick(state);
+ c.rig.root.updateMatrixWorld(true);const head=c.body.bones.Head.getWorldPosition(new THREE.Vector3()),q=c.anim.spine.quaternion.clone();let drift=0,angle=0;
+ for(let i=0;i<1800;i++){tick(state);c.rig.root.updateMatrixWorld(true);drift=Math.max(drift,head.distanceTo(c.body.bones.Head.getWorldPosition(new THREE.Vector3())));angle=Math.max(angle,q.angleTo(c.anim.spine.quaternion))}
+ return {cls:c.cls,seconds:30,drift,angle,finite:boneFinite(c.body)};
+};
+window.__animation=()=>{
+ const c=current,actions=[...(c.C.chain||Object.values(c.C.forms||{}).flatMap(f=>f.chain||[])),...Object.values(c.C.skills||{})].filter(a=>a.anim),results=[];
+ for(let ai=0;ai<actions.length;ai++){
+  const a=actions[ai], state={onGround:true,speed:0,stance:c.C.stance,pitch:0};
+  for(let i=0;i<12;i++)tick(state);
+  const duration=a.wind+a.active+a.recover, frames=Math.ceil(duration/1000*60);let finite=true,maxAngle=0,previous=new Map(),worst=null;
+  for(let frame=0;frame<=frames;frame++){
+   const time=frame*1000/60,stage=time<a.wind?'wind':time<a.wind+a.active?'active':'recover',start=stage==='wind'?0:stage==='active'?a.wind:a.wind+a.active,length=stage==='wind'?a.wind:stage==='active'?a.active:a.recover;
+   tick({...state,action:{clip:a.anim,stage,t:Math.min(1,(time-start)/Math.max(1,length)),strikes:a.hits?.length||1,key:'scan-'+ai}});finite=finite&&boneFinite(c.body);
+   for(const [name,bone] of Object.entries(c.body.bones)){const prev=previous.get(name);if(prev){const angle=bone.quaternion.angleTo(prev);if(angle>maxAngle){maxAngle=angle;worst={frame,name,stage,t:state.action?.t,phase:c.anim.cur?.time/c.anim.cur?.getClip().duration}}}previous.set(name,bone.quaternion.clone())}
+  }
+  results.push({anim:a.anim,clip:c.anim.curName,frames,maxAngle,worst,finite});
+ }
+ return {cls:c.cls,actions:results};
+};
+window.__scanClip=name=>{
+ const c=current;c.anim.mixer.stopAllAction();c.anim.curName='';const a=c.anim.play(name,{manual:true,loop:false,fade:0}),points=[];
+ if(!a)throw Error('Missing '+name);
+ let yaw=0,previous=null;
+ for(let i=0;i<=240;i++){
+  a.time=a.getClip().duration*i/240;c.anim.mixer.update(0);c.body.model.updateMatrixWorld(true);
+  const hip=c.body.bones.Hips.getWorldPosition(new THREE.Vector3()),hand=c.body.bones.RightHand.getWorldPosition(new THREE.Vector3()),foot=c.body.bones.RightFoot.getWorldPosition(new THREE.Vector3());
+  const q=c.body.bones.Hips.getWorldQuaternion(new THREE.Quaternion()),forward=new THREE.Vector3(0,1,0).applyQuaternion(q),angle=Math.atan2(forward.x,forward.z);
+  if(previous!==null)yaw+=Math.atan2(Math.sin(angle-previous),Math.cos(angle-previous));previous=angle;
+  points.push({t:i/240,yaw,hand:hand.sub(hip).toArray(),foot:foot.sub(hip).toArray()});
+ }
+ return {name,duration:a.getClip().duration,points};
+};
+window.__rawJump=()=>{
+ const c=current,r=[];
+ for(const name of ['Left_Slash','Charged_Upward_Slash','Thrust_Slash']){
+  c.anim.mixer.stopAllAction();c.anim.curName='';const action=c.anim.play(name,{manual:true,loop:false,fade:0});let previous=null;
+  for(let i=0;i<=12;i++){
+   action.time=action.getClip().duration*i*.34/6;c.anim.mixer.update(0);c.body.model.updateMatrixWorld(true);
+   const now=Object.fromEntries(Object.entries(c.body.bones).map(([n,b])=>[n,{local:b.quaternion.clone(),world:b.getWorldQuaternion(new THREE.Quaternion()),position:b.getWorldPosition(new THREE.Vector3())}]));
+   if(previous){const changes=Object.entries(now).map(([n,p])=>({name:n,local:p.local.angleTo(previous[n].local),world:p.world.angleTo(previous[n].world),move:p.position.distanceTo(previous[n].position)}));r.push({name,i,phase:i*.34/6,changes:changes.sort((a,b)=>b.world-a.world).slice(0,3)})}previous=now;
+  }
+ }
+ return r;
+};
+window.__invariants=()=>{
+ const c=current, checks=[], check=(ok,message)=>{if(!ok)throw Error(message);checks.push(message)};
+ const copy=createMocapBody(cache.get(c.cls));check(copy.shape===c.body.shape,'same template shares measured read-only shape');
+ check(Object.isFrozen(c.body.shape)&&c.body.shape.height>1&&c.body.shape.radius>.1,'profile finite and protected');
+ const a=buildGripHand('Right',new THREE.Color('#334455')), b=buildGripHand('Right',new THREE.Color('#556677'));
+ check(a.mesh.geometry===b.mesh.geometry,'shared high detail hand surface');check(a.joints[0].bone!==b.joints[0].bone&&a.mesh.material[0]!==b.mesh.material[0],'finger poses and materials are independent');
+ const before=b.joints[0].bone.quaternion.clone();a.setGrip(0);check(before.angleTo(b.joints[0].bone.quaternion)<1e-6,'moving one hand does not change other hand');
+ let disposed=false;a.mesh.geometry.addEventListener('dispose',()=>disposed=true);a.dispose();check(!disposed,'disposing one hand preserves other shared surface');b.dispose();
+ const base={onGround:true,speed:0,stance:c.C.stance,pitch:.25,guard:true};for(let i=0;i<30;i++)tick(base);
+ const pose=Object.values(c.body.bones).map(b=>[b.position.clone(),b.quaternion.clone()]);for(let i=0;i<120;i++)tick({...base,frozen:true});
+ check(Object.values(c.body.bones).every((b,i)=>b.position.distanceTo(pose[i][0])<1e-8&&b.quaternion.toArray().every((value,k)=>Math.abs(value-pose[i][1].toArray()[k])<1e-8)),'frozen holds entire skeleton and avoids additive pitch');
+ const action={clip:'spin',stage:'active',strikes:3};check(Math.abs(attackClipPhase('Axe_Spin_Attack',{...action,t:.5})-.5)<1e-6,'three-spin middle reaches half of second complete turn');
+ check(attackClipPhase('Axe_Spin_Attack',{...action,t:1})>.98,'spin recovery starts after complete final turn');
+ return {cls:c.cls,checks};
+};
+window.__skinAudit=()=>{
+ const c=current,restBody=createMocapBody(cache.get(c.cls)),reference=new Map(),v=new THREE.Vector3(),w=v.clone();
+ restBody.model.updateMatrixWorld(true);
+ for(const mesh of restBody.meshes){mesh.skeleton.update();const attribute=mesh.geometry.attributes.position,positions=new Float32Array(attribute.count*3);for(let i=0;i<attribute.count;i++)mesh.getVertexPosition(i,v).applyMatrix4(mesh.matrixWorld).toArray(positions,i*3);reference.set(attribute,positions)}
+ const results=[];
+ for(const pose of ['stance','attack','run','guard','down','spin','spinkick']){
+  const state={onGround:true,speed:pose==='run'?5.6:0,stance:c.C.stance,pitch:0,guard:pose==='guard',react:pose==='down'?{type:'down',t:.9,dur:1}:null};
+  if(['attack','spin','spinkick'].includes(pose))state.action={clip:pose==='attack'?(c.C.chain?.[0]?.anim||'slash1'):pose,stage:'active',t:pose==='spin'?.62:.60,key:'skin-'+pose};
+  for(let i=0;i<45;i++)tick(state);c.body.model.updateMatrixWorld(true);
+  const buffers=new Map();let faces=0,nonfinite=0,maxDelta=0,maxEdge=0,over10cm=0,worst=null;
+  for(const mesh of c.body.meshes){const attribute=mesh.geometry.attributes.position,rest=reference.get(attribute);if(!rest)continue;let positions=buffers.get(attribute);
+   if(!positions){mesh.skeleton.update();positions=new Float32Array(attribute.count*3);for(let i=0;i<attribute.count;i++)mesh.getVertexPosition(i,v).applyMatrix4(mesh.matrixWorld).toArray(positions,i*3);buffers.set(attribute,positions)}
+   const idx=mesh.geometry.index;for(let i=0;i<idx.count;i+=3){faces++;for(let j=0;j<3;j++){
+    const a=idx.getX(i+j),b=idx.getX(i+(j+1)%3),original=v.fromArray(rest,a*3).distanceTo(w.fromArray(rest,b*3)),edge=v.fromArray(positions,a*3).distanceTo(w.fromArray(positions,b*3));
+    if(!Number.isFinite(edge))nonfinite++;maxEdge=Math.max(maxEdge,edge);
+    const delta=edge-original;if(delta>.10)over10cm++;if(delta>maxDelta){maxDelta=delta;worst={a,b,original,edge}}
+   }}
+  }
+  results.push({pose,clip:c.anim.curName,faces,nonfinite,maxDelta,maxEdge,over10cm,worst});
+ }
+ disposeRig({root:restBody.model},{sharedRoots:[...cache.values()]});return {cls:c.cls,poses:results};
+};
+window.__repairAudit=()=>{
+ const c=current,seen=new Set(),result={};
+ for(const mesh of c.body.meshes){const position=mesh.geometry.attributes.position;if(seen.has(position))continue;seen.add(position);
+  for(const [key,value] of Object.entries(mesh.userData))if(ArrayBuffer.isView(value)&&value.length===position.count){let nonzero=0,total=0;for(const item of value){if(item>.001)nonzero++;total+=item}result[key]={nonzero,total}}
+ }
+ return {cls:c.cls,repairs:result};
+};
+window.__beauty=()=>{
+ const c=current;const state={onGround:true,speed:0,stance:c.C.stance,pitch:0};for(let i=0;i<60;i++)tick(state);c.body.model.updateMatrixWorld(true);
+ const center=c.body.bones.Head.getWorldPosition(new THREE.Vector3());center.y+=.08;
+ const camera=new THREE.PerspectiveCamera(34,innerWidth/innerHeight,.01,20);camera.position.copy(center).add(new THREE.Vector3(-.25,.04,.69));camera.lookAt(center);camera.layers.enable(1);
+ const props=[c.weapon.obj,c.left].filter(Boolean),visible=props.map(obj=>obj.visible);for(const obj of props)obj.visible=false;
+ renderer.setScissorTest(false);renderer.setViewport(0,0,innerWidth,innerHeight);renderer.render(scene,camera);props.forEach((obj,i)=>obj.visible=visible[i]);document.querySelector('#info').textContent=c.cls+' · face / collar / source material';
+};
+window.__faceDiagnostic=mode=>{
+ const c=current;for(const mesh of c.body.meshes)for(const material of [].concat(mesh.material)){
+  if(!material.userData.qaOriginal)material.userData.qaOriginal={map:material.map,color:material.color.clone(),metalness:material.metalness,roughness:material.roughness,side:material.side};
+  const source=material.userData.qaOriginal;material.map=mode==='texture'?source.map:null;material.color.copy(mode==='texture'?source.color:new THREE.Color('#d7ae8b'));material.metalness=mode==='texture'?source.metalness:0;material.roughness=mode==='texture'?source.roughness:1;material.side=mode==='double'?THREE.DoubleSide:source.side;material.needsUpdate=true;
+  material.emissive.set(mode==='albedo'?'white':'black');material.emissiveMap=mode==='albedo'?source.map:null;if(mode==='albedo')material.color.set('black');
+ }
+ __beauty();
+};
+window.__bindInfo=()=>{const body=createMocapBody(cache.get(current.cls));return {cls:current.cls,meshWorld:body.meshes[0].matrixWorld.toArray(),bounds:body.shape?.measured?.fullBounds,bones:Object.fromEntries(Object.entries(body.bones).map(([n,b])=>[n,b.getWorldPosition(new THREE.Vector3()).toArray()]))};};
+window.__weightInfo=ids=>{
+ const c=current,mesh=c.body.meshes[0],source=mesh.geometry.attributes,si=source.skinIndex,sw=source.skinWeight,original=source._glory_repair_position||source.position,names=mesh.skeleton.bones.map(b=>b.name);
+ return {cls:c.cls,bones:Object.fromEntries(Object.entries(c.body.bones).map(([n,b])=>[n,b.getWorldPosition(new THREE.Vector3()).toArray()])),vertices:ids.map(i=>({id:i,source:[original.getX(i),original.getY(i),original.getZ(i)],weights:[0,1,2,3].map(k=>[names[si.getComponent(i,k)],sw.getComponent(i,k)]),masks:Object.fromEntries(Object.entries(mesh.userData).filter(([key,value])=>ArrayBuffer.isView(value)&&value.length===source.position.count).map(([key,value])=>[key,value[i]]))}))};
+};
+window.__worldContinuity=()=>{
+ const c=current,actions=[...(c.C.chain||Object.values(c.C.forms||{}).flatMap(f=>f.chain||[])),...Object.values(c.C.skills||{})].filter(a=>a.anim),results=[];
+ const names=['Hips','Head','RightArm','RightForeArm','RightHand','LeftArm','LeftForeArm','LeftHand'];
+ for(let i=0;i<actions.length;i++){
+  const action=actions[i],state={onGround:true,speed:0,stance:c.C.stance,pitch:0};for(let j=0;j<45;j++)tick(state);let previous=null,events=[];
+  for(const stage of ['wind','active','recover'])for(let f=0;f<=36;f++){
+   tick({...state,action:{clip:action.anim,stage,t:f/36,key:'wc-'+i}},1/120);c.body.model.updateMatrixWorld(true);
+   const pose=Object.fromEntries(names.filter(n=>c.body.bones[n]).map(n=>[n,{p:c.body.bones[n].getWorldPosition(new THREE.Vector3()),q:c.body.bones[n].getWorldQuaternion(new THREE.Quaternion()),local:c.body.bones[n].quaternion.clone()}]));
+   if(previous)for(const [n,b]of Object.entries(pose)){const prior=previous[n];events.push({bone:n,stage,frame:f,move:b.p.distanceTo(prior.p),world:b.q.angleTo(prior.q),local:b.local.angleTo(prior.local)})}previous=pose;
+  }
+  results.push({anim:action.anim,maxMove:Math.max(...events.map(e=>e.move)),maxWorld:Math.max(...events.map(e=>e.world)),maxLocal:Math.max(...events.map(e=>e.local)),largestMove:events.sort((a,b)=>b.move-a.move).slice(0,5),largestWorld:events.sort((a,b)=>b.world-a.world).slice(0,5)});
+ }
+ return {cls:c.cls,actions:results};
+};
+window.__ready=true;
+</script></body></html>

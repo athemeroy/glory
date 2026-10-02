@@ -1,0 +1,86 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>荣耀：全职业特效检查</title>
+<style>html,body{margin:0;background:#182027;color:#d8e0e4;font:14px system-ui}canvas{display:block;width:100vw;height:100vh}#label{position:fixed;left:24px;top:20px;background:#182027cc;padding:12px 16px;line-height:1.7}button,select{background:#26343d;color:#e3e6df;border:1px solid #4c626e;border-radius:4px;padding:7px;margin-right:8px}#meta{color:#9fb1bd;font-size:12px}</style>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script>
+<div id="label"><strong id="title">全职业特效检查</strong><br><select id="class"></select><select id="skill"></select><button id="play">重放</button><div id="meta">视觉检查工具；方块代表角色体积。</div></div>
+<canvas id="canvas"></canvas>
+<script type="module">
+import * as THREE from 'three';
+import { VFX } from '../src/game/vfx.js';
+import { CLASSES, CLASS_ORDER, SKILLS } from '../src/data/classes.js';
+import { MOBS, BOSS } from '../src/data/enemies.js';
+import { visualFor } from '../src/data/skill-visuals.js';
+const renderer=new THREE.WebGLRenderer({canvas:document.querySelector('canvas'),antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));renderer.setSize(innerWidth,innerHeight);
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+const scene=new THREE.Scene();scene.background=new THREE.Color('#27323a');
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,.05,100);
+camera.position.set(6,4,7);camera.lookAt(0,.9,1.5);
+const light=new THREE.HemisphereLight('#e1e8df','#535342',2.2);scene.add(light);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(60,60),new THREE.MeshStandardMaterial({color:'#414b48',roughness:1}));ground.rotation.x=-Math.PI/2;ground.position.y=-.01;scene.add(ground);
+const grid=new THREE.GridHelper(30,30,'#617367','#505c55');grid.position.y=.005;scene.add(grid);
+const vfx=new VFX(scene);vfx.setScale(innerHeight*renderer.getPixelRatio());
+const specs={...CLASSES,skeleton:MOBS.skeleton,frostcaster:MOBS.frostcaster,boss:BOSS};
+const names=[...CLASS_ORDER,'skeleton','frostcaster','boss'];
+const extras=[['warlock','hunluanyu'],['warlock','anyingqiu'],['cleric','cuimian'],['cleric','shengjie'],['cleric','jinghua'],['cleric','chengjie'],['cleric','guangchong'],['thug','duzhen'],['thug','duyao']];
+const actors=[];
+function actor(clsId,pos,team=0){
+ const cls=specs[clsId],root=new THREE.Group();root.position.copy(pos);scene.add(root);
+ const mat=new THREE.MeshStandardMaterial({color:team?'#968b7e':'#77939e',roughness:.8});
+ const torso=new THREE.Mesh(new THREE.BoxGeometry(.48,.94,.27),mat);torso.position.y=.9;root.add(torso);
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.14,16,10),mat);head.position.y=1.58;root.add(head);
+ for(const x of [-.14,.14]){const leg=new THREE.Mesh(new THREE.BoxGeometry(.16,.67,.17),mat);leg.position.set(x,.335,0);root.add(leg);}
+ const hand=new THREE.Object3D();hand.position.set(-.29,1.1,.32);root.add(hand);
+ const left=new THREE.Object3D();left.position.set(.29,1.1,.3);root.add(left);
+ const foot=new THREE.Object3D();foot.position.set(-.14,.13,.5);root.add(foot);
+ const leftFoot=new THREE.Object3D();leftFoot.position.set(.14,.4,.7);root.add(leftFoot);
+ const tip=new THREE.Object3D();tip.position.set(0,0,.75);hand.add(tip);
+ const f={id:'qa'+actors.length,clsId,cls,name:cls.name,kind:clsId==='boss'?'boss':'hero',pos:root.position,scale:1,yaw:0,height:1.75,alive:true,effects:[],armor:0,
+ rig:{root,bones:{haR:hand,haL:left,ftR:foot,ftL:leftFoot}},weapon:{tip},forward(out=new THREE.Vector3()){return out.set(Math.sin(this.yaw),0,Math.cos(this.yaw))},aimDir:new THREE.Vector3(0,0,1),isPlayer:true};actors.push(f);return f;
+}
+let player=actor('swordmaster',new THREE.Vector3(0,0,0));
+const target=actor('thug',new THREE.Vector3(0,0,3),1);
+let active=null,time=0,manual=false;
+function show(clsId,slot='s1',at=.1){
+ vfx.clear();for(const f of actors)f.effects=[];
+ player.clsId=clsId;player.cls=specs[clsId];player.name=player.cls.name;player.pos.set(0,0,0);
+ const d=slot.startsWith('lib:')?SKILLS[slot.slice(4)]:slot==='atk'?(player.cls.chain||player.cls.forms?.sword.chain)[0]:player.cls.skills[slot];
+ if(!d)throw Error('Missing '+clsId+':'+slot);
+ player.action={def:d,stage:'wind',t:0,animIdx:0};time=0;active={d,clsId,slot,started:false,hits:new Set(),proj:new Set(),aoe:new Set(),beam:new Set()};
+ vfx.skillEvent(player,'action',{def:d,slot});
+ document.querySelector('#title').textContent=player.cls.name+' · '+(d.name||'普通攻击')+' ['+visualFor(d,player)+']';
+ classSelect.value=clsId;refresh();skillSelect.value=slot;
+ advance(at);return {clsId,slot,name:d.name,profile:visualFor(d,player),stats:vfx.getStats()};
+}
+function advance(seconds){
+ const steps=Math.ceil(seconds*120),dt=seconds/Math.max(1,steps);
+ for(let i=0;i<steps;i++){
+  const d=active?.d;time+=dt;
+  if(d){
+   const t=time*1000-(d.wind||0);
+   player.action.stage=t>=0?'active':'wind';player.action.t=t>=0?t:time*1000;player.action.animIdx=d.altAnims?Math.floor(Math.max(0,t)/130)%d.altAnims.length:0;
+   if(t>=0&&!active.started){active.started=true;vfx.skillEvent(player,'active',{def:d,slot:active.slot});if(d.buff){player.effects.push(d.buff);vfx.skillEvent(player,'buff',{def:d});}if(d.heal){if(d.heal.shield)target.effects.push({...d.heal.shield,type:'shield'});if(d.heal.hot)target.effects.push({...d.heal.hot,type:'hot'});if(d.heal.armor)target.armor=d.heal.armor;vfx.healTarget(target,d.heal,player);}if(d.blink)vfx.blinkTrail(player,player.pos,target.pos.clone().add(new THREE.Vector3(0,0,-1)));if(d.slamOnLand)vfx.skillEvent(player,'slam',{def:d});}
+   for(let j=0;j<(d.hits||[]).length;j++)if(t>=d.hits[j].t&&!active.hits.has(j)){active.hits.add(j);if(j>0)vfx.skillEvent(player,'swing',{def:d,i:j});if(d.hits[j].effect){target.effects=[d.hits[j].effect];vfx.statusTarget(target,d.hits[j].effect);}}
+   for(let j=0;j<(d.proj||[]).length;j++)if(t>=d.proj[j].t&&!active.proj.has(j)){
+    active.proj.add(j);const p=d.proj[j],pos=new THREE.Vector3(-.29,1.1,.4),dir=new THREE.Vector3(0,0,1);
+    vfx.fire(player,p,d,pos,dir);const mesh=vfx.projectileMesh(p.kind,p.color||'#e3bd85',d,p);mesh.position.copy(pos);scene.add(mesh);
+    const pr={mesh,p,def:d,age:0,vel:dir.multiplyScalar(p.speed||20),color:p.color||'#e3bd85'};
+    let exploded=false;vfx.add(mesh,.4,(k,step)=>{pr.age+=step;mesh.position.copy(pos).addScaledVector(pr.vel,k*.3);vfx.projectileStep(pr,step);if(p.explode&&k>.8&&!exploded){exploded=true;vfx.explosionEvent(player,target.pos,p.explode,d);}},null);
+    if(p.effect){target.effects=[p.effect];vfx.statusTarget(target,p.effect);}
+   }
+   for(let j=0;j<(d.aoe||[]).length;j++){const a=d.aoe[j],base=(a.t||0)+(a.delay||0);for(let tick=1;tick<=(a.ticks||1);tick++){const key=j+':'+tick;if(t>=base+(tick-1)*(a.interval||0)&&!active.aoe.has(key)){active.aoe.add(key);vfx.areaEvent(player,a,d,target.pos,tick);}}}
+   if(d.beam){for(let j=0;j<d.beam.ticks;j++)if(t>=j*d.active/d.beam.ticks&&!active.beam.has(j)){active.beam.add(j);vfx.channelBeam(player,d,new THREE.Vector3(-.29,1.1,.4),new THREE.Vector3(0,1,8),d.beam.width,.18);}}
+  }
+  vfx.update(dt);
+ }
+ scene.updateMatrixWorld(true);renderer.render(scene,camera);return vfx.getStats();
+}
+const classSelect=document.querySelector('#class'),skillSelect=document.querySelector('#skill');
+for(const key of names)classSelect.add(new Option(specs[key].name,key));
+function refresh(){skillSelect.innerHTML='';skillSelect.add(new Option('普通攻击','atk'));for(const [slot,d]of Object.entries(specs[classSelect.value].skills))skillSelect.add(new Option(d.name,slot));for(const [cls,key]of extras)if(cls===classSelect.value)skillSelect.add(new Option(SKILLS[key].name+'（备选）','lib:'+key));}
+classSelect.value='swordmaster';refresh();skillSelect.value='s1';classSelect.onchange=()=>{refresh();show(classSelect.value,skillSelect.value,0)};
+skillSelect.onchange=()=>show(classSelect.value,skillSelect.value,0);document.querySelector('#play').onclick=()=>show(classSelect.value,skillSelect.value,0);
+let last=performance.now();function frame(now){requestAnimationFrame(frame);const dt=Math.min(.05,(now-last)/1000);last=now;if(!manual)advance(dt);else renderer.render(scene,camera);}requestAnimationFrame(frame);show('swordmaster','s1',0);
+window.vfxQA={scene,camera,renderer,vfx,player,target,specs,names,extras,show,advance,setManual(value){manual=value},clear(){active=null;vfx.clear();renderer.render(scene,camera)},stress(n=300){for(let i=0;i<n;i++){const clsId=names[i%names.length],cls=specs[clsId],d=cls.skills.s1||cls.chain[0];player.clsId=clsId;player.cls=cls;player.action={def:d};vfx.skillEvent(player,'active',{def:d});}return vfx.getStats()}};
+</script>

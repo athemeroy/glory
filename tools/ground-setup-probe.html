@@ -1,0 +1,106 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Ground setup CPU diagnostic</title><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">同源角色构造纯 CPU 计时，不创建 Renderer…</pre><script type="module">
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, splitForFirstPerson, MocapAnimator } from '../src/game/mocap.js';
+import { disposeRig } from '../src/game/model.js';
+
+window.__results=[];window.__errors=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label);
+const params=new URLSearchParams(location.search);
+const classes=params.get('classes')?.split(',')||['berserker','skeleton','frostcaster','cleric'];
+const rounds=Math.max(1,Math.min(8,Number(params.get('rounds'))||5));
+const clones=Math.max(2,Math.min(16,Number(params.get('clones'))||8));
+const clock=()=>performance.now(),pause=()=>new Promise(resolve=>setTimeout(resolve,0));
+const stats=values=>{const a=[...values].sort((x,y)=>x-y);return {median:a[Math.floor(a.length/2)],p95:a[Math.min(a.length-1,Math.floor(a.length*.95))],min:a[0],max:a.at(-1),mean:a.reduce((sum,x)=>sum+x,0)/a.length};};
+const same=(a,b)=>a.length===b.length&&a.every((v,i)=>v===b[i]);
+const groundIds=ground=>({sole:ground.probes.map(p=>p.index),reaction:ground.reactionSupport.probes.map(p=>p.side+':'+p.index)});
+
+// 只诊断静态候选选择成本。没有缓存位置、bind matrix 或姿态结果。
+function scanIndices(body){
+  const seen=new Set(),out=[];
+  for(const mesh of body.meshes){
+    const {position,skinIndex,skinWeight}=mesh.geometry.attributes;
+    if(!skinIndex||!skinWeight||seen.has(position))continue;seen.add(position);
+    for(const side of ['Left','Right']){
+      const indices=new Set(mesh.skeleton.bones.map((b,i)=>b.name.startsWith(side)&&/Foot|Toe/.test(b.name)?i:-1).filter(i=>i>=0));
+      if(!indices.size)continue;
+      const selected=[];
+      for(let i=0;i<position.count;i++){
+        if(mesh.userData.skirtStrength?.[i]>0)continue;
+        let weight=0;
+        for(let k=0;k<4;k++)if(indices.has(skinIndex.getComponent(i,k)))weight+=skinWeight.getComponent(i,k);
+        if(weight>=.5)selected.push(i);
+      }
+      out.push({mesh,side,indices:selected});
+    }
+  }
+  return out;
+}
+
+function countedGround(body,Ground){
+  const restores=[],counts={skinIndex:0,skinWeight:0,vertices:0},visited=new Map();
+  const wrap=(object,key,fn)=>{const descriptor=Object.getOwnPropertyDescriptor(object,key),original=object[key];object[key]=function(...args){fn(...args);return original.apply(this,args)};restores.push(()=>descriptor?Object.defineProperty(object,key,descriptor):delete object[key]);};
+  try{
+    const indexAttrs=new Set(body.meshes.map(m=>m.geometry.attributes.skinIndex));
+    const weightAttrs=new Set(body.meshes.map(m=>m.geometry.attributes.skinWeight));
+    for(const attribute of indexAttrs)wrap(attribute,'getComponent',()=>counts.skinIndex++);
+    for(const attribute of weightAttrs)wrap(attribute,'getComponent',()=>counts.skinWeight++);
+    for(const mesh of body.meshes){visited.set(mesh,[]);wrap(mesh,'getVertexPosition',index=>{counts.vertices++;visited.get(mesh).push(index)});}
+    return {ground:new Ground(body),counts,visited};
+  }finally{for(const restore of restores.reverse())restore();}
+}
+
+function newBody(source){const a=clock(),body=createMocapBody(source),b=clock();splitForFirstPerson(body);return {body,createMs:b-a,splitMs:clock()-b};}
+function cleanup(body,source,anim){anim?.mixer.stopAllAction();disposeRig({root:body.model},{sharedRoots:[source]});}
+
+try{
+  const loader=new GLTFLoader();
+  for(const cls of classes){
+    const loaded=clock(),source=(await loader.loadAsync('../assets/models/rigged/'+cls+'.glb')).scene;
+    const loadMs=clock()-loaded;source.userData.gloryClass=cls;
+    const rawMeshes=[];source.traverse(o=>{if(o.isSkinnedMesh)rawMeshes.push(o)});
+    const sourceWeights=rawMeshes.map(m=>Array.from({length:m.geometry.attributes.skinWeight.count*4},(_,i)=>m.geometry.attributes.skinWeight.getComponent(i>>2,i%4)));
+    const first=newBody(source),begin=clock(),firstAnim=new MocapAnimator(first.body),coldAnimatorMs=clock()-begin,Ground=firstAnim.groundFeet.constructor;
+    const cold={loadMs,createMs:first.createMs,splitMs:first.splitMs,animatorMs:coldAnimatorMs};
+    const signature=groundIds(firstAnim.groundFeet),firstSkeleton=first.body.meshes[0].skeleton;
+    cleanup(first.body,source,firstAnim);
+    // 暖身不纳入统计；每次都是新的SkeletonUtils clone与私有骨架。
+    for(let n=0;n<3;n++){const {body}=newBody(source),anim=new MocapAnimator(body);cleanup(body,source,anim);}
+    const samples=[],batches=[];let equivalent=true,privateSkeletons=true;
+    for(let round=0;round<rounds;round++){
+      const batch=[];
+      for(let n=0;n<clones;n++){
+        const made=newBody(source),body=made.body;let anim,ground,animatorMs,groundMs;
+        const order=(round+n)%2?'ground-first':'animator-first';
+        if(order==='ground-first'){let t=clock();ground=new Ground(body);groundMs=clock()-t;t=clock();anim=new MocapAnimator(body);animatorMs=clock()-t;}
+        else{let t=clock();anim=new MocapAnimator(body);animatorMs=clock()-t;t=clock();ground=new Ground(body);groundMs=clock()-t;}
+        const ids=groundIds(ground),actual=groundIds(anim.groundFeet);
+        equivalent&&=same(signature.sole,ids.sole)&&same(signature.reaction,ids.reaction)&&same(ids.sole,actual.sole)&&same(ids.reaction,actual.reaction);
+        privateSkeletons&&=body.meshes[0].skeleton!==firstSkeleton;
+        const sample={round,n,order,createMs:made.createMs,splitMs:made.splitMs,animatorMs,groundMs,totalMs:made.createMs+made.splitMs+animatorMs};
+        samples.push(sample);batch.push(sample);cleanup(body,source,anim);
+      }
+      batches.push(Object.fromEntries(['createMs','splitMs','animatorMs','groundMs','totalMs'].map(key=>[key,batch.reduce((sum,s)=>sum+s[key],0)/batch.length])));
+      await pause();
+    }
+    const diagnostic=newBody(source),scanned=scanIndices(diagnostic.body),candidateCounts=scanned.map(s=>({side:s.side,count:s.indices.length}));
+    // Getter计数会临时改attribute的对象形状；所有计时必须在这种诊断之前完成。
+    for(let n=0;n<3;n++)scanIndices(diagnostic.body);
+    const scanSamples=[];for(let n=0;n<20;n++){const t=clock();scanIndices(diagnostic.body);scanSamples.push(clock()-t);}
+    const measured=countedGround(diagnostic.body,Ground);
+    const expected=new Map();for(const entry of scanned){if(!expected.has(entry.mesh))expected.set(entry.mesh,[]);expected.get(entry.mesh).push(...entry.indices);}
+    check([...measured.visited].every(([mesh,indices])=>same(indices,expected.get(mesh)||[])),cls+': 独立静态indices恰等于生产实际蒙皮取点顺序');
+    const attrs=diagnostic.body.meshes[0].geometry.attributes;
+    const footprint={positionCount:attrs.position.count,boneOrder:diagnostic.body.meshes[0].skeleton.bones.map(b=>b.name),hasSkirtMask:!!diagnostic.body.meshes[0].userData.skirtStrength,candidateCounts,counts:measured.counts,sole:signature.sole.length,reaction:signature.reaction.length};
+    cleanup(diagnostic.body,source);
+    check(equivalent,cls+': 多clone与重复Ground构造的sole/反应支撑点序列精确一致');
+    check(privateSkeletons,cls+': 所有clone骨架与冷实例独立');
+    check(rawMeshes.every((m,j)=>sourceWeights[j].every((v,i)=>v===m.geometry.attributes.skinWeight.getComponent(i>>2,i%4))),cls+': 基准和诊断未改源蒙皮权重');
+    const hot=Object.fromEntries(['createMs','splitMs','animatorMs','groundMs','totalMs'].map(key=>[key,stats(batches.map(b=>b[key]))]));
+    const data={cls,rounds,clones,cold,hot,scan:stats(scanSamples),footprint,batches,samples,groundShareAnimator:hot.groundMs.median/hot.animatorMs.median,groundShareTotal:hot.groundMs.median/hot.totalMs.median,scanShareGround:stats(scanSamples).median/hot.groundMs.median};
+    __metrics.push(data);document.querySelector('#result').textContent=JSON.stringify(__metrics,null,2);await pause();
+  }
+}catch(error){__errors.push(String(error.stack||error));}
+document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+window.__ready=true;
+</script></body></html>

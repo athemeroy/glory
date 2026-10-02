@@ -1,5 +1,5 @@
 // 第一人称专用手臂（视图模型）：只保留手臂与武器，跟随主相机，
-// 骨骼旋转逐帧从世界身体复制，所以镜子里的动作和第一人称看到的出招时刻一致。
+// 仅供 fpbody=0 旧视图对照；默认第一人称直接渲染世界身体。
 import * as THREE from 'three';
 import { buildCharacter, disposeRig } from './model.js';
 import { buildWeapon } from './weapons.js';
@@ -26,6 +26,7 @@ const ARM_BONES = ['shL', 'elL', 'haL', 'shR', 'elR', 'haR', 'gripR', 'gripL'];
 
 export class FPView {
   constructor(look, weaponType, weaponOpts = {}, glb = null, modelKey = '') {
+    if (new URLSearchParams(globalThis.location?.search || '').get('fparms') !== 'meshy') glb = null; // 默认程序化手臂（干净的袖子+手套）；fparms=meshy 用模型自带手臂
     this.root = new THREE.Group();
     this.sourceGlb = glb;
     this.weaponType = weaponType;
@@ -291,4 +292,15 @@ export function hideWorldArmsForFP(rig, weaponObj, leftObj, hidden) {
   for (const m of rig.armParts || []) m.layers.set(layer);
   if (weaponObj) weaponObj.traverse((o) => { if (o.isMesh) o.layers.set(layer); });
   if (leftObj) leftObj.traverse((o) => { if (o.isMesh) o.layers.set(layer); });
+}
+
+// 真实第一人称直接使用世界网格、骨骼和武器；主相机与镜子仅有机位差异。
+// 不筛掉袖子三角面，不偏移或缩放手臂，也不另画一套视图模型。
+export function showWorldBodyForFP(rig, weaponObj, leftObj) {
+  const set = o => { if (o.isMesh) o.layers.set(0); };
+  for (const m of rig.armParts || []) set(m);
+  for (const b of ['shL', 'shR']) rig.bones[b].traverse(set);
+  for (const m of rig.mocapBodyMeshes || []) set(m);
+  if (weaponObj) weaponObj.traverse(set);
+  if (leftObj) leftObj.traverse(set);
 }

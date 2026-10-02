@@ -6,6 +6,7 @@ import { ShaderPass } from '../../vendor/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from '../../vendor/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from '../../vendor/jsm/postprocessing/OutputPass.js';
 import { SMAAPass } from '../../vendor/jsm/postprocessing/SMAAPass.js';
+import { FXAAShader } from '../../vendor/jsm/shaders/FXAAShader.js';
 
 // 第一人称手臂层：清深度后叠加，不画背景
 class OverlayPass extends RenderPass {
@@ -82,18 +83,33 @@ export class Post {
     this.composer.addPass(this.overlay);
     this.composer.addPass(new ShaderPass(SanitizeShader));
     this.composer.addPass(this.bloom);
+    this.bloomBase = this.bloom.strength; this.pulseAmt = 0;
     this.composer.addPass(this.grade);
     this.composer.addPass(this.output);
-    if (quality === 'high') { this.smaa = new SMAAPass(); this.composer.addPass(this.smaa); }
+    this.setQuality(quality);
     this.hurt = 0; this.aberr = 0;
   }
-  setSize(w, h) {
-    this.composer.setSize(w, h);
-    this.bloom.resolution.set(w, h);
+  setQuality(quality) {
+    this.quality = quality;
+    if (quality === 'high' && !this.smaa) { this.smaa = new SMAAPass(); this.composer.addPass(this.smaa); }
+    if (quality !== 'high' && !this.fxaa) { this.fxaa = new ShaderPass(FXAAShader); this.composer.addPass(this.fxaa); }
+    if (this.smaa) this.smaa.enabled = quality === 'high';
+    if (this.fxaa) this.fxaa.enabled = quality !== 'high';
   }
+  setSize(w, h) {
+    // 倍率仅在这里计算一次，并和画布一样取整；调用方只传 CSS 尺寸。
+    const pr = this.renderer.getPixelRatio();
+    const pw = Math.floor(w * pr), ph = Math.floor(h * pr);
+    this.composer.setPixelRatio(1);
+    this.composer.setSize(pw, ph);
+    this.bloom.resolution.set(pw, ph);
+    if (this.fxaa) this.fxaa.uniforms.resolution.value.set(1 / pw, 1 / ph);
+  }
+  pulse(a) { this.pulseAmt = Math.max(this.pulseAmt, a); }
   kick(hurt, aberr) { this.hurt = Math.max(this.hurt, hurt); this.aberr = Math.max(this.aberr, aberr); }
   render(dt) {
     this.hurt *= Math.exp(-dt * 5); this.aberr *= Math.exp(-dt * 8);
+    this.pulseAmt *= Math.exp(-dt * 7); this.bloom.strength = this.bloomBase * (1 + this.pulseAmt * 2.5);
     const u = this.grade.uniforms;
     u.uTime.value = (u.uTime.value + dt) % 100;
     u.uHurt.value = this.hurt; u.uAberr.value = this.aberr;

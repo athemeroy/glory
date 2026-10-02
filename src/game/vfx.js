@@ -1,6 +1,7 @@
 // 特效：刀光、火花、粒子、爆炸、预警圈、光束、武器拖尾。均为程序生成。
 import * as THREE from 'three';
 import { rand } from '../engine/util.js';
+import { SkillEffects } from './skill-vfx.js';
 
 function glowTexture(inner = 'rgba(255,255,255,1)', mid = 'rgba(255,255,255,0.35)') {
   const c = document.createElement('canvas'); c.width = c.height = 64;
@@ -36,13 +37,49 @@ function ringTexture() {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+function streakTexture() {
+  // 横向光芒：中心亮，两端与上下边缘柔和淡出（Sprite 非等比缩放 + 旋转即可作放射光条）
+  const c = document.createElement('canvas'); c.width = 128; c.height = 16;
+  const g = c.getContext('2d');
+  for (let x = 0; x < 128; x++) for (let y = 0; y < 16; y++) {
+    const u = Math.abs(x - 63.5) / 64, v = Math.abs(y - 7.5) / 8;
+    const a = Math.pow(1 - u, 1.6) * Math.pow(1 - v, 2.2);
+    g.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`; g.fillRect(x, y, 1, 1);
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+// 扫过式刀光：reveal 为刀光头部位置（0..1），拖尾在头部后方渐隐，外沿最亮、内核白热
+const ARC_VS = 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }';
+const ARC_FS = `varying vec2 vUv; uniform vec3 color; uniform float reveal, fade, dir, trail, gain;
+  void main(){
+    float u = dir > 0.0 ? vUv.x : 1.0 - vUv.x;
+    float head = smoothstep(reveal + 0.02, reveal - 0.05, u);
+    float tail = smoothstep(reveal - trail, reveal, u);
+    float a = head * tail;
+    float v = vUv.y;
+    float streak = 0.78 + 0.22 * sin(v * 38.0 + u * 7.0) * sin(u * 23.0 + 1.3);
+    float prof = pow(v, 2.2) * streak;
+    float core = pow(v, 7.0);
+    vec3 col = mix(color, vec3(1.0), clamp(core * 1.4 + (u - (reveal - 0.08)) * 3.0 * head * 0.0, 0.0, 1.0));
+    float alpha = a * (prof * 0.85 + core * 1.2) * fade;
+    gl_FragColor = vec4(col * alpha * gain, alpha);
+  }`;
+
 const MAX_P = 900;
 
 export class VFX {
   constructor(scene) {
     this.scene = scene;
     this.items = [];
-    this.tex = { glow: glowTexture(), arc: arcTexture(), ring: ringTexture() };
+    this.clock = 0;
+    const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    this.maxItems = touch ? 72 : 112;
+    this.maxDrawables = touch ? 180 : 320;
+    this.drawableCount = 0;
+    this.droppedItems = 0;
+    this.tex = { glow: glowTexture(), arc: arcTexture(), ring: ringTexture(), streak: streakTexture() };
+    this.arcGeo2 = new Map();
     // 粒子池
     const g = new THREE.BufferGeometry();
     this.pPos = new Float32Array(MAX_P * 3);
@@ -73,6 +110,26 @@ export class VFX {
     scene.add(this.flash);
     this.flashT = 0;
     this.arcGeo = new Map();
+    this.skills = new SkillEffects(this);
+  }
+
+  skillEvent(f, type, data) { return this.skills.skillEvent(f, type, data); }
+  fire(att, p, def, visual, dir) { return this.skills.fire(att, p, def, visual, dir); }
+  projectileStep(pr, dt) { return this.skills.projectileStep(pr, dt); }
+  areaEvent(owner, a, def, pos, tick) { return this.skills.areaEvent(owner, a, def, pos, tick); }
+  explosionEvent(owner, pos, e, def) { return this.skills.explosionEvent(owner, pos, e, def); }
+  channelBeam(att, def, from, to, width, dur) { return this.skills.channelBeam(att, def, from, to, width, dur); }
+  healTarget(target, heal, source) { return this.skills.healTarget(target, heal, source); }
+  statusTarget(target, effect) { return this.skills.statusTarget(target, effect); }
+  blinkTrail(f, from, to) { return this.skills.blinkTrail(f, from, to); }
+
+  getStats() {
+    let particles = 0;
+    for (const life of this.pLife) if (life > 0) particles++;
+    return { items: this.items.length, maxItems: this.maxItems, drawables: this.drawableCount,
+      maxDrawables: this.maxDrawables, particles, maxParticles: MAX_P,
+      dropped: this.droppedItems, statuses: this.skills.statuses.size, zones: this.skills.zones.size,
+      geometryCache: this.arcGeo2.size, ...this.skills.stats };
   }
 
   setScale(h) { this.points.material.uniforms.scale.value = h * 0.9; }
@@ -97,9 +154,26 @@ export class VFX {
   }
 
   add(obj, dur, update, onEnd) {
+    let draws = 0;
+    obj.traverse(o => { if (o.isMesh || o.isSprite || o.isLine) draws++; });
+    while (this.items.length && (this.items.length >= this.maxItems || this.drawableCount + draws > this.maxDrawables)) {
+      // Drop the oldest display under extreme load; damage and status stay untouched.
+      this.finishItem(this.items[0]);
+      this.droppedItems++;
+    }
     this.scene.add(obj);
-    this.items.push({ obj, t: 0, dur, update, onEnd });
+    this.drawableCount += draws;
+    this.items.push({ obj, t: 0, dur: Math.max(.01, dur), update, onEnd, draws, ended: false });
     return obj;
+  }
+
+  finishItem(it) {
+    if (it.ended) return;
+    it.ended = true;
+    it.obj.removeFromParent();
+    this.drawableCount = Math.max(0, this.drawableCount - (it.draws || 0));
+    const i = this.items.indexOf(it); if (i >= 0) this.items.splice(i, 1);
+    it.onEnd?.();
   }
 
   sprite(pos, color, size, dur, grow = 1.6) {
@@ -111,84 +185,200 @@ export class VFX {
   }
 
   // ---- 刀光：在攻击者前方生成一段弧 ----
-  slash(f, kind, color = '#e8f4ff', range = 2.4) {
-    const yaw = f.yaw;
-    const base = new THREE.Vector3(f.pos.x, f.pos.y + 1.2 * f.scale, f.pos.z);
+  // 弧形几何：以 +Z 为正前方，φ 从右(-)扫到左(+)，u 沿弧、v 沿半径
+  arcGeometry(r0, r1, len) {
+    const key = `${r0.toFixed(2)}_${r1.toFixed(2)}_${len.toFixed(2)}`;
+    if (this.arcGeo2.has(key)) return this.arcGeo2.get(key);
+    const N = 40, pos = [], uvs = [], idx = [];
+    for (let i = 0; i <= N; i++) {
+      const u = i / N, phi = -len / 2 + len * u;
+      for (const [r, v] of [[r0, 0], [r1, 1]]) { pos.push(Math.sin(phi) * r, 0, Math.cos(phi) * r); uvs.push(u, v); }
+      if (i < N) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setIndex(idx);
+    this.arcGeo2.set(key, g);
+    return g;
+  }
+  arcMaterial(color, dir = 1, trail = 0.5, gain = 1.6) {
+    return new THREE.ShaderMaterial({
+      uniforms: { color: { value: new THREE.Color(color) }, reveal: { value: 0 }, fade: { value: 1 }, dir: { value: dir }, trail: { value: trail }, gain: { value: gain } },
+      vertexShader: ARC_VS, fragmentShader: ARC_FS,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+  }
+
+  // ---- 刀光：跟随当前攻击方向，在真实技能射程内扫出短弧 ----
+  slash(f, kind, color = '#e8f4ff', range = 2.4, power = 1) {
+    const yaw = f.yaw ?? f.action?.aimYaw ?? 0, pitch = f.pitch ?? f.action?.aimPitch ?? 0;
+    const cp = Math.cos(pitch), direction = new THREE.Vector3(Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp);
+    const base = new THREE.Vector3(f.pos.x, f.pos.y + 1.15 * (f.scale || 1), f.pos.z);
     const g = new THREE.Group();
     g.position.copy(base);
     g.rotation.order = 'YXZ';
     g.rotation.y = yaw;
-    let geo, dur = 0.2, tilt = 0, roll = 0, start = 0, len = Math.PI * 0.8;
-    const r0 = Math.max(0.3, range * 0.45), r1 = range;
+    if (kind !== 'ring' && kind !== 'ringWide') {
+      // Current yaw/pitch also exists on the guest's remote puppet.
+      g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+    }
+    const followPose=()=>{
+      const y=f.yaw??f.action?.aimYaw??0,p=f.pitch??f.action?.aimPitch??0,c=Math.cos(p);
+      g.position.set(f.pos.x,f.pos.y+((kind==='ring'||kind==='ringWide') ? .8 : 1.15)*(f.scale||1),f.pos.z);
+      if(kind==='ring'||kind==='ringWide')g.rotation.y=y;
+      else g.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),direction.set(Math.sin(y)*c,Math.sin(p),Math.cos(y)*c));
+    };
+    let dur = 0.22 + 0.1 * (power - 1), tilt = 0, roll = 0, len = Math.PI * 0.85, dir = 1;
+    const r1 = range, r0 = Math.max(0.35, r1 * 0.64);
     switch (kind) {
-      case 'slashR': start = -Math.PI * 0.1; len = Math.PI * 0.75; tilt = -0.15; break;
-      case 'slashL': start = -Math.PI * 0.1; len = Math.PI * 0.75; tilt = 0.15; roll = Math.PI; break;
-      case 'slashWide': start = -Math.PI * 0.25; len = Math.PI * 1.0; tilt = -0.05; break;
-      case 'slashUp': start = -Math.PI * 0.35; len = Math.PI * 0.7; roll = Math.PI / 2; break;
-      case 'ring': case 'ringWide': start = 0; len = Math.PI * 2; dur = 0.3; base.y = f.pos.y + 0.7; g.position.copy(base); break;
+      case 'slashR': roll = -0.55; tilt = -0.12; break;
+      case 'slashL': roll = 0.55; tilt = -0.12; dir = -1; break;
+      case 'slashWide': len = Math.PI * 1.15; tilt = -0.05; dur += 0.04; break;
+      case 'slashUp': roll = Math.PI / 2 - 0.15; len = Math.PI * 0.8; dir = -1; break;
+      case 'slashDown': roll = Math.PI / 2; len = Math.PI * 0.8; dir = 1; break;
+      case 'ring': case 'ringWide': len = Math.PI * 2; dur = 0.34; base.y = f.pos.y + 0.8; g.position.copy(base); break;
       case 'thrust': case 'thrustMulti': {
-        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.16, range, 10, 1, true), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, map: this.tex.glow }));
-        cone.rotation.x = -Math.PI / 2; cone.position.z = range * 0.55;
-        g.add(cone);
-        this.add(g, 0.14, (k) => { cone.material.opacity = 0.8 * (1 - k); cone.scale.set(1 + k, 1, 1 + k); }, () => cone.material.dispose());
+        const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.08 * power, range, 8, 1, true), m);
+        cone.rotation.x = Math.PI / 2; cone.position.z = range * 0.5;
+        const tip = new THREE.Mesh(new THREE.ConeGeometry(0.018 * power, range, 6, 1, true), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+        tip.rotation.x = Math.PI / 2; tip.position.z = range * 0.5;
+        g.add(cone, tip);
+        const fw = direction;
+        for (let i = 0; i < 4 * power; i++) { const d = rand(0.4, range); this.particle(base.x + fw.x * d, base.y + fw.y * d + rand(-0.04, 0.04), base.z + fw.z * d, fw.x, fw.y, fw.z, color, 0.025, 0.18, 0); }
+        this.add(g, 0.2, (k) => { followPose();m.opacity = 0.4 * (1 - k); tip.material.opacity = 0.6 * (1 - k); }, () => { m.dispose(); tip.material.dispose(); cone.geometry.dispose(); tip.geometry.dispose(); });
         return;
       }
       case 'punch': case 'punchBig': case 'kick': case 'palm': case 'bash': {
         const p = base.clone().addScaledVector(f.forward(), kind === 'palm' ? 1.3 : 1.0);
-        this.sprite(p, color, kind === 'punchBig' || kind === 'palm' ? 1.1 : 0.55, 0.16, 2.2);
-        if (kind === 'palm' || kind === 'punchBig') this.shock(p, f.yaw, color);
+        const big = kind === 'punchBig' || kind === 'palm';
+        this.sprite(p, color, (big ? 1.5 : 0.8) * power, 0.2, 2.4);
+        this.flare(p, color, big ? 8 : 5, big ? 1.4 : 0.8, 0.18);
+        if (big) this.shock(p, f.yaw, color);
         return;
       }
-      default: start = -Math.PI * 0.1; len = Math.PI * 0.75;
+      default: roll = -0.4;
     }
-    const key = `${r0.toFixed(2)}_${r1.toFixed(2)}_${start.toFixed(2)}_${len.toFixed(2)}`;
-    if (!this.arcGeo.has(key)) {
-      const rg = new THREE.RingGeometry(r0, r1, 32, 1, start + Math.PI / 2 - len / 2, len);
-      // 重新映射 UV：u 沿弧，v 沿半径
-      const uv = rg.attributes.uv, pos = rg.attributes.position;
-      for (let i = 0; i < uv.count; i++) {
-        const x = pos.getX(i), y = pos.getY(i);
-        const a = Math.atan2(y, x), r = Math.hypot(x, y);
-        let u = (a - (start + Math.PI / 2 - len / 2)) / len; if (u < 0) u += Math.PI * 2 / len;
-        uv.setXY(i, u, (r - r0) / (r1 - r0));
+    const geo = this.arcGeometry(r0, r1, len);
+    const outer = new THREE.Mesh(geo, this.arcMaterial(color, dir, 0.48, 0.65 * power));
+    const inner = new THREE.Mesh(geo, this.arcMaterial(color, dir, 0.28, 0.35 * power));
+    inner.scale.set(0.97, 1, 0.97);
+    for (const m of [outer, inner]) { m.rotation.z = roll; m.rotation.x = tilt; m.renderOrder = 9; g.add(m); }
+    const sparkN = Math.round(6 * power), c = new THREE.Color(color);
+    let spawned = 0;
+    const tmp = new THREE.Vector3();
+    this.add(g, dur, (k) => {
+      followPose();
+      const reveal = Math.min(1.25, k * 1.9);
+      const fade = k < 0.55 ? 1 : Math.max(0, 1 - (k - 0.55) / 0.45);
+      for (const m of [outer, inner]) { m.material.uniforms.reveal.value = reveal; m.material.uniforms.fade.value = fade; }
+      // 沿刀光头部喷火星
+      const want = Math.floor(Math.min(1, k * 1.9) * sparkN);
+      while (spawned < want) {
+        spawned++;
+        const u = Math.min(1, k * 1.9), phi = (dir > 0 ? -len / 2 + len * u : len / 2 - len * u), r = r1 * rand(0.8, 1.0);
+        tmp.set(Math.sin(phi) * r, 0, Math.cos(phi) * r); outer.updateWorldMatrix(true, false); outer.localToWorld(tmp);
+        this.particle(tmp.x, tmp.y, tmp.z, rand(-1.6, 1.6), rand(0.2, 2.2), rand(-1.6, 1.6), Math.random() < 0.4 ? '#ffffff' : c, 0.05 * power, rand(0.25, 0.5), 5);
       }
-      rg.rotateX(-Math.PI / 2);
-      this.arcGeo.set(key, rg);
-    }
-    const m = new THREE.MeshBasicMaterial({ map: this.tex.arc, color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(this.arcGeo.get(key), m);
-    mesh.rotation.z = roll; mesh.rotation.x = tilt;
-    mesh.renderOrder = 9;
-    g.add(mesh);
-    this.add(g, dur, (k) => { m.opacity = (1 - k) * (1 - k); mesh.scale.setScalar(0.9 + 0.2 * k); }, () => m.dispose());
+    }, () => { outer.material.dispose(); inner.material.dispose(); });
+    // Actual ranged sword waves are projectiles. Ordinary power attacks remain in reach.
   }
 
-  // 大招起手：脚下光环 + 上升光柱
-  ultAura(pos, color = '#ffd27a') {
-    this.ring(pos, 2.6, color, 0.6);
-    this.ring(pos, 1.4, '#ffffff', 0.35);
-    const c = new THREE.Color(color);
-    for (let i = 0; i < 40; i++) {
-      const a = Math.random() * Math.PI * 2, r = 0.3 + Math.random() * 0.7;
-      this.particle(pos.x + Math.cos(a) * r, pos.y + 0.1, pos.z + Math.sin(a) * r, 0, 3 + Math.random() * 4, 0, c, 0.1, 0.7, -2);
+  // 剑气：沿前方飞出的新月光刃
+  wave(f, color, size = 2.4, power = 1.5) {
+    const fw = f.forward();
+    const g = new THREE.Group();
+    g.position.set(f.pos.x + fw.x * 0.8, f.pos.y + 1.1 * f.scale, f.pos.z + fw.z * 0.8);
+    g.rotation.order = 'YXZ'; g.rotation.y = f.yaw;
+    const geo = this.arcGeometry(size * 0.55, size * 0.9, Math.PI * 0.7);
+    const mat = this.arcMaterial(color, 1, 0.9, 1.8);
+    const mat2 = this.arcMaterial('#ffffff', 1, 0.7, 1.2);
+    const a = new THREE.Mesh(geo, mat), b = new THREE.Mesh(geo, mat2);
+    for (const m of [a, b]) { m.rotation.z = Math.PI / 2; m.renderOrder = 9; g.add(m); }
+    b.scale.set(0.96, 1, 0.96);
+    const dist = 5.5 * power, dur = 0.34;
+    this.add(g, dur, (k) => {
+      for (const m of [mat, mat2]) { m.uniforms.reveal.value = 1.3; m.uniforms.fade.value = (1 - k) * (1 - k * 0.4); }
+      g.position.set(f.pos.x + fw.x * (0.8 + dist * k), g.position.y, f.pos.z + fw.z * (0.8 + dist * k));
+      if (Math.random() < 0.7) this.particle(g.position.x, g.position.y + rand(-size * 0.5, size * 0.5), g.position.z, fw.x * -1, rand(-0.3, 0.3), fw.z * -1, color, 0.07, 0.3, 0);
+    }, () => { mat.dispose(); mat2.dispose(); });
+  }
+
+  // 放射光芒：n 条随机角度的光条（始终朝向镜头），配大光晕
+  flare(pos, color, n = 8, size = 1.0, dur = 0.16) {
+    const mats = [];
+    for (let i = 0; i < n; i++) {
+      const m = new THREE.SpriteMaterial({ map: this.tex.streak, color: i % 3 === 0 ? '#ffffff' : color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, rotation: rand(0, Math.PI * 2) });
+      const sp = new THREE.Sprite(m); sp.position.copy(pos); sp.renderOrder = 12;
+      const L = size * rand(0.7, 1.5), T = size * rand(0.06, 0.12);
+      sp.scale.set(0.2, T, 1);
+      mats.push(m);
+      this.add(sp, dur * rand(0.8, 1.2), (k) => { sp.scale.set(L * (0.25 + 0.75 * Math.sqrt(k)), T * (1 - 0.6 * k), 1); m.opacity = 1 - k * k; }, () => m.dispose());
     }
-    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 4, 20, 1, true), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, map: this.tex.glow }));
-    col.position.set(pos.x, pos.y + 2, pos.z);
-    this.add(col, 0.5, (k) => { col.material.opacity = 0.5 * (1 - k); col.scale.set(1 + k * 0.6, 1 + k * 0.5, 1 + k * 0.6); }, () => { col.material.dispose(); col.geometry.dispose(); });
-    this.flashAt(new THREE.Vector3(pos.x, pos.y + 1.2, pos.z), color, 5);
+  }
+
+  // 蓄力：粒子从四周向手中/武器汇聚
+  charge(pos, color, n = 22, radius = 1.0, life = 0.28) {
+    const c = new THREE.Color(color);
+    for (let i = 0; i < n; i++) {
+      const th = rand(0, Math.PI * 2), ph = rand(-1.1, 1.1), r = radius * rand(0.7, 1.2);
+      const dx = Math.cos(th) * Math.cos(ph), dy = Math.sin(ph), dz = Math.sin(th) * Math.cos(ph);
+      const sp = r / life * 0.8;
+      this.particle(pos.x + dx * r, pos.y + dy * r, pos.z + dz * r, -dx * sp, -dy * sp, -dz * sp, i % 4 === 0 ? '#ffffff' : c, 0.07, life * rand(0.9, 1.3), 0);
+    }
+    this.sprite(pos, color, radius * 0.9, life, 0.35);
+  }
+
+  // 大招起手：多重光环、旋转法阵、螺旋上升的光粒与高光柱
+  ultAura(pos, color = '#ffd27a') {
+    this.ring(pos, 3.4, color, 0.7);
+    let first = false, second = false;
+    this.add(new THREE.Object3D(), .25, (k) => {
+      if (!first && k >= .36) { first = true; this.ring(pos, 2.2, color, .5); }
+      if (!second && k >= .8) { second = true; this.ring(pos, 4.6, color, .8); }
+    });
+    const c = new THREE.Color(color);
+    // 旋转法阵
+    const gm = new THREE.MeshBasicMaterial({ map: this.tex.ring, color, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+    const glyph = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), gm);
+    glyph.rotation.x = -Math.PI / 2; glyph.position.set(pos.x, pos.y + 0.06, pos.z);
+    this.add(glyph, 0.9, (k) => { glyph.scale.setScalar(1.6 + 1.2 * Math.sin(Math.min(1, k * 1.6) * Math.PI / 2)); gm.opacity = 0.9 * (1 - k * k); glyph.rotation.z = k * 3; }, () => { gm.dispose(); glyph.geometry.dispose(); });
+    // 光柱（内白外色）
+    for (const [rad, col, op] of [[0.9, color, 0.5], [0.45, '#ffffff', 0.7]]) {
+      const m = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, map: this.tex.glow });
+      const colu = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.7, rad, 8, 24, 1, true), m);
+      colu.position.set(pos.x, pos.y + 4, pos.z);
+      this.add(colu, 0.7, (k) => { m.opacity = op * (1 - k) * Math.min(1, k * 8); colu.scale.set(1 + k * 0.5, 1, 1 + k * 0.5); }, () => { m.dispose(); colu.geometry.dispose(); });
+    }
+    // 螺旋上升
+    let t = 0, n = 0;
+    this.add(new THREE.Object3D(), 0.7, (k, dt) => {
+      t += dt;
+      while (n < Math.floor(t * 110)) {
+        n++;
+        const a = n * 0.55, r = 1.1 - (t / 0.7) * 0.5;
+        this.particle(pos.x + Math.cos(a) * r, pos.y + 0.1, pos.z + Math.sin(a) * r, -Math.sin(a) * 1.6, 3 + rand(0, 3.5), Math.cos(a) * 1.6, n % 3 ? c : '#ffffff', 0.09, 0.8, -2);
+      }
+    });
+    this.flare(new THREE.Vector3(pos.x, pos.y + 1.2, pos.z), color, 14, 3.2, 0.4);
+    this.flashAt(new THREE.Vector3(pos.x, pos.y + 1.2, pos.z), color, 9);
   }
   // 伏龙翔天：沿前方的龙形光流
   dragon(f, color = '#ffd27a') {
     const fw = f.forward();
     const base = new THREE.Vector3(f.pos.x, f.pos.y + 1.2, f.pos.z);
     const c = new THREE.Color(color);
-    for (let i = 0; i < 26; i++) {
-      const d = i * 0.35;
-      const wob = Math.sin(i * 0.7) * 0.5;
-      const p = base.clone().addScaledVector(fw, d);
-      p.x += -fw.z * wob; p.z += fw.x * wob; p.y += Math.cos(i * 0.7) * 0.35 + i * 0.03;
-      setTimeout(() => { this.sprite(p, color, 0.9 - i * 0.02, 0.35, 1.6); this.burst(p, c, 3, 1.5, 0.08, 0.5, -1); }, i * 14);
-    }
+    let spawned = 0;
+    this.add(new THREE.Object3D(), .37, (k) => {
+      const want = Math.floor(k * 26);
+      while (spawned < want) {
+        const i = spawned++, d = i * .35, wob = Math.sin(i * .7) * .5;
+        const p = base.clone().addScaledVector(fw, d);
+        p.x += -fw.z * wob; p.z += fw.x * wob; p.y += Math.cos(i*.7)*.35+i*.03;
+        this.sprite(p,color,.9-i*.02,.35,1.6);this.burst(p,c,3,1.5,.08,.5,-1);
+      }
+    });
   }
   // 千刃：多方向刀光
   blades(f, color) {
@@ -214,9 +404,18 @@ export class VFX {
   }
 
   hitSpark(pos, color = '#ffe0a0', strong = false) {
-    const sp = this.sprite(pos, color, strong ? 0.42 : 0.24, strong ? 0.1 : 0.07, 1.8); sp.material.opacity = 0.75;
-    this.burst(pos, color, strong ? 22 : 10, strong ? 7 : 5, 0.04, 0.3, 12);
-    if (strong) this.flashAt(pos, color, 2.5);
+    const sp = this.sprite(pos, color, strong ? 1.1 : 0.55, strong ? 0.16 : 0.1, 2.0); sp.material.opacity = 0.95;
+    this.sprite(pos, '#ffffff', strong ? 0.5 : 0.28, 0.08, 1.6);
+    this.flare(pos, color, strong ? 12 : 6, strong ? 1.5 : 0.8, strong ? 0.2 : 0.13);
+    this.burst(pos, color, strong ? 34 : 14, strong ? 8 : 5.5, 0.05, 0.38, 12);
+    if (strong) { this.burst(pos, '#ffffff', 12, 10, 0.04, 0.25, 8); this.ringAt(pos, 1.5, color, 0.22); }
+    this.flashAt(pos, color, strong ? 4.5 : 2.2);
+  }
+  // 朝向镜头的冲击环（命中点）
+  ringAt(pos, size, color, dur = 0.25) {
+    const m = new THREE.SpriteMaterial({ map: this.tex.ring, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const s = new THREE.Sprite(m); s.position.copy(pos); s.renderOrder = 12;
+    this.add(s, dur, (k) => { s.scale.setScalar(size * (0.3 + 0.9 * Math.sqrt(k))); m.opacity = 1 - k; }, () => m.dispose());
   }
   blockSpark(pos) {
     this.sprite(pos, '#bfe6ff', 0.7, 0.12, 1.8);
@@ -292,35 +491,21 @@ export class VFX {
   }
 
   // 投射物外形
-  projectileMesh(kind, color = '#ffd27a') {
-    const g = new THREE.Group();
-    if (kind === 'bullet') {
-      const core = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 5), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
-      core.rotation.x = Math.PI / 2; g.add(core);
-    } else if (kind === 'shell' || kind === 'grenade') {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(kind === 'shell' ? 0.13 : 0.1, 10, 8), new THREE.MeshStandardMaterial({ color: '#3a3a3e', metalness: 0.7, roughness: 0.4, emissive: new THREE.Color(color), emissiveIntensity: 0.4 }));
-      g.add(s);
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.tex.glow, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-      sp.scale.setScalar(0.6); g.add(sp);
-    } else {
-      const s = new THREE.Mesh(new THREE.IcosahedronGeometry(0.14, 1), new THREE.MeshBasicMaterial({ color }));
-      g.add(s);
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.tex.glow, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
-      sp.scale.setScalar(0.9); g.add(sp);
-    }
-    return g;
+  projectileMesh(kind, color = '#ffd27a', def = {}, projectile = {}, owner = {}) {
+    return this.skills.projectileMesh(kind, color, def, projectile, owner);
   }
 
   update(dt) {
-    for (let i = this.items.length - 1; i >= 0; i--) {
-      const it = this.items[i];
+    this.clock += dt;
+    // A callback may spawn or retire another effect. Iterate a snapshot so budget
+    // pressure cannot update a removed effect twice or splice an unrelated one.
+    for (const it of [...this.items]) {
+      if (it.ended) continue;
       it.t += dt;
       const k = Math.min(1, it.t / it.dur);
       if (it.update) it.update(k, dt);
       if (it.t >= it.dur) {
-        it.obj.removeFromParent();
-        if (it.onEnd) it.onEnd();
-        this.items.splice(i, 1);
+        this.finishItem(it);
       }
     }
     // 粒子
@@ -341,9 +526,14 @@ export class VFX {
   }
 
   clear() {
-    for (const it of this.items) { it.obj.removeFromParent(); if (it.onEnd) it.onEnd(); }
+    for (const it of [...this.items]) this.finishItem(it);
     this.items.length = 0;
+    this.drawableCount = 0;
     this.pLife.fill(0);
+    this.pSize.fill(0);
+    this.points.geometry.attributes.size.needsUpdate = true;
+    this.flashT = 0; this.flash.intensity = 0;
+    this.skills.clear();
   }
 }
 
