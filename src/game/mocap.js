@@ -13,6 +13,7 @@ import { repairSleeveWeights } from './sleeve.js';
 import { repairRobeWeights } from './robe.js';
 import { repairSkirtWeights } from './skirt.js';
 import { protectBerserkerLimbs } from './berserker-limbs.js';
+import { cachedFootIndices } from './foot-indices.js';
 
 const loader = new GLTFLoader();
 let clipLib = null;      // name -> AnimationClip（已去掉水平根位移）
@@ -302,14 +303,10 @@ class GroundFeet {
       if (!skinIndex || !skinWeight || seen.has(position)) continue;
       seen.add(position); mesh.skeleton.update();
       for (const side of ['Left', 'Right']) {
-        const indices = new Set(mesh.skeleton.bones.map((b, i) => b.name.startsWith(side) && /Foot|Toe/.test(b.name) ? i : -1).filter(i => i >= 0));
-        if (!indices.size) continue;
+        const eligible = cachedFootIndices(mesh, side);
+        if (!eligible) continue;
         const candidates = []; let floor = Infinity;
-        for (let i = 0; i < position.count; i++) {
-          if (mesh.userData.skirtStrength?.[i] > 0) continue;
-          let weight = 0;
-          for (let k = 0; k < 4; k++) if (indices.has(skinIndex.getComponent(i, k))) weight += skinWeight.getComponent(i, k);
-          if (weight < 0.5) continue;
+        for (const i of eligible) {
           mesh.getVertexPosition(i, this.v).applyMatrix4(mesh.matrixWorld).applyMatrix4(this.inverse);
           floor = Math.min(floor, this.v.y);
           candidates.push({ index: i, x: this.v.x, y: this.v.y, z: this.v.z });

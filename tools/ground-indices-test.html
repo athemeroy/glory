@@ -1,0 +1,89 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Static foot indices production cache proof</title><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">生产静态indices缓存：key失效、不同pose和真实split完整比较…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, splitForFirstPerson, MocapAnimator, loadClipLibrary } from '../src/game/mocap.js';
+import { GroundFeet } from './fixtures/ground-before-indices-cache.js';
+import { cachedFootIndices } from '../src/game/foot-indices.js';
+import { disposeRig } from '../src/game/model.js';
+import { CLASSES } from '../src/data/classes.js';
+import { MOBS, BOSS } from '../src/data/enemies.js';
+
+window.__results=[];window.__errors=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label),params=new URLSearchParams(location.search);
+const same=(a,b)=>a.length===b.length&&a.every((v,i)=>v===b[i]);
+const maskKeys=['clothProtectedLimbMask','clothStrength','attachmentStrength','attachmentComponent','firstPersonHeadMask','clericWeightMask','sleeveStrength','sleeveComponent','robeStrength','skirtStrength'];
+const probeIds=g=>({sole:g.probes.map(p=>p.index),reaction:g.reactionSupport.probes.map(p=>p.side+':'+p.index)});
+const idsEqual=(a,b)=>same(a.sole,b.sole)&&same(a.reaction,b.reaction);
+const point=new THREE.Vector3();
+function directIds(mesh,side){const {position,skinIndex,skinWeight}=mesh.geometry.attributes,bones=new Set(mesh.skeleton.bones.map((b,i)=>b.name.startsWith(side)&&/Foot|Toe/.test(b.name)?i:-1).filter(i=>i>=0)),out=[];if(!bones.size)return null;for(let i=0;i<position.count;i++){if(mesh.userData.skirtStrength?.[i]>0)continue;let w=0;for(let k=0;k<4;k++)if(bones.has(skinIndex.getComponent(i,k)))w+=skinWeight.getComponent(i,k);if(w<.5)continue;out.push(i)}return out;}
+function keyProof(){
+  const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(12),3));
+  geometry.setAttribute('skinIndex',new THREE.BufferAttribute(new Uint8Array([0,0,0,0,0,0,0,0,2,0,0,0,4,0,0,0]),4));
+  geometry.setAttribute('skinWeight',new THREE.BufferAttribute(new Float32Array([.49,0,0,0,.51,0,0,0,1,0,0,0,1,0,0,0]),4));
+  const mesh={geometry,skeleton:{bones:['LeftFoot','LeftToeBase','RightFoot','RightToeBase','Hips'].map(name=>({name}))},userData:{}};
+  const pick=()=>cachedFootIndices(mesh,'Left');let before=pick();
+  check(same([...before],[1])&&pick()===before,'相同静态状态命中同一只读indices');
+  mesh.skeleton.bones[0].position={y:100};check(pick()===before,'骨姿态/坐标变化不进入静态缓存key');
+  for(const key of maskKeys){before=pick();mesh.userData[key]=new Uint8Array(4);const next=pick();check(next!==before&&same([...next],directIds(mesh,'Left')),key+': 替换readonly mask身份会失效');}
+  before=pick();mesh.userData.skirtStrength=new Uint8Array([0,1,0,0]);check(pick()!==before&&pick().length===0,'skirt身份和实际排除条件同时生效');mesh.userData.skirtStrength=new Uint8Array(4);
+  before=pick();geometry.setAttribute('skinWeight',geometry.attributes.skinWeight.clone());check(pick()!==before,'skinWeight属性身份更改会失效');
+  before=pick();geometry.setAttribute('skinIndex',geometry.attributes.skinIndex.clone());check(pick()!==before,'skinIndex属性身份更改会失效');
+  before=pick();geometry.attributes.skinWeight.setX(0,.75);geometry.attributes.skinWeight.needsUpdate=true;check(pick()!==before&&same([...pick()],[0,1]),'SW needsUpdate/version更改会重扫新权重');
+  before=pick();geometry.attributes.skinIndex.setX(0,2);geometry.attributes.skinIndex.needsUpdate=true;check(pick()!==before&&same([...pick()],[1]),'SI needsUpdate/version更改会重扫骨影响');
+  before=pick();[mesh.skeleton.bones[0],mesh.skeleton.bones[2]]=[mesh.skeleton.bones[2],mesh.skeleton.bones[0]];check(pick()!==before&&same([...pick()],[0,2]),'完整骨名称顺序更改会失效');
+  before=pick();geometry.attributes.position.count=2;check(pick()!==before&&same([...pick()],[0]),'position.count更改会失效');geometry.attributes.position.count=4;
+  before=pick();geometry.attributes.skinIndex.array=Uint16Array.from(geometry.attributes.skinIndex.array);check(pick()!==before&&same([...pick()],directIds(mesh,'Left')),'属性对象不变但原始数组类型/身份改变会失效');
+  geometry.setAttribute('skinWeight',new THREE.BufferAttribute(new Uint8Array([64,0,0,0,255,0,0,0,255,0,0,0,255,0,0,0]),4));before=pick();geometry.attributes.skinWeight.normalized=true;check(pick()!==before&&same([...pick()],directIds(mesh,'Left')),'normalized解码方式改变会失效');
+  const data=new THREE.InterleavedBuffer(new Float32Array([0,0,0,0,.49,0,0,0,0,0,0,0,.51,0,0,0,2,0,0,0,1,0,0,0,4,0,0,0,1,0,0,0]),8);
+  geometry.setAttribute('skinIndex',new THREE.InterleavedBufferAttribute(data,4,0));geometry.setAttribute('skinWeight',new THREE.InterleavedBufferAttribute(data,4,4));
+  before=pick();geometry.attributes.skinWeight.setX(0,.9);data.needsUpdate=true;check(pick()!==before&&same([...pick()],directIds(mesh,'Left')),'Interleaved data.version更改会失效');
+  before=pick();const changed=new THREE.InterleavedBuffer(data.array.slice(),8);geometry.attributes.skinIndex.data=changed;geometry.attributes.skinWeight.data=changed;check(pick()!==before,'Interleaved data对象身份更改会失效');
+  before=pick();changed.array=Float64Array.from(changed.array);check(pick()!==before&&same([...pick()],directIds(mesh,'Left')),'Interleaved原始类型/数组身份更改会失效');
+  before=pick();geometry.attributes.skinIndex.offset=4;check(pick()!==before&&same([...pick()],directIds(mesh,'Left')),'Interleaved offset更改会失效');
+  // mask内容原地写入不属于readonly合同，不假装用identity检测它。
+}
+function pair(source,split,production){const body=createMocapBody(source);if(split)splitForFirstPerson(body);const anim=new MocapAnimator(body);if(!production)anim.groundFeet=new GroundFeet(body);return {body,anim};}
+function floor(g){return g.reactionSupport.floor();}
+function cleanup(pair,source){pair.anim.mixer.stopAllAction();disposeRig({root:pair.body.model},{sharedRoots:[source]});}
+try{
+  keyProof();await loadClipLibrary('../assets/anim/anims.glb');
+  const list=await(await fetch('../assets/models/rigged/manifest.json')).json(),classes=params.get('classes')==='all'?list:params.get('classes')?.split(',')||['berserker','skeleton','frostcaster','cleric'];
+  const loader=new GLTFLoader();
+  for(const cls of classes){
+    const source=(await loader.loadAsync('../assets/models/rigged/'+cls+'.glb')).scene;source.userData.gloryClass=cls;
+    const originals=[];source.traverse(o=>{if(o.isSkinnedMesh)originals.push({mesh:o,weights:Array.from({length:o.geometry.attributes.skinWeight.count*4},(_,i)=>o.geometry.attributes.skinWeight.getComponent(i>>2,i%4))})});
+    const pairs=[pair(source,false,false),pair(source,true,false),pair(source,false,true),pair(source,true,true)],sets=pairs.map(p=>probeIds(p.anim.groundFeet));
+    check(sets.every(s=>idsEqual(s,sets[0]))&&pairs.slice(2).every(p=>p.anim.groundFeet.constructor!==GroundFeet),cls+': 真实生产未替换Ground的两路/冻结旧算法及split构造sole/compact exact');
+    const arrays=pairs.map(p=>['Left','Right'].map(side=>cachedFootIndices(p.body.meshes[0],side)));
+    check(arrays.slice(1).every(a=>a.every((indices,i)=>indices===arrays[0][i])),cls+': 同源clone和metadata split命中同一静态indices');
+    const snapshots=arrays[0].map(ids=>ids.slice()),state={onGround:true,speed:0,fwd:1,pitch:0,stance:(CLASSES[cls]||MOBS[cls]||(cls==='boss'?BOSS:null)).stance};
+    let offsetError=0,hipError=0,floorError=0;const samples=[];
+    const step=(pose,frame,st)=>{for(const p of pairs)p.anim.update(1/60,st);const values=pairs.map(p=>({offset:p.anim.groundFeet.offset,hipY:p.body.bones.Hips.getWorldPosition(point).y,floor:floor(p.anim.groundFeet)}));for(const v of values.slice(1)){offsetError=Math.max(offsetError,Math.abs(v.offset-values[0].offset));hipError=Math.max(hipError,Math.abs(v.hipY-values[0].hipY));floorError=Math.max(floorError,Math.abs(v.floor-values[0].floor))}samples.push({pose,frame,values});};
+    for(let frame=0;frame<60;frame++)step('stance',frame,state);
+    // 同源另一个clone已经处于不同Pose；缓存只共享编号，蒙皮坐标仍由该实例取得。
+    const posed=pairs[2],beforeFoot=posed.body.bones.LeftFoot.getWorldQuaternion(new THREE.Quaternion());posed.anim.play('Run_02',{manual:true,fade:0}).time=.23;posed.anim.mixer.update(0);posed.body.model.updateMatrixWorld(true);
+    const referencePose=new GroundFeet(posed.body),cachedPose=new posed.anim.groundFeet.constructor(posed.body);
+    check(idsEqual(probeIds(referencePose),probeIds(cachedPose))&&Math.abs(floor(referencePose)-floor(cachedPose))<1e-10,cls+': 同源不同pose重新构造probe/floor完全一致');
+    check(beforeFoot.angleTo(posed.body.bones.LeftFoot.getWorldQuaternion(new THREE.Quaternion()))>.01,cls+': 不同pose夹具确实改变了真实脚骨朝向');
+    check(cachedFootIndices(posed.body.meshes[0],'Left')===arrays[0][0],cls+': 不同pose仍复用静态编号，没有缓存pose坐标');
+    // 把临时pose恢复到与其它实例相同的真实输入时间，然后走完整反应与inactive路径。
+    const sameAction=posed.anim.play(pairs[0].anim.curName,{fade:0});sameAction.time=pairs[0].anim.cur.time;posed.anim.mixer.update(0);
+    if(!params.has('quick')){
+      for(let frame=0;frame<60;frame++)step('run',frame,{...state,speed:5.6});
+      for(const [type,frames,dur] of [['down',39,.65],['getup',27,.45]])for(let frame=0;frame<frames;frame++)step(type,frame,{...state,react:{type,t:frame/60,dur}});
+      for(let frame=0;frame<60;frame++)step('guard',frame,{...state,guard:true});
+      for(let frame=0;frame<15;frame++)step('air',frame,{...state,onGround:false,height:.5,react:{type:'air',t:frame/60,dur:.5}});
+    }
+    check(offsetError<1e-10&&hipError<1e-10&&floorError<1e-10,cls+': 动画/下倒/起身/跑/防御/空中逐帧offset/hip/floor exact');
+    check(arrays[0].every((ids,i)=>same([...ids],[...snapshots[i]])),cls+': 只读indices没有被构造或动画修改');
+    check(new Set(pairs.map(p=>p.body.meshes[0].skeleton)).size===4,cls+': 四路骨架实例各自独立');
+    for(const p of pairs)cleanup(p,source);
+    check(originals.every(({mesh,weights})=>weights.every((v,i)=>v===mesh.geometry.attributes.skinWeight.getComponent(i>>2,i%4)))&&arrays[0].every((ids,i)=>same([...ids],[...snapshots[i]])),cls+': 源GLB权重/缓存编号在释放后仍原样');
+    const after=pair(source,true,true);check(cachedFootIndices(after.body.meshes[0],'Left')===arrays[0][0]&&idsEqual(probeIds(after.anim.groundFeet),sets[0]),cls+': 释放旧实例后新clone复用静态cache且恢复相同bind probes');cleanup(after,source);
+    __metrics.push({cls,frames:samples.length,offsetError,hipError,floorError,sole:sets[0].sole.length,reaction:sets[0].reaction.length,candidates:snapshots.map(a=>a.length),samples});
+    document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n');await new Promise(resolve=>setTimeout(resolve,0));
+  }
+}catch(error){__errors.push(String(error.stack||error));}
+document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n');window.__ready=true;
+</script></body></html>
