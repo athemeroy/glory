@@ -1,6 +1,8 @@
+// TEST REFERENCE: Frost sleeve weights shipped in 737cf87.
+// Keep this baseline independent of later runtime repairs; never imported by the game.
 // 霜法师袖面曾整片绑 Hand，肘边又混入 neck/Spine；仅修复已审计的外袍近臂区域。
 import * as THREE from 'three';
-import { markSharedResource } from './model.js';
+import { markSharedResource } from '../src/game/model.js';
 
 const prepared = new WeakMap();
 const smooth = (a, b, value) => { const t = Math.max(0, Math.min(1, (value - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -25,9 +27,6 @@ function prepare(mesh, body) {
   const source = mesh.geometry, si = source.attributes.skinIndex, sw = source.attributes.skinWeight;
   if (!si || !sw || !source.index || !body.bones.Head || !body.bones.Hips) return null;
   const names = mesh.skeleton.bones.map(bone => bone.name), hips = body.bones.Hips.getWorldPosition(new THREE.Vector3()), head = body.bones.Head.getWorldPosition(new THREE.Vector3());
-  // This GLB names the upper chest Spine; Spine02 is the lower waist.
-  const spineIndex = names.indexOf('Spine'), neckIndex = names.indexOf('neck');
-  if (spineIndex < 0 || neckIndex < 0) return null;
   const chains = [];
   for (const [side, sign] of [['Left', 1], ['Right', -1]]) {
     const bones = ['Arm', 'ForeArm', 'Hand'].map(part => body.bones[side + part]);
@@ -35,7 +34,6 @@ function prepare(mesh, body) {
     chains.push({side, sign, arm: bones[0].getWorldPosition(new THREE.Vector3()), elbow: bones[1].getWorldPosition(new THREE.Vector3()), wrist: bones[2].getWorldPosition(new THREE.Vector3()), indices: ['Arm', 'ForeArm', 'Hand'].map(part => names.indexOf(side + part))});
   }
   if (chains.length !== 2 || chains.some(chain => chain.indices.some(index => index < 0))) return null;
-  for (const chain of chains) chain.upperAxis = new THREE.Vector3().subVectors(chain.elbow, chain.arm).normalize();
   const point = new THREE.Vector3(), points = new Float32Array(si.count * 3), welded = new Uint32Array(si.count), cells = new Map(), parent = [];
   mesh.skeleton.update();
   for (let i = 0; i < si.count; i++) {
@@ -74,20 +72,7 @@ function prepare(mesh, body) {
     if (amount <= 1e-6) continue;
     const byBone = new Map();
     for (let k = 0; k < 4; k++) { const index = indices[i * 4 + k]; byBone.set(index, (byBone.get(index) || 0) + weights[i * 4 + k] * (1 - amount)); }
-    // Let the shoulder root follow the upper chest, fading into the arm field.
-    // An arc gate keeps all 2179 restored Hand-polluted sleeve points
-    // arm-dominant while the outer shoulder fold follows neck.
-    const rootArc = new THREE.Vector3().subVectors(point, chain.arm).dot(chain.upperAxis);
-    const outward = chain.sign * (point.x - chain.arm.x - chain.upperAxis.x * rootArc);
-    const outerBlend = smooth(-.01, .02, outward) * smooth(.15, .22, rootArc);
-    const rootEnd = THREE.MathUtils.lerp(.36, .30, outerBlend);
-    const armBlend = 1 - .90 * (1 - smooth(.001, rootEnd, rootArc));
-    const extraFore = .90 * sample.weights[0] * .06 * smooth(.175, .185, rootArc) * (1 - smooth(.23, .31, rootArc));
-    const target = [sample.weights[0] - extraFore, sample.weights[1] + extraFore, sample.weights[2]];
-    const rootAmount = target[0] * (1 - armBlend) * amount;
-    byBone.set(neckIndex, (byBone.get(neckIndex) || 0) + rootAmount * outerBlend);
-    byBone.set(spineIndex, (byBone.get(spineIndex) || 0) + rootAmount * (1 - outerBlend));
-    for (let k = 0; k < 3; k++) byBone.set(chain.indices[k], (byBone.get(chain.indices[k]) || 0) + target[k] * (k === 0 ? armBlend : 1) * amount);
+    for (let k = 0; k < 3; k++) byBone.set(chain.indices[k], (byBone.get(chain.indices[k]) || 0) + sample.weights[k] * amount);
     const best = [...byBone].filter(([, weight]) => weight > 0).sort((a, b) => b[1] - a[1]).slice(0, 4), sum = best.reduce((value, [, weight]) => value + weight, 0);
     for (let k = 0; k < 4; k++) { indices[i * 4 + k] = best[k]?.[0] || 0; weights[i * 4 + k] = best[k] ? best[k][1] / sum : 0; }
     strength[i] = amount; componentMask[i] = 1; changed++;
@@ -106,7 +91,6 @@ function prepare(mesh, body) {
 
 export function repairSleeveWeights(body, classId) {
   if (classId !== 'frostcaster') return null;
-  if (body.sleeve?.classId === classId) return body.sleeve;
   let changed = 0;
   for (const mesh of body.meshes) {
     const source = mesh.geometry;

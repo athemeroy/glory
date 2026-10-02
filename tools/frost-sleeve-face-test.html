@@ -1,0 +1,65 @@
+<!doctype html><html><head><meta charset="utf-8"><script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">对照相同原三角面的袖面变形…</pre><script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, loadClipLibrary, MocapAnimator } from '../src/game/mocap.js';
+import { repairAttachmentWeights } from '../src/game/attachment.js';
+import { buildCharacter, disposeRig } from '../src/game/model.js';
+import { Animator } from '../src/game/anim.js';
+import { MOBS } from '../src/data/enemies.js';
+window.__errors=[];window.__results=[];window.__metrics=[];
+const check=(ok,label)=>{if(!ok)throw Error(label);__results.push(label)};
+function samples(body) {
+  body.model.updateMatrixWorld(true);const mesh=body.meshes[0],geometry=mesh.geometry;mesh.skeleton.update();
+  const transforms=mesh.skeleton.bones.map((_,i)=>new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().fromArray(mesh.skeleton.boneMatrices,i*16)));
+  const bind=new THREE.Matrix3().setFromMatrix4(mesh.bindMatrix),inverse=new THREE.Matrix3().setFromMatrix4(mesh.bindMatrixInverse),world=new THREE.Matrix3().getNormalMatrix(mesh.matrixWorld),base=new THREE.Vector3(),part=new THREE.Vector3();
+  const points=[],normals=[],si=geometry.attributes.skinIndex,sw=geometry.attributes.skinWeight;
+  for(let i=0;i<si.count;i++) {
+    points.push(mesh.getVertexPosition(i,new THREE.Vector3()).applyMatrix4(mesh.matrixWorld));
+    base.fromBufferAttribute(geometry.attributes.normal,i).applyMatrix3(bind);const normal=new THREE.Vector3();
+    for(let k=0;k<4;k++){const weight=sw.getComponent(i,k);if(weight)normal.addScaledVector(part.copy(base).applyMatrix3(transforms[si.getComponent(i,k)]),weight)}
+    normals.push(normal.applyMatrix3(inverse).applyMatrix3(world).normalize());
+  }
+  return {points,normals};
+}
+const face=(points,a,b,c)=>new THREE.Vector3().subVectors(points[b],points[a]).cross(new THREE.Vector3().subVectors(points[c],points[a]));
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');const source=(await new GLTFLoader().loadAsync('../assets/models/rigged/frostcaster.glb')).scene;
+  delete source.userData.gloryClass;const baseline=createMocapBody(source);repairAttachmentWeights(baseline,'frostcaster');source.userData.gloryClass='frostcaster';const fixed=createMocapBody(source);
+  check(!!fixed.sleeve,'实际统一入口修复已应用');
+  const index=baseline.meshes[0].geometry.index,bind=samples(baseline),triangles=[],quality=[];
+  check(index===fixed.meshes[0].geometry.index,'before/after使用同一source.index，包含恢复前被Hand过滤的袖面');
+  for(let at=0;at<index.count;at+=3) {
+    const a=index.getX(at),b=index.getX(at+1),c=index.getX(at+2),normal=face(bind.points,a,b,c),area=normal.length();if(area<1e-8)continue;
+    const expected=bind.normals[a].clone().add(bind.normals[b]).add(bind.normals[c]).normalize(),dot=normal.clone().normalize().dot(expected);
+    triangles.push({a,b,c,area,sign:dot<0?-1:1,orientationReliable:Math.abs(dot)>.05});
+  }
+  check(triangles.length>16000,'统计整个原网格固定三角集合，过滤零面积面');
+  const pairs=[baseline,fixed].map(body=>{const rig=buildCharacter(MOBS.frostcaster.look),proc=new Animator(rig);proc.breath=0;return{body,rig,proc,anim:new MocapAnimator(body,rig)}});
+  for(const pose of ['stance','run','attack','overhead','down']) {
+    const state={speed:pose==='run'?5.6:0,fwd:1,onGround:true,stance:MOBS.frostcaster.stance,pitch:0,react:pose==='down'?{type:'down',t:.8,dur:1}:null,action:pose==='attack'?{clip:MOBS.frostcaster.chain[0].anim,stage:'active',t:.65,key:'proof'}:pose==='overhead'?{clip:'jumpslam',stage:'wind',t:1,key:'proof'}:null};
+    for(let i=0;i<60;i++)for(const pair of pairs){pair.proc.update(1/60,state);pair.anim.update(1/60,state)}
+    const old=samples(baseline),current=samples(fixed),stats={before:{collapsed:0,thin:0,folded:0},after:{collapsed:0,thin:0,folded:0}},newFolds=[],newCollapsed=[];
+    for(const tri of triangles) {
+      const values=[];
+      for(const [which,sample]of [['before',old],['after',current]]) {
+        const normal=face(sample.points,tri.a,tri.b,tri.c),ratio=normal.length()/tri.area,expected=sample.normals[tri.a].clone().add(sample.normals[tri.b]).add(sample.normals[tri.c]).normalize(),dot=normal.lengthSq()>1e-15?normal.normalize().dot(expected)*tri.sign:0;
+        if(!Number.isFinite(ratio)||!Number.isFinite(dot))throw Error('非有限三角变形 '+tri.a);
+        if(ratio<.05)stats[which].collapsed++;if(ratio<.20)stats[which].thin++;if(tri.orientationReliable&&dot<-.10&&ratio>=.05)stats[which].folded++;
+        values.push({ratio,dot});
+      }
+      const [before,after]=values,report={a:tri.a,b:tri.b,c:tri.c,before,after,bind: [tri.a,tri.b,tri.c].map(i=>bind.points[i].toArray()),sleeve:[tri.a,tri.b,tri.c].map(i=>fixed.meshes[0].userData.sleeveStrength?.[i]||0)};
+      if(tri.orientationReliable&&after.dot<-.10&&after.ratio>=.05&&before.dot>=-.10)newFolds.push(report);
+      if(after.ratio<.05&&before.ratio>=.05)newCollapsed.push(report);
+    }
+    newFolds.sort((a,b)=>a.after.dot-b.after.dot);newCollapsed.sort((a,b)=>a.after.ratio-b.after.ratio);
+    __metrics.push({pose,faces:triangles.length,stats,newFolds:newFolds.length,newCollapsed:newCollapsed.length,worstNewFolds:newFolds.slice(0,20),worstNewCollapsed:newCollapsed.slice(0,20)});
+    check(true,pose+': 同三角集合面积与相对于蒙皮法线的朝向均有限');
+    quality.push({ok:newFolds.length===0&&newCollapsed.length===0,label:pose+': 完整source.index无新增折返/压扁'});
+  }
+  for(const result of quality)check(result.ok,result.label);
+  for(const pair of pairs){pair.anim.mixer.stopAllAction();disposeRig({root:pair.body.model},{sharedRoots:[source]});disposeRig(pair.rig)}
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>
