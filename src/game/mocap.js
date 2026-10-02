@@ -223,6 +223,13 @@ export function retargetClip(clip, rest) {
   return new THREE.AnimationClip(clip.name, clip.duration, tracks, clip.blendMode);
 }
 
+// 分区仍使用完整原顶点编号；仅传递服饰修复已认证的只读逐点数据。
+const splitReadonlyMetadata = [
+  'clothProtectedLimbMask', 'clothStrength', 'attachmentStrength', 'attachmentComponent',
+  'firstPersonHeadMask', 'clericWeightMask', 'sleeveStrength', 'sleeveComponent',
+  'robeStrength', 'skirtStrength',
+];
+
 // 把蒙皮网格按主导骨骼拆出头部与手臂（第一人称隐藏用）；返回 {head:[], arms:[], body:[]}
 export function splitForFirstPerson(body) {
   const out = { head: [], arms: [], body: [] };
@@ -256,6 +263,11 @@ export function splitForFirstPerson(body) {
       ng.morphTargetsRelative = g.morphTargetsRelative;
       ng.setIndex(lists[k]);
       const nm = new THREE.SkinnedMesh(ng, m.material);
+      // Fighter在拆分后创建接地检测；不能把衣料排除标记留在已移除的原网格上。
+      for (const key of splitReadonlyMetadata) {
+        const value = m.userData[key];
+        if (ArrayBuffer.isView(value) && value.length === g.attributes.position.count) nm.userData[key] = value;
+      }
       nm.castShadow = true; nm.frustumCulled = false; nm.name = m.name + '_' + k;
       nm.position.copy(m.position); nm.quaternion.copy(m.quaternion); nm.scale.copy(m.scale);
       nm.bindMode = m.bindMode;
