@@ -1,0 +1,74 @@
+<!doctype html><html><head><meta charset="utf-8"><base href="../"><title>Explicit preload recovery contracts</title><script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script></head>
+<body><pre id="result">独立realm检查失败重试与成功缓存…</pre><script type="module">
+// 每种case使用新页面realm；只执行真实Game.preload方法，不创建Game/Renderer。
+window.__results=[];window.__errors=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label),params=new URLSearchParams(location.search),kind=params.get('case')||'preload';
+const originalFetch=window.fetch.bind(window),counts={clips:0,rigged:0,models:0,rigManifest:0,modelManifest:0},requests=[];
+let failFirst=kind==='clip'||kind==='preload';
+window.fetch=(input,options)=>{
+  const url=new URL(typeof input==='string'?input:input.url,document.baseURI),path=url.pathname;
+  if(path==='/assets/anim/anims.glb'){
+    counts.clips++;requests.push(path);
+    if(failFirst){failFirst=false;return Promise.resolve(new Response('isolated first animation failure',{status:404}));}
+  }
+  if(path==='/assets/models/rigged/manifest.json'){counts.rigManifest++;return Promise.resolve(new Response(JSON.stringify(['swordmaster']),{headers:{'content-type':'application/json'}}));}
+  if(path==='/assets/models/manifest.json'){counts.modelManifest++;return Promise.resolve(new Response(JSON.stringify(['swordmaster','skeleton']),{headers:{'content-type':'application/json'}}));}
+  if(/^\/assets\/models\/rigged\/.*\.glb$/.test(path)){counts.rigged++;requests.push(path);}
+  if(/^\/assets\/models\/(?!rigged\/).*\.glb$/.test(path)){counts.models++;requests.push(path);}
+  return originalFetch(input,options);
+};
+const wait=()=>new Promise(resolve=>setTimeout(resolve,30));
+try{
+  const mocap=await import('../src/game/mocap.js');
+  if(kind==='clip'||kind==='healthy'){
+    const first=mocap.loadClipLibrary('assets/anim/anims.glb'),concurrent=mocap.loadClipLibrary('assets/anim/anims.glb');
+    check(first===concurrent,'相同加载cycle的并发调用共享pending Promise');
+    const initial=await first;
+    if(kind==='clip'){
+      check(initial===null&&!mocap.hasClips(),'第一次404可安全回退，动捕库未被当成功');
+      const failureCount=counts.clips;await wait();check(counts.clips===failureCount,'失败后没有后台轮询或自动再次请求');
+      const retry=mocap.loadClipLibrary('assets/anim/anims.glb'),retryConcurrent=mocap.loadClipLibrary('assets/anim/anims.glb'),library=await retry;
+      check(retry!==first&&retry===retryConcurrent,'下次显式调用创建一个新共享Promise');
+      check(library?.size===70&&mocap.hasClips()&&counts.clips===2,'一次恢复GET取得真实70个动作');
+      check(mocap.loadClipLibrary()===retry&&(await mocap.loadClipLibrary())===library,'成功Promise及动作Map保持身份，不再次下载');
+    }else{
+      check(initial?.size===70&&mocap.hasClips(),'健康初次请求取得真实70个动作');
+      check(mocap.loadClipLibrary()===first&&(await mocap.loadClipLibrary())===initial&&counts.clips===1,'健康库只GET一次，成功Promise/Map完全复用');
+    }
+    __metrics.push({case:kind,counts,requests});
+  }else{
+    const {Game}=await import('../src/game/game.js');
+    let textures=0,progress=0;const cycles=[];
+    const g={settings:{mocap:kind!=='noRig',models:kind!=='noModels'},texCache:new Map(),models:new Map(),rigged:new Map(),loader:{loadAsync:async()=>({request:++textures})}};
+    Object.defineProperty(g,'loadProgress',{get:()=>progress,set(value){if(value===0)cycles.push([]);cycles[cycles.length-1].push(value);progress=value}});
+    const modelsMap=g.models,riggedMap=g.rigged,texMap=g.texCache;
+    const first=Game.prototype.preload.call(g),concurrent=Game.prototype.preload.call(g);check(first===concurrent,'真实Game方法的并发cycle共享pending Promise');await first;
+    const stone=g.texCache.get('stone'),fallback=g.models.get('swordmaster'),legacy=g.models.get('skeleton');
+    check(g.models===modelsMap&&g.rigged===riggedMap&&g.texCache===texMap,'首次cycle不替换已有models/rigged/texCache容器');
+    check(textures===6&&g.loadProgress===1,'首次六个纹理均完成，进度达到100%');
+    if(kind==='preload'){
+      check(!mocap.hasClips()&&g.rigged.size===0&&g.models.size===2&&counts.clips===1,'动作404后真实两类静态模型仍可回退');
+      check(g._preload===null,'失败动作cycle完成后可接受下一次显式启动');
+      const failedCounts={...counts};await wait();check(JSON.stringify(counts)===JSON.stringify(failedCounts),'回退完成后无后台重试或重复模型下载');
+      const retry=Game.prototype.preload.call(g),retryConcurrent=Game.prototype.preload.call(g);check(retry!==first&&retry===retryConcurrent,'下一次显式preload以一个新cycle重试');await retry;
+      check(mocap.hasClips()&&g.rigged.size===1&&g.rigged.get('swordmaster')?.userData.gloryClass==='swordmaster'&&counts.clips===2&&counts.rigged===1,'恢复动作后真实GLB进入同一个rigged Map');
+      check(g.models.get('swordmaster')===fallback&&g.models.get('skeleton')===legacy&&counts.models===2,'成功静态模型身份保留，不重复下载fallback或legacy');
+      check(g.texCache===texMap&&g.texCache.get('stone')===stone&&textures===6,'成功纹理身份保持，恢复cycle仍只有六次初始加载');
+      const stable={...counts},cached=Game.prototype.preload.call(g);await cached;check(cached===retry&&JSON.stringify(counts)===JSON.stringify(stable),'成功Game cycle继续缓存同Promise和资源');
+      // 独立强制一个合法后续cycle，证明已成功rigged/legacy不会被重建或重复GET。
+      const rig=g.rigged.get('swordmaster');g._preload=null;await Game.prototype.preload.call(g);
+      check(g.rigged.get('swordmaster')===rig&&g.models.get('skeleton')===legacy&&g.models===modelsMap&&g.rigged===riggedMap,'后续cycle保留成功rigged/静态模型及Map身份');
+      check(counts.clips===2&&counts.rigged===1&&counts.models===2&&textures===6,'后续cycle跳过所有已成功动作/纹理/模型请求');
+    }else{
+      const stable={...counts},cached=Game.prototype.preload.call(g);await cached;
+      check(cached===first&&JSON.stringify(counts)===JSON.stringify(stable),'禁用动捕/模型的正常成功cycle保持缓存，不误认失败');
+      check(counts.clips===0&&counts.rigged===0,'禁用路径不请求动作或绑定模型');
+      check(kind==='noModels'?counts.models===0:g.models.size===2,'禁用模型不下载精模，仅禁用动捕仍可加载静态模型');
+    }
+    check(cycles.every(values=>values[0]===0&&values.at(-1)===1&&values.every((v,i)=>v>=0&&v<=1&&(!i||v>=values[i-1]))),'每个cycle进度均单调且完成100%');
+    __metrics.push({case:kind,counts,textures,cycles,requests,rigged:g.rigged.size,models:g.models.size,rendererCreated:false});
+  }
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+finally{window.fetch=originalFetch;window.__ready=true;}
+</script></body></html>

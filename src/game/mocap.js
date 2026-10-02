@@ -57,7 +57,7 @@ export function loadClipLibrary(url = 'assets/anim/anims.glb') {
     const ref = hipsY.get('Idle') || hipsY.get('Combat_Stance');
     refHipY = ref ? ref.ys[0] : 1;
     return clipLib;
-  }).catch((e) => { console.warn('动作库加载失败', e); clipLib = null; return null; });
+  }).catch((e) => { console.warn('动作库加载失败', e); clipLib = null; clipLibPromise = null; return null; });
   return clipLibPromise;
 }
 export function hasClips() { return !!clipLib && clipLib.size > 0; }

@@ -136,20 +136,23 @@ export class Game {
   preload() {
     if (this._preload) return this._preload;
     const names = ['stone', 'wood', 'iron', 'cloth', 'leather', 'bronze'];
-    this.models = new Map();
+    this.models ||= new Map();
     this.loadDone = 0; this.loadTotal = 6;
     this.loadProgress = 0; this.loadStage = '准备贴图和动作';
-    let listKnown = false;
+    let listKnown = false, animationFailed = false;
     const progress = () => {
       const value = listKnown ? .1 + .8 * this.loadDone / this.loadTotal : .1 * this.loadDone / names.length;
       this.loadProgress = Math.max(this.loadProgress, value);
     };
-    const tex = Promise.all(names.map((n) => this.loader.loadAsync(`assets/tex/${n}.jpg`).then((t) => {
-      t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
-      this.texCache.set(n, t); this.loadDone++; progress();
-    }).catch(() => { this.loadDone++; progress(); })));
+    const tex = Promise.all(names.map((n) => {
+      if (this.texCache.has(n)) { this.loadDone++; progress(); return Promise.resolve(); }
+      return this.loader.loadAsync(`assets/tex/${n}.jpg`).then((t) => {
+        t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+        this.texCache.set(n, t); this.loadDone++; progress();
+      }).catch(() => { this.loadDone++; progress(); });
+    }));
     // 动捕绑定模型（Tripo + Meshy）优先；没有绑定模型的角色才加载旧的静态精模
-    this.rigged = new Map();
+    this.rigged ||= new Map();
     const q = new URLSearchParams(location.search);
     const noRig = this.settings.mocap === false || q.get('mocap') === '0';
     const noModels = this.settings.models === false || q.get('models') === '0';
@@ -157,23 +160,34 @@ export class Game {
       .then((list) => Array.isArray(list) ? [...new Set(list.filter(k => typeof k === 'string' && /^[a-z][a-z0-9_-]*$/.test(k)))] : []).catch(() => []);
     const rigList = noRig || noModels ? Promise.resolve([]) : getList('assets/models/rigged/manifest.json');
     const oldList = noModels ? Promise.resolve([]) : getList('assets/models/manifest.json');
-    const rigged = (noRig || noModels ? Promise.resolve([]) : loadClipLibrary().then((lib) => (lib ? rigList : [])))
+    const rigged = (noRig || noModels ? Promise.resolve([]) : loadClipLibrary().then((lib) => {
+      animationFailed = !lib;
+      return lib ? rigList : [];
+    }))
       .then((list) => {
         this.loadTotal += list.length; listKnown = true; this.loadStage = list.length ? '加载角色' : '准备场景'; progress();
-        return Promise.all(list.map((k) => new GLTFLoader().loadAsync(`assets/models/rigged/${k}.glb`).then((g) => {
-          g.scene.userData.gloryClass = k; this.rigged.set(k, g.scene); this.loadDone++; progress();
-        }).catch(() => { this.loadDone++; progress(); })));
+        return Promise.all(list.map((k) => {
+          if (this.rigged.has(k)) { this.loadDone++; progress(); return Promise.resolve(); }
+          return new GLTFLoader().loadAsync(`assets/models/rigged/${k}.glb`).then((g) => {
+            g.scene.userData.gloryClass = k; this.rigged.set(k, g.scene); this.loadDone++; progress();
+          }).catch(() => { this.loadDone++; progress(); });
+        }));
       });
     const models = noModels ? Promise.resolve() : rigged.then(() => oldList)
       .then((list) => {
         list = list.filter((k) => !this.rigged.has(k)); this.loadTotal += list.length;
         if (list.length) this.loadStage = '补全角色'; progress();
-        return Promise.all(list.map((k) => loadModel(`assets/models/${k}.glb`).then((sc) => {
-          if (sc) this.models.set(k, sc); this.loadDone++; progress();
-        })));
+        return Promise.all(list.map((k) => {
+          if (this.models.has(k)) { this.loadDone++; progress(); return Promise.resolve(); }
+          return loadModel(`assets/models/${k}.glb`).then((sc) => {
+            if (sc) this.models.set(k, sc); this.loadDone++; progress();
+          });
+        }));
       });
     this._preload = Promise.all([tex, models, rigged]).then(() => {
       this.loadProgress = 1; this.loadStage = '准备场景';
+      // 失败时仍可使用旧模型开局；下一次显式启动才重试动作，成功资源继续复用。
+      if (animationFailed) this._preload = null;
     }).catch(error => { this._preload = null; this.loadStage = '加载失败'; throw error; });
     return this._preload;
   }
