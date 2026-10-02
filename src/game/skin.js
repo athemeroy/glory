@@ -9,7 +9,7 @@ const cache = new Map();
 const loader = new GLTFLoader();
 
 export function loadModel(url) {
-  if (!cache.has(url)) cache.set(url, loader.loadAsync(url).then((g) => g.scene).catch(() => null));
+  if (!cache.has(url)) cache.set(url, loader.loadAsync(url).then((g) => g.scene).catch(() => { cache.delete(url); return null; }));
   return cache.get(url);
 }
 export function hasModel(url) { return cache.has(url); }

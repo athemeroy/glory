@@ -139,7 +139,7 @@ export class Game {
     this.models ||= new Map();
     this.loadDone = 0; this.loadTotal = 6;
     this.loadProgress = 0; this.loadStage = '准备贴图和动作';
-    let listKnown = false, animationFailed = false;
+    let listKnown = false, animationFailed = false, assetFailed = false;
     const progress = () => {
       const value = listKnown ? .1 + .8 * this.loadDone / this.loadTotal : .1 * this.loadDone / names.length;
       this.loadProgress = Math.max(this.loadProgress, value);
@@ -156,8 +156,13 @@ export class Game {
     const q = new URLSearchParams(location.search);
     const noRig = this.settings.mocap === false || q.get('mocap') === '0';
     const noModels = this.settings.models === false || q.get('models') === '0';
-    const getList = (u) => fetch(u).then((r) => (r.ok ? r.json() : []))
-      .then((list) => Array.isArray(list) ? [...new Set(list.filter(k => typeof k === 'string' && /^[a-z][a-z0-9_-]*$/.test(k)))] : []).catch(() => []);
+    const getList = (u) => fetch(u).then((r) => {
+      if (!r.ok) throw new Error('Model manifest unavailable');
+      return r.json();
+    }).then((list) => {
+      if (!Array.isArray(list)) throw new Error('Invalid model manifest');
+      return [...new Set(list.filter(k => typeof k === 'string' && /^[a-z][a-z0-9_-]*$/.test(k)))];
+    }).catch(() => { assetFailed = true; return []; });
     const rigList = noRig || noModels ? Promise.resolve([]) : getList('assets/models/rigged/manifest.json');
     const oldList = noModels ? Promise.resolve([]) : getList('assets/models/manifest.json');
     const rigged = (noRig || noModels ? Promise.resolve([]) : loadClipLibrary().then((lib) => {
@@ -170,7 +175,7 @@ export class Game {
           if (this.rigged.has(k)) { this.loadDone++; progress(); return Promise.resolve(); }
           return new GLTFLoader().loadAsync(`assets/models/rigged/${k}.glb`).then((g) => {
             g.scene.userData.gloryClass = k; this.rigged.set(k, g.scene); this.loadDone++; progress();
-          }).catch(() => { this.loadDone++; progress(); });
+          }).catch(() => { assetFailed = true; this.loadDone++; progress(); });
         }));
       });
     const models = noModels ? Promise.resolve() : rigged.then(() => oldList)
@@ -180,14 +185,15 @@ export class Game {
         return Promise.all(list.map((k) => {
           if (this.models.has(k)) { this.loadDone++; progress(); return Promise.resolve(); }
           return loadModel(`assets/models/${k}.glb`).then((sc) => {
-            if (sc) this.models.set(k, sc); this.loadDone++; progress();
+            if (sc) this.models.set(k, sc); else assetFailed = true;
+            this.loadDone++; progress();
           });
         }));
       });
     this._preload = Promise.all([tex, models, rigged]).then(() => {
       this.loadProgress = 1; this.loadStage = '准备场景';
-      // 失败时仍可使用旧模型开局；下一次显式启动才重试动作，成功资源继续复用。
-      if (animationFailed) this._preload = null;
+      // 失败时仍可使用备用模型开局；下一次显式启动才重试失败资源。
+      if (animationFailed || assetFailed) this._preload = null;
     }).catch(error => { this._preload = null; this.loadStage = '加载失败'; throw error; });
     return this._preload;
   }

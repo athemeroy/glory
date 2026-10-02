@@ -1,0 +1,84 @@
+<!doctype html><html><head><meta charset="utf-8"><base href="../"><title>Explicit model recovery contracts</title><script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script></head>
+<body><pre id="result">检查模型清单及单个模型失败后的恢复…</pre><script type="module">
+// 独立页面realm；真实Game.preload、GLTFLoader和静态模型缓存，不创建Renderer。
+window.__results=[];window.__errors=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label),kind=new URLSearchParams(location.search).get('case')||'rigManifest';
+const originalFetch=window.fetch.bind(window),counts={clips:0,rigManifest:0,modelManifest:0,rigged:0,models:0},requests=[];
+let failing=true;
+const failedManifest=(name)=>failing&&(kind===name||name==='modelManifest'&&['invalidJSON','invalidShape'].includes(kind));
+window.fetch=(input,options)=>{
+  const url=new URL(typeof input==='string'?input:input.url,document.baseURI),path=url.pathname;
+  requests.push(path);
+  if(path==='/assets/anim/anims.glb')counts.clips++;
+  if(path==='/assets/models/rigged/manifest.json'||path==='/assets/models/manifest.json'){
+    const name=path.includes('/rigged/')?'rigManifest':'modelManifest';counts[name]++;
+    if(failedManifest(name)){
+      if(kind==='invalidJSON')return Promise.resolve(new Response('{', {headers:{'content-type':'application/json'}}));
+      if(kind==='invalidShape')return Promise.resolve(new Response('{}', {headers:{'content-type':'application/json'}}));
+      return Promise.resolve(new Response('isolated manifest failure',{status:404}));
+    }
+    const list=kind==='empty'?[]:name==='rigManifest'?['swordmaster','swordmaster','../bad','NOPE',null]:['swordmaster','skeleton'];
+    return Promise.resolve(new Response(JSON.stringify(list),{headers:{'content-type':'application/json'}}));
+  }
+  if(/^\/assets\/models\/rigged\/.*\.glb$/.test(path)){
+    counts.rigged++;
+    if(failing&&kind==='rigGLB')return Promise.resolve(new Response('isolated bound model failure',{status:404}));
+  }
+  if(/^\/assets\/models\/(?!rigged\/).*\.glb$/.test(path)){
+    counts.models++;
+    if(failing&&['modelGLB','modelHelper'].includes(kind)&&path.endsWith('/skeleton.glb'))return Promise.resolve(new Response('isolated static model failure',{status:404}));
+  }
+  return originalFetch(input,options);
+};
+const wait=()=>new Promise(resolve=>setTimeout(resolve,30));
+try{
+  if(kind==='modelHelper'){
+    const {loadModel,hasModel}=await import('../src/game/skin.js'),url='assets/models/skeleton.glb';
+    const first=loadModel(url),concurrent=loadModel(url);check(first===concurrent,'单个静态模型的并发加载共享pending Promise');
+    check(await first===null&&counts.models===1,'静态模型404可安全回退，首次只请求一次');
+    check(!hasModel(url),'失败静态模型不被保留在成功或pending缓存中');
+    await wait();check(counts.models===1,'失败后没有后台自动重试');
+    failing=false;const retry=loadModel(url),shared=loadModel(url),scene=await retry;
+    check(retry!==first&&retry===shared&&scene?.isObject3D&&counts.models===2,'显式重试创建新共享Promise并得到真实GLB场景');
+    check(loadModel(url)===retry&&await loadModel(url)===scene&&hasModel(url)&&counts.models===2,'成功场景和Promise身份保持，不重复下载');
+  }else{
+    const {Game}=await import('../src/game/game.js'),mocap=await import('../src/game/mocap.js');
+    let textures=0,progress=0;const cycles=[];
+    const g={settings:{mocap:kind!=='noRig',models:kind!=='noModels'},texCache:new Map(),models:new Map(),rigged:new Map(),loader:{loadAsync:async()=>({request:++textures})}};
+    Object.defineProperty(g,'loadProgress',{get:()=>progress,set(value){if(value===0)cycles.push([]);cycles.at(-1).push(value);progress=value}});
+    const maps=[g.models,g.rigged,g.texCache],first=Game.prototype.preload.call(g),concurrent=Game.prototype.preload.call(g);
+    check(first===concurrent,'同一Game预加载cycle的并发调用共享Promise');await first;
+    const stone=g.texCache.get('stone'),successfulModels=[...g.models],successfulRigs=[...g.rigged],failedCounts={...counts};
+    check(textures===6&&stone&&g.loadProgress===1,'回退或健康cycle均完成六张纹理，进度100%');
+    check([g.models,g.rigged,g.texCache].every((map,i)=>map===maps[i]),'预加载保留已有资源Map身份');
+    await wait();check(JSON.stringify(counts)===JSON.stringify(failedCounts),'cycle结束后无后台重试');
+    const control=['empty','noRig','noModels'].includes(kind);
+    if(control){
+      check(g._preload===first,'健康空清单和禁用路径保持成功cycle缓存');
+      const cached=Game.prototype.preload.call(g);await cached;
+      check(cached===first&&JSON.stringify(counts)===JSON.stringify(failedCounts),'再次显式调用不重复请求健康空清单或禁用资源');
+      check(kind==='empty'?mocap.hasClips()&&counts.clips===1:counts.clips===0,'健康空清单可缓存动作；禁用路径不请求动作');
+      check(kind==='noModels'?counts.rigManifest===0&&counts.modelManifest===0&&counts.models===0:kind==='noRig'?counts.rigManifest===0&&counts.rigged===0&&g.models.size===2:g.models.size===0&&g.rigged.size===0,'空清单和两种禁用路径的资源行为正确');
+    }else{
+      check(mocap.hasClips()&&counts.clips===1,'模型失败时健康的70个动作仍正常缓存');
+      check(g._preload===null,'失败清单或单个GLB允许下一次显式启动恢复');
+      check(['rigManifest','rigGLB'].includes(kind)?g.rigged.size===0&&g.models.size===2:g.rigged.size===1&&g.models.size===0,'只有失败资源缺失，其他真实模型继续可用');
+      failing=false;const retry=Game.prototype.preload.call(g),shared=Game.prototype.preload.call(g);await retry;
+      check(retry!==first&&retry===shared,'下一次显式启动只创建一个共享恢复cycle');
+      check(g.rigged.size===1&&g.models.has('skeleton')&&g.rigged.get('swordmaster')?.userData.gloryClass==='swordmaster','网络恢复后真实绑定模型和静态模型均可用');
+      check(successfulModels.every(([k,v])=>g.models.get(k)===v)&&successfulRigs.every(([k,v])=>g.rigged.get(k)===v),'恢复保留所有已经成功的模型场景身份');
+      check([g.models,g.rigged,g.texCache].every((map,i)=>map===maps[i])&&g.texCache.get('stone')===stone&&textures===6,'恢复保持Map/纹理身份，成功纹理不重新加载');
+      check(counts.clips===1,'模型恢复不重新请求已成功的动作库');
+      check(counts.rigged===(kind==='rigGLB'?2:1)&&counts.models===(['rigManifest','rigGLB'].includes(kind)?2:kind==='modelGLB'?2:1),'仅失败GLB重试，成功GLB各下载一次');
+      const healthyCounts={...counts},cached=Game.prototype.preload.call(g);await cached;
+      check(cached===retry&&g._preload===retry&&JSON.stringify(counts)===JSON.stringify(healthyCounts),'恢复成功后继续缓存Promise和资源');
+    }
+    check(!requests.some(path=>path.includes('bad')||path.includes('NOPE')),'清单仍去重并过滤不安全名称');
+    check(cycles.every(values=>values[0]===0&&values.at(-1)===1&&values.every((v,i)=>v>=0&&v<=1&&(!i||v>=values[i-1]))),'每个cycle的进度单调且完成100%');
+    __metrics.push({case:kind,counts,textures,cycles,models:g.models.size,rigged:g.rigged.size});
+  }
+  __metrics.push({case:kind,counts,requests,rendererCreated:false});
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n')+'\n'+JSON.stringify(__metrics,null,2);
+}catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+finally{window.fetch=originalFetch;window.__ready=true;}
+</script></body></html>

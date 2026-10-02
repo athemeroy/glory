@@ -37,7 +37,7 @@ try {
   check(g.models.has('qa_rig_fail')&&g.models.has('qa_static')&&g.loadDone===g.loadTotal&&g.loadProgress===1,'旧模型回退完成后计数相等并达到100%');
   check(monotone(g)&&g.loadStage==='准备场景','最终进度有效且显示准备场景');
   check([...g.texCache.values()].every(texture=>texture.wrapS===THREE.RepeatWrapping&&texture.wrapT===THREE.RepeatWrapping&&texture.colorSpace===THREE.SRGBColorSpace),'预加载贴图保留环绕与颜色空间配置');
-  const count=requests.length;check(Game.prototype.preload.call(g)===p&&requests.length===count,'加载完成后再次调用仍复用缓存且不产生请求');
+  const count=requests.length;check(g._preload===null&&requests.length===count,'绑定模型失败后释放cycle缓存，不自动重试成功或失败资源');
   __metrics.push({case:'rig-fallback',progress:g.history,done:g.loadDone,total:g.loadTotal,requests:requests.map(({kind,url})=>({kind,url}))});
 
   requests=[];const malformed=game(),bad=Game.prototype.preload.call(malformed);
