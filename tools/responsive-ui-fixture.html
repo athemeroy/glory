@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<base href="../">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Glory responsive menu fixture · no WebGL</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="styles/lobby-ui.css">
+<link rel="stylesheet" href="styles/combat-ui.css">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script>
+<style>
+/* Layout evidence only. A labelled static portrait replaces the WebGL viewer. */
+.fixture-portrait { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: .8; }
+.fixture-label { position: absolute; right: 8px; bottom: 8px; color: #a6b9bc; font-size: 10px; }
+</style>
+</head>
+<body><canvas id="game"></canvas><div id="hud"></div><div id="menu"></div>
+<script type="module">
+import { Menu } from '../src/ui/menu.js';
+import { input } from '../src/engine/input.js';
+import { audio } from '../src/engine/audio.js';
+window.__errors = [];
+window.addEventListener('error', e => __errors.push(e.message));
+// Exercise the production menu, selection and launch wiring without renderer/GPU.
+audio.play = () => {};
+input.setTouchMode(new URLSearchParams(location.search).get('touch') !== '0');
+document.body.classList.toggle('touch-mode', input.touchMode);
+const app = {
+  game: { models: new Map(), rigged: new Map(), settings: {} },
+  startMode(mode, options) { window.__lastLaunch = { mode, account: options.account.id }; },
+  openNet() { window.__lastLaunch = { mode: 'net' }; },
+};
+const menu = new Menu(document.querySelector('#menu'), app);
+menu.mountViewer = function (box, account, pose) {
+  this.viewer = { pose, dispose() {} };
+  const img = document.createElement('img'); img.className = 'fixture-portrait';
+  img.src = `assets/portraits/avatars/${account.cls}.png`; img.alt = '布局测试静态账号图';
+  box.append(img);
+  const label = document.createElement('span'); label.className = 'fixture-label';
+  label.textContent = '布局测试 · 静态预览'; box.append(label);
+};
+window.__menu = menu;
+menu.main();
+window.__ready = true;
+</script>
+</body></html>

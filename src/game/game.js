@@ -847,8 +847,15 @@ export class Game {
     if (this.contextLost) return;
     this._renderDirty = false;
     const smooth = !this.manual && !this.paused && this.fpBody;
+    // 世界手臂会插值到上一模拟步与本步之间，眼位也必须取同一姿势。
+    // 保留 updateCamera 的眼高缓动/后坐偏移，只消除显示姿势造成的相位差；
+    // 绘制后还原相机，不能让这个临时偏移进入下一帧缓动或战斗计算。
+    const fpEye = smooth && this.firstPerson && this.player && this._fpEyeOwner === this.player.id && !this.camHook ? this.player : null;
+    const eyeY = fpEye ? fpEye.eyePos(this.tmp).y : 0;
+    const cameraY = this.camera.position.y;
     if (smooth) for (const f of this.fighters) f.renderPose?.present(this.acc / STEP);
     try {
+      if (fpEye) this.camera.position.y += fpEye.eyePos(this.tmp).y - eyeY;
       // 录制工具用：外部接管机位（宣传片运镜），游戏本身不设置
       if (this.camHook) { try { this.camHook(this.camera, this); } catch (e) { this.camHook = null; console.warn('camHook', e); } }
       if (this.settings.post !== false && this.post) { this.post.render(dt); return; }
@@ -870,6 +877,7 @@ export class Game {
       if (smooth) for (const f of this.fighters) {
         f.renderPose?.restore(); f.rig.root.updateMatrixWorld(true);
       }
+      if (fpEye) { this.camera.position.y = cameraY; this.camera.updateMatrixWorld(true); }
     }
   }
 }
