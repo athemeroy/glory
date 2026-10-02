@@ -1,0 +1,44 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Cloth repair lifecycle regression</title>
+<script type="importmap">{"imports":{"three":"../vendor/three.module.js"}}</script></head>
+<body><pre id="result">绑定、动画及第一人称拆分后的重复衣料修复检查…</pre><script type="module">
+import { GLTFLoader } from '../vendor/GLTFLoader.js';
+import { createMocapBody, loadClipLibrary, MocapAnimator, splitForFirstPerson } from '../src/game/mocap.js';
+import { repairClothWeights } from '../src/game/cloth.js';
+import { disposeRig } from '../src/game/model.js';
+window.__results=[];window.__errors=[];window.__metrics=[];
+const check=(ok,label)=>(ok?__results:__errors).push(label);
+const equal=(a,b)=>a.length===b.length&&a.every((value,i)=>value===b[i]);
+const loader=new GLTFLoader();
+try {
+  await loadClipLibrary('../assets/anim/anims.glb');
+  for (const cls of ['berserker','skeleton']) {
+    const source=(await loader.loadAsync('../assets/models/rigged/'+cls+'.glb')).scene;
+    let originalMesh;source.traverse(object=>{if(object.isSkinnedMesh&&!originalMesh)originalMesh=object});
+    const originalGeometry=originalMesh.geometry,originalIndices=originalGeometry.attributes.skinIndex.array.slice(),originalWeights=originalGeometry.attributes.skinWeight.array.slice();
+    source.userData.gloryClass=cls;
+    for (const phase of ['bind','animated','split']) {
+      const body=createMocapBody(source),anim=phase==='bind'?null:new MocapAnimator(body);
+      if(anim)for(let frame=0;frame<12;frame++)anim.update(1/60,{speed:0,fwd:1,onGround:true,stance:'greatsword',pitch:0,react:{type:'getup',t:frame/60,dur:.45}});
+      if(phase==='split')splitForFirstPerson(body);
+      const first=body.cloth;
+      const snapshots=body.meshes.map(mesh=>({mesh,geometry:mesh.geometry,skinIndex:mesh.geometry.attributes.skinIndex,skinWeight:mesh.geometry.attributes.skinWeight,indices:mesh.geometry.attributes.skinIndex.array.slice(),weights:mesh.geometry.attributes.skinWeight.array.slice(),strength:mesh.userData.clothStrength,attachment:mesh.userData.attachmentComponent}));
+      const repeated=repairClothWeights(body,cls);
+      let changedComponents=0,maxWeightDelta=0;
+      for(const snapshot of snapshots){
+        const si=snapshot.mesh.geometry.attributes.skinIndex.array,sw=snapshot.mesh.geometry.attributes.skinWeight.array;
+        for(let i=0;i<sw.length;i++){if(si[i]!==snapshot.indices[i]||sw[i]!==snapshot.weights[i])changedComponents++;maxWeightDelta=Math.max(maxWeightDelta,Math.abs(sw[i]-snapshot.weights[i]))}
+      }
+      check(repeated===first,cls+' '+phase+': 重复准备保留完整流水线的原统计对象');
+      check(snapshots.every(s=>s.mesh.geometry===s.geometry&&s.mesh.geometry.attributes.skinIndex===s.skinIndex&&s.mesh.geometry.attributes.skinWeight===s.skinWeight),cls+' '+phase+': 不替换服饰/第一人称流水线已经准备的geometry和蒙皮属性');
+      check(changedComponents===0,cls+' '+phase+': 不用当前动作位置重算衣料域或再次混合骨权重');
+      check(snapshots.every(s=>s.mesh.userData.clothStrength===s.strength&&s.mesh.userData.attachmentComponent===s.attachment),cls+' '+phase+': 原只读衣料和附件标记保持引用');
+      check(originalMesh.geometry===originalGeometry&&equal(originalGeometry.attributes.skinIndex.array,originalIndices)&&equal(originalGeometry.attributes.skinWeight.array,originalWeights),cls+' '+phase+': 原GLB及其他共享实例保持不变');
+      __metrics.push({cls,phase,meshes:snapshots.length,sameGeometry:snapshots.every(s=>s.mesh.geometry===s.geometry),changedComponents,maxWeightDelta});
+      anim?.mixer.stopAllAction();disposeRig({root:body.model},{sharedRoots:[source]});
+    }
+  }
+  check(repairClothWeights({meshes:[]},'swordmaster')===null,'其他职业仍不进入已审计衣料修复');
+  document.querySelector('#result').textContent=__results.join('\n')+'\n'+__errors.join('\n');
+} catch(error){__errors.push(String(error.stack||error));document.querySelector('#result').textContent=__errors.join('\n')}
+window.__ready=true;
+</script></body></html>

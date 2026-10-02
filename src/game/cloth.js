@@ -92,6 +92,7 @@ function prepare(mesh, body, profile) {
 export function repairClothWeights(body, classId) {
   const profile = profiles[classId];
   if (!profile) return null;
+  if (body.cloth?.classId === classId) return body.cloth;
   let changed = 0, protectedLimbVertices = 0;
   for (const mesh of body.meshes) {
     const source = mesh.geometry;
