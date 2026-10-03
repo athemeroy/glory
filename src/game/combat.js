@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { gunProjectile, applyGunRecoil } from './ballistics.js';
 import { DEG, wrapAngle, clamp, rand } from '../engine/util.js';
-import { attackKind, attackWindow, attackSegments, hurtCapsules, segmentHitCharacter,
+import { attackKind, attackWindow, attackSegments, hurtCapsules, hitHeightOverlaps, segmentHitCharacter,
   sweptMeleeContact, rangedMeleeContact, sphereContact, cylinderContact } from './combat-volumes.js';
 import { isCleanseable } from './statuses.js';
 
@@ -73,10 +73,7 @@ export class Combat {
         const oldSegments = previous?.uid === w.uid ? previous.segments[idx] : currentSegments;
         const contact = area ? rangedMeleeContact(att, t, h, def, caps) : sweptMeleeContact(oldSegments, currentSegments, t, from, to, caps);
         if (!contact) continue;
-        if (h.h) {
-          const relativeHeight = (contact.point.y - att.pos.y) / scale;
-          if (relativeHeight < h.h[0] - 0.025 || relativeHeight > h.h[1] + 0.025) continue;
-        }
+        if (!hitHeightOverlaps(att, h, contact.point.y)) continue;
         const dx = contact.point.x - att.pos.x, dz = contact.point.z - att.pos.z;
         const yaw = !area && previous?.uid === w.uid ? previous.yaw +
           wrapAngle(now.yaw-previous.yaw)*(contact.fraction ?? 1) : att.yaw;
