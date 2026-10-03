@@ -2,7 +2,7 @@
 import { rand, wrapAngle, turnToward, clamp, DEG } from '../engine/util.js';
 import { visibleTo } from './perception.js';
 import { isCleanseable } from './statuses.js';
-import { attackKind } from './combat-volumes.js';
+import { attackKind, hurtCapsules, hitHeightOverlaps } from './combat-volumes.js';
 
 export const DIFFICULTY = {
   easy: { name: '新手', react: 480, aimErr: 0.1, spread: 0.07, aggr: 0.45, guardP: 0.12, dodgeP: 0.08, techP: 0.15, combo: 0.3, turn: 4, think: 260 },
@@ -305,6 +305,21 @@ export class Brain {
     const want = vulnerable ? d.combo : down ? 0.35 : d.aggr * (this.ranged ? 0.9 : 0.75);
     if (Math.random() > want) return;
     const cands = [];
+    // Reject only contact attacks whose authored height bands cannot touch any
+    // target body part now. Rising/relocating attacks and spells need their own
+    // trajectories, so a static-height test must not rule them out. Horizontal
+    // dashes are still contact attacks. Reuse one body query for this decision.
+    let targetCapsules;
+    const reachesTargetHeight = def => {
+      if (!def.hits?.length || def.proj || def.aoe || def.beam || def.selfVy ||
+        def.selfLeap || def.leap || def.flyDash || def.blink || def.slamOnLand || def.stageDefs) return true;
+      return def.hits.some(h => {
+        if (!h.h || ['ground', 'sphere', 'cone', 'cylinder'].includes(attackKind(h, def, f))) return true;
+        targetCapsules ||= hurtCapsules(t);
+        return targetCapsules.some(c => hitHeightOverlaps(f, h,
+          Math.min(c.a.y, c.b.y) - c.radius, Math.max(c.a.y, c.b.y) + c.radius));
+      });
+    };
     const skills = f.cls.skills || {};
     for (const slot in skills) {
       const s = skills[slot];
@@ -314,6 +329,7 @@ export class Brain {
       if (s.phase && (f.phase || 1) < s.phase) continue;
       const ai = s.ai || { range: [0, 3], role: 'poke' };
       if (dist < ai.range[0] - 0.3 || dist > ai.range[1] + 0.3) continue;
+      if (!reachesTargetHeight(s)) continue;
       if(s.hits&&!s.proj&&!s.aoe&&!s.beam&&!s.dash&&!s.flyDash&&!s.leap&&!s.blink&&
         !s.slamOnLand&&!s.stageDefs&&!['ground','sphere','cone','cylinder'].includes(attackKind(s.hits[0],s,f))&&
         dist>meleeActionSpacing(f,s,t)+.12+(s.lunge||0)*.8)continue;
@@ -359,7 +375,8 @@ export class Brain {
       if (w > 0) cands.push({ slot, w });
     }
     // 蓄力重击（霸体克普攻）：对手在出普攻、或自己想破防时
-    if (!this.ranged && chain0Melee(f) && dist < meleeActionSpacing(f,f.chargeDef(),t)+.18 && !down && Math.random() < (t.action && t.action.slot === 'atk' ? 0.45 : t.state === 'guard' ? 0.5 : 0.1)) {
+    const charge = !this.ranged && chain0Melee(f) ? f.chargeDef() : null;
+    if (charge && dist < meleeActionSpacing(f,charge,t)+.18 && !down && reachesTargetHeight(charge) && Math.random() < (t.action && t.action.slot === 'atk' ? 0.45 : t.state === 'guard' ? 0.5 : 0.1)) {
       if (f.startCharge()) { this.chargeT = t.state === 'guard' ? 1150 : rand(300, 900); return; }
     }
     // 普攻

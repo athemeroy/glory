@@ -2,7 +2,7 @@ import * as THREE from '../vendor/three.module.js';
 import { World } from '../src/game/world.js';
 import { Combat } from '../src/game/combat.js';
 import { buildWeapon } from '../src/game/weapons.js';
-import { characterProfile, hurtCapsules, segmentCapsule, segmentHitCharacter,
+import { characterProfile, hurtCapsules, hitHeightOverlaps, segmentCapsule, segmentHitCharacter,
   attackSegments, sweptMeleeContact, cylinderContact, sphereContact, rangedMeleeContact } from '../src/game/combat-volumes.js';
 
 const v = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -45,6 +45,26 @@ function projectile(g, owner, from, velocity, p = {}) {
 export function runCombatVolumeRegression() {
   const tests = [];
   const test = (name, fn) => { try { fn(); tests.push({ name, passed: true }); } catch (e) { tests.push({ name, passed: false, error: e.message }); } };
+
+  test('shared height predicate preserves the exact original combat boundaries', () => {
+    // Independent frozen predicate from Combat.updateMelee before extraction.
+    for (const scale of [.5, 1, 2.5]) for (const y of [-5, 0, 7]) {
+      const att = fighter(0, y, 0, { scale }), h = { h: [-.1, 2.2] };
+      for (const relative of [-2, -.125001, -.125, -.124999, 0, 2.224999, 2.225, 2.225001, 5]) {
+        const pointY = y + relative * scale, oldRelative = (pointY - y) / scale;
+        const expected = !(oldRelative < h.h[0] - .025 || oldRelative > h.h[1] + .025);
+        assert(hitHeightOverlaps(att, h, pointY) === expected, `boundary changed at ${scale}/${y}/${relative}`);
+      }
+      assert(hitHeightOverlaps(att, {}, y + 100), 'height-less attack gained a limit');
+    }
+  });
+  test('height interval overlap uses body extent and attacker scale', () => {
+    const att = fighter(0, 4, 0, { scale: 2 }), h = { h: [0, 2.2] };
+    assert(hitHeightOverlaps(att, h, 3, 4.1), 'overlapping upper body rejected');
+    assert(hitHeightOverlaps(att, h, 8.4, 9), 'scaled high contact rejected');
+    assert(!hitHeightOverlaps(att, h, 8.6, 9), 'unreachable high body accepted');
+    assert(!hitHeightOverlaps(att, h, 1, 3.9), 'unreachable lower body accepted');
+  });
 
   test('exact sphere entry, not projected centre', () => {
     const hit = segmentCapsule(v(-2, 0, 0), v(2, 0, 0), { a: v(0, 0, 0), b: v(0, 0, 0), radius: 0.2, region: 'head' });
