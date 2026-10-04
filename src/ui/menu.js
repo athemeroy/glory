@@ -298,6 +298,11 @@ export class Menu {
       for (const x of s.querySelectorAll('#create,#join,#mk-offer')) x.disabled = pending || occupied;
       s.querySelector('#use-code').disabled = pending || net.connected || !!net.remoteSet;
       s.querySelector('#leave-room').hidden = !occupied;
+      for (const block of s.querySelectorAll('.net-block')) block.hidden = occupied;
+      s.querySelector('#mk-offer').hidden = occupied;
+      s.querySelector('.net-manual').hidden = net.connected;
+      paste.hidden = occupied && !!net.remoteSet;
+      s.querySelector('#use-code').hidden = occupied && !!net.remoteSet;
       nameIn.disabled = occupied || pending;
       for (const x of s.querySelectorAll('.acc-grid button,.class-detail select,.pw-new,.pw-join,.code-in')) x.disabled = occupied || pending;
       const host = net.role === 'host' && occupied;

@@ -234,3 +234,11 @@
 .settings-note { color: #8da4af; font-size: 11px; line-height: 1.8; margin: 18px 0 0; }
 #menu .settings-box .set-foot { border-top: 1px solid var(--ui-line); padding-top: 17px; }
 @media(max-width: 760px) { .settings-tabs button { font-size: 12px; padding: 12px; } .settings-section .set-row { gap: 10px; } .settings-section .set-row label { font-size: 12px; } .settings-section .set-row .ctl { max-width: 62%; } .settings-section .set-row select { max-width: 100%; font-size: 11px; } .settings-section .set-row input[type=range] { width: 110px; } .settings-section .set-row span { min-width: 38px; font-size: 11px; } }
+
+/* Keep the room heading readable on narrow screens. */
+@media (max-width: 600px) {
+  .setup-screen:has(.net-col) .setup-head { flex-wrap: wrap; gap: 10px; }
+  .setup-screen:has(.net-col) .setup-head > .btn { flex: 0 0 auto; white-space: nowrap; }
+  .setup-screen:has(.net-col) .setup-title { flex: 1; min-width: 0; white-space: nowrap; }
+  .setup-screen:has(.net-col) .net-rtt { flex-basis: 100%; }
+}
