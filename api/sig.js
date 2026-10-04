@@ -1,8 +1,7 @@
 // Vercel 函数：联机牵线（逻辑见 server/sig-core.mjs）。
 // 存储：配置了 Upstash Redis（Vercel Marketplace，环境变量 KV_REST_API_URL / KV_REST_API_TOKEN
-// 或 UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN）时用 Redis；否则退回函数实例内存
-// （同一实例内可用，实例重启或多实例时房间号可能失效）。
-import { handleSig, memoryStore, HttpError } from '../server/sig-core.mjs';
+// 或 UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN）时用 Redis；否则返回明确错误，让客户端使用手动连接码，避免多实例下生成失效房间号。
+import { handleSig, HttpError } from '../server/sig-core.mjs';
 
 const URL_ = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -19,10 +18,11 @@ function redisStore() {
   };
 }
 
-const store = URL_ && TOKEN ? redisStore() : memoryStore();
+const store = URL_ && TOKEN ? redisStore() : null;
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
+  if (!store) { res.status(503).json({ error: '房间号服务尚未配置持久化存储，请使用手动连接码' }); return; }
   if (req.method !== 'POST') { res.status(405).json({ error: '只接受 POST' }); return; }
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});

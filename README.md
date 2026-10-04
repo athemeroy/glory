@@ -73,9 +73,10 @@
 ## 联机
 
 游戏数据走浏览器直连（`src/engine/p2p.js`，WebRTC 数据通道），不经过服务器。连接前双方要交换一次连接信息：
-- 房间号：`POST /api/sig`（`server/sig-core.mjs`；本地由 `server/server.mjs` 提供，线上由 Vercel 函数 `api/sig.js` 提供，配置 Upstash Redis 后跨实例可靠）。
-- 连接码：约 300 字符，房主发给对方、对方回复一段，不需要任何服务器；房间号服务不可用时自动改用。
-- 双方都在运营商大内网（对称 NAT）时可能打不通；没有配置 TURN 中转。
+- 房间号：`POST /api/sig`（`server/sig-core.mjs`；本地由 `server/server.mjs` 提供，线上由 Vercel 函数 `api/sig.js` 提供，需配置 Upstash Redis 才提供六位房间号；未配置时自动改用手动传码）。
+- 连接码：房主生成邀请连接码后进入房间（1/2），访客粘贴后生成回复码，再由房主粘贴确认。手动传码等待3分钟；不要把房主的邀请码当成访客回复码。房间号服务不可用时自动改用手动传码。
+- TURN 配置：服务端设置 `TURN_URLS`（逗号分隔的 `turn:` / `turns:` 地址）及 Coturn REST 的 `TURN_SECRET`；`GET /api/ice` 签发一小时凭据，共享密钥不发送到浏览器。Vercel 与本地 Node 服务均支持。需要真实可用的中继服务器，仅填写变量或交换连接码不能消除运营商网络限制。
+- 移动网络、手机热点或限制 UDP 的网络可能无法直连；热点不保证可用。部署可配置 TURN 中继，当前正式站尚未配置。
 - 部署：`tools/vercel/build.sh && vercel deploy dist --prod`。`vercel.app` 在国内被 DNS 污染，国内访问需绑定自己的域名。
 
 ## 宣传片

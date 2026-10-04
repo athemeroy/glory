@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { iceConfiguration } from './ice-config.mjs';
 import { handleSig, memoryStore } from './sig-core.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -16,6 +17,7 @@ const store = memoryStore();
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/api/ice') { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(iceConfiguration())); return; }
   if (url.pathname === '/api/sig') { sig(req, res); return; }
   let p = decodeURIComponent(url.pathname);
   if (p === '/' || p.endsWith('/')) p += 'index.html';
@@ -32,7 +34,7 @@ function sig(req, res) {
   const reply = (status, obj) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
   if (req.method !== 'POST') { reply(405, { error: '只接受 POST' }); return; }
   let body = '';
-  req.on('data', (d) => { body += d; if (body.length > 8000) req.destroy(); });
+  req.on('data', (d) => { body += d; if (body.length > 40000) req.destroy(); });
   req.on('end', async () => {
     try {
       const out = await handleSig(JSON.parse(body || '{}'), store);
