@@ -10,8 +10,8 @@ const ICE = [
   { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
 ];
 const SIG = '/api/sig'; // 站点根路径：游戏放在 /play/ 下也能找到；没有该接口时自动退回连接码
-const GATHER_MS = 3500;   // 收集候选地址的最长等待
-const CONNECT_MS = 20000; // 对方应答后，打洞的最长等待
+const GATHER_MS = 8000;   // 收集候选地址的最长等待
+const CONNECT_MS = 45000; // 对方应答后，打洞的最长等待
 
 // ---------------------------------------------------------------- 连接码压缩
 // 只保留 SDP 里建立数据通道所需的字段，其余按固定模板还原（Chrome / Edge / Firefox / Safari 均接受）
@@ -28,22 +28,25 @@ function pack(desc) {
   const o = {
     t: desc.type === 'offer' ? 'o' : 'a',
     u: get(/a=ice-ufrag:(\S+)/), p: get(/a=ice-pwd:(\S+)/),
-    f: hexToB64(fp), s: get(/a=setup:(\S+)/), c: cands.slice(0, 6),
+    f: hexToB64(fp), s: get(/a=setup:(\S+)/), c: cands,
+    l: [...sdp.matchAll(/^a=candidate:[^\r\n]+/gm)].map(m => m[0]),
   };
   return 'G1' + b64url(new TextEncoder().encode(JSON.stringify(o)));
 }
 
 function unpack(code) {
   const s = String(code || '').replace(/\s+/g, '');
-  if (!s.startsWith('G1')) throw new Error('连接码格式不对');
+  if (!s.startsWith('G1') || s.length > 16000) throw new Error('连接码格式不对，请完整复制连接码');
   const o = JSON.parse(new TextDecoder().decode(unb64url(s.slice(2))));
-  const fp = b64ToHex(o.f).match(/../g).join(':').toUpperCase();
+  if (!['o', 'a'].includes(o.t) || !o.u || !o.p || !o.f || !o.s || !Array.isArray(o.c)) throw new Error('连接码不完整，请重新复制');
+  const fp = b64ToHex(o.f).match(/../g)?.join(':').toUpperCase();
+  if (!fp || fp.split(':').length !== 32) throw new Error('连接码指纹无效');
   let prio = 2130706431;
   const cand = o.c.map(([addr, port, k], i) => `a=candidate:${i + 1} 1 udp ${k === 'h' ? prio - i : 1686052607 - i} ${addr} ${port} typ ${k === 'h' ? 'host' : 'srflx'}${k === 's' ? ' raddr 0.0.0.0 rport 0' : ''}`);
   const sdp = [
     'v=0', `o=- ${Date.now()} 2 IN IP4 127.0.0.1`, 's=-', 't=0 0', 'a=group:BUNDLE 0', 'a=msid-semantic: WMS',
     'm=application 9 UDP/DTLS/SCTP webrtc-datachannel', 'c=IN IP4 0.0.0.0',
-    ...cand,
+    ...(Array.isArray(o.l) ? o.l.filter(l => typeof l === 'string' && /^a=candidate:[^\r\n]+$/.test(l)) : cand),
     `a=ice-ufrag:${o.u}`, `a=ice-pwd:${o.p}`, `a=fingerprint:sha-256 ${fp}`, `a=setup:${o.s}`,
     'a=mid:0', 'a=sctp-port:5000', 'a=max-message-size:262144', '',
   ].join('\r\n');
@@ -66,7 +69,7 @@ function cyrb53(str, seed) {
 async function sha(text) { return cyrb53(text, 7) + cyrb53(text, 1999); }
 
 async function sig(body) {
-  const r = await fetch(SIG, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await fetch(SIG, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `房间服务出错（${r.status}）`);
   return j;
@@ -86,15 +89,23 @@ export class P2PNet {
   send(o) { if (this.ch && this.ch.readyState === 'open') this.ch.send(JSON.stringify(o)); }
   relay(d) { this.send({ t: 'relay', d }); }
   // 兼容旧接口：直连不需要预先连接服务器
-  connect() { return this.supported ? Promise.resolve(this) : Promise.reject(new Error('浏览器不支持 WebRTC')); }
+  async connect() {
+    if (!this.supported) throw new Error('浏览器不支持 WebRTC');
+    try {
+      const r = await fetch('/api/ice', { signal: AbortSignal.timeout(3000), cache: 'no-store' });
+      if (r.ok) { const cfg = await r.json(); if (Array.isArray(cfg.iceServers)) this.iceServers = [...ICE, ...cfg.iceServers]; }
+    } catch { /* 没有中继配置时仍可尝试直连。 */ }
+    this.hasRelay = (this.iceServers || ICE).some(s => [s.urls].flat().some(u => /^turns?:/.test(u)));
+    return this;
+  }
 
   newPeer() {
     this.close(true);
-    const pc = new RTCPeerConnection({ iceServers: ICE });
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers || ICE });
     this.pc = pc;
     pc.onconnectionstatechange = () => {
       if (pc !== this.pc) return;
-      if (pc.connectionState === 'failed') this.fail('直连失败：双方网络都在运营商大内网时打不通。可以让一方换成家里宽带或手机热点再试。');
+      if (pc.connectionState === 'failed') this.fail('直连失败：双方网络都在运营商大内网时打不通。请尝试其他网络；手机热点也可能受运营商限制。需要 TURN 中继才能覆盖这类网络。');
       if (pc.connectionState === 'disconnected' && this.connected) { this.connected = false; this.peerGone = true; this.emit('close', {}); }
     };
     return pc;
@@ -111,13 +122,15 @@ export class P2PNet {
   bindChannel(ch) {
     this.ch = ch;
     ch.onopen = () => {
+      if (ch !== this.ch) return;
       clearTimeout(this._connTo);
       this.connected = true; this.peerGone = false;
       if (this.role === 'guest') this.send({ t: 'hello', name: this.me.name, info: this.me.info, pw: this.pwHash });
       clearInterval(this._pi); this._pi = setInterval(() => this.send({ t: 'ping', ts: performance.now() }), 1000);
     };
-    ch.onclose = () => { if (this.connected) { this.connected = false; this.peerGone = true; this.emit('left', {}); this.emit('close', {}); } };
+    ch.onclose = () => { if (ch !== this.ch) return; if (this.connected) { this.connected = false; this.peerGone = true; this.emit('left', {}); this.emit('close', {}); } };
     ch.onmessage = (ev) => {
+      if (ch !== this.ch) return;
       let m; try { m = JSON.parse(ev.data); } catch { return; }
       switch (m.t) {
         case 'relay': this.emit('relay', m.d); break;
@@ -135,21 +148,24 @@ export class P2PNet {
     };
   }
   fail(msg) { this.emit('error', { msg }); this.close(true); }
-  armTimeout() { clearTimeout(this._connTo); this._connTo = setTimeout(() => { if (!this.connected) this.fail('连接超时：双方网络可能无法直连。可以让一方换成家里宽带或手机热点再试。'); }, CONNECT_MS); }
+  armTimeout(ms = CONNECT_MS) { clearTimeout(this._connTo); this._connTo = setTimeout(() => { if (!this.connected) this.fail('连接超时：双方网络可能无法直连。请尝试其他网络；手机热点也可能受运营商限制。需要 TURN 中继才能覆盖这类网络。'); }, ms); }
 
   // ---- 房主 ----
   // useServer：用房间号服务；否则只出连接码，等对方的回复码
   async host({ name, info, password = '', useServer = true }) {
-    this.role = 'host'; this.me = { name, info }; this.pwHash = password ? await sha('glory:' + password) : '';
     const pc = this.newPeer();
+    this.role = 'host'; this.room = null; this.me = { name, info }; this.pwHash = password ? await sha('glory:' + password) : '';
+    if (pc !== this.pc) throw new Error('房间已关闭');
     this.bindChannel(pc.createDataChannel('glory', { ordered: true }));
     await pc.setLocalDescription(await pc.createOffer());
     const code = await this.localCode(pc);
+    if (pc !== this.pc) throw new Error('房间已关闭');
     this.offerCode = code;
     if (!useServer) return { code };
     let r;
     try { r = await sig({ op: 'new', offer: code, pw: this.pwHash, name, acc: info && info.acc }); }
-    catch (e) { return { code, sigError: e.message }; } // 没有房间号服务：沿用已生成的连接码
+    catch (e) { if (pc !== this.pc) throw new Error('房间已关闭'); return { code, sigError: e.message }; } // 没有房间号服务：沿用已生成的连接码
+    if (pc !== this.pc) throw new Error('房间已关闭');
     this.room = r.room;
     this.pollAnswer(pc, r.room);
     return { code, room: r.room };
@@ -158,39 +174,49 @@ export class P2PNet {
     while (pc === this.pc && !this.remoteSet) {
       try {
         const r = await sig({ op: 'poll', room, pw: this.pwHash });
+        if (pc !== this.pc) return;
         if (r.answer) { await this.acceptAnswer(r.answer); return; }
-      } catch (e) { if (/不存在|过期/.test(e.message)) { this.fail('房间已过期，请重新创建'); return; } }
+      } catch (e) { if (pc !== this.pc) return; if (/不存在|过期/.test(e.message)) { this.fail('房间已过期，请重新创建'); return; } }
       await new Promise((res) => setTimeout(res, 1200));
     }
   }
   async acceptAnswer(code) {
     if (this.remoteSet || !this.pc) return;
+    const desc = unpack(code);
+    if (desc.type !== 'answer') throw new Error('这是房主的邀请连接码，请粘贴访客发回的回复码');
+    const pc = this.pc;
+    await pc.setRemoteDescription(desc);
+    if (pc !== this.pc) throw new Error('房间已关闭，请重新创建');
     this.remoteSet = true;
-    await this.pc.setRemoteDescription(unpack(code));
     this.armTimeout();
   }
 
   // ---- 加入方 ----
   // 用房间号：从服务取房主的连接码，回复码自动交回；用连接码：返回回复码，由玩家发给房主
   async join({ name, info, password = '', room = '', code = '' }) {
-    this.role = 'guest'; this.me = { name, info }; this.pwHash = password ? await sha('glory:' + password) : '';
+    const epoch = this._epoch || 0;
+    this.role = 'guest'; this.room = null; this.me = { name, info }; this.pwHash = password ? await sha('glory:' + password) : '';
     let offer = code;
     if (room) { const r = await sig({ op: 'get', room, pw: this.pwHash }); offer = r.offer; this.room = room; }
     const desc = unpack(offer);
     if (desc.type !== 'offer') throw new Error('这是回复码，请粘贴房主发来的连接码');
+    if (epoch !== (this._epoch || 0)) throw new Error('加入已取消');
     const pc = this.newPeer();
     pc.ondatachannel = (ev) => this.bindChannel(ev.channel);
     await pc.setRemoteDescription(desc);
     await pc.setLocalDescription(await pc.createAnswer());
     const answer = await this.localCode(pc);
+    if (pc !== this.pc) throw new Error('加入已取消');
     this.remoteSet = true;
     if (room) await sig({ op: 'answer', room, answer, pw: this.pwHash });
-    this.armTimeout();
+    if (pc !== this.pc) throw new Error('加入已取消');
+    if (!this.connected) this.armTimeout(room ? CONNECT_MS : 180000);
     return { answer };
   }
 
   leave() { this.send({ t: 'bye' }); this.close(true); this.role = null; this.room = null; }
   close(silent = false) {
+    this._epoch = (this._epoch || 0) + 1;
     clearInterval(this._pi); clearTimeout(this._connTo);
     const pc = this.pc; this.pc = null; this.remoteSet = false;
     if (this.ch) { try { this.ch.close(); } catch { /* */ } this.ch = null; }

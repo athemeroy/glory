@@ -8,7 +8,7 @@
 // pw 是客户端对密码做的哈希（没设密码时为空串）。
 
 const TTL = 15 * 60;
-const MAX_CODE = 2000;
+const MAX_CODE = 16000;
 
 export class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 

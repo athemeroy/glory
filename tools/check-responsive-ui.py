@@ -9,6 +9,7 @@ import argparse
 import json
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from browser_qa import confine_to_local
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('url')
@@ -18,7 +19,7 @@ a = parser.parse_args()
 a.output.mkdir(parents=True, exist_ok=True)
 viewports = [(320, 568), (360, 740), (390, 844), (600, 700), (700, 635),
              (752, 688), (768, 1024), (841, 701), (1024, 768),
-             (667, 375), (844, 390), (1440, 900)]
+             (667, 375), (844, 390), (1280, 320), (1280, 400), (1440, 400), (1440, 900)]
 reports = []
 
 
@@ -59,12 +60,13 @@ def check_combat(page):
 
 
 with sync_playwright() as pw:
-    browser = pw.chromium.launch(headless=True, args=['--disable-gpu'],
+    browser = pw.chromium.launch(headless=True, chromium_sandbox=True, args=['--disable-gpu'],
                                 **({'executable_path': a.browser} if a.browser else {}))
     for width, height in viewports:
         mobile = width < 1200
         context = browser.new_context(viewport={'width': width, 'height': height}, has_touch=mobile,
                                       is_mobile=mobile, device_scale_factor=1)
+        blocked = confine_to_local(context, a.url)
         page = context.new_page()
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -127,6 +129,7 @@ with sync_playwright() as pw:
             cdp.send('Input.dispatchTouchEvent', {'type':'touchCancel','touchPoints':[]})
             page.set_viewport_size({'width': width, 'height': height})
             assert not check_combat(page)
+        assert not blocked, blocked
         assert not errors, errors
         reports.append({'viewport':[width,height], 'touch':mobile, 'result':'passed', 'evidence':'DOM layout only'})
         context.close()

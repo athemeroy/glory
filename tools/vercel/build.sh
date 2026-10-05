@@ -29,7 +29,7 @@ else
   mv dist/index.html.tmp dist/index.html
 fi
 rsync -a --exclude='/assets/models/_cmp/' index.html style.css styles src vendor assets dist/play/
-cp api/sig.js dist/api/ && cp server/sig-core.mjs dist/server/
+cp api/sig.js api/ice.js dist/api/ && cp server/sig-core.mjs server/ice-config.mjs dist/server/
 cp tools/vercel/vercel.json dist/
 printf '{ "private": true, "type": "module" }\n' > dist/package.json
 # 将当前提交写入部署，方便核对 GitHub 与线上版本。

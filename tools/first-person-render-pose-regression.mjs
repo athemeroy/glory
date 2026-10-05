@@ -52,14 +52,27 @@ async function makeFighter(clsId) {
   return { g, f };
 }
 function poses(f) { return f.renderPose.samples.flatMap(s => [...s.node.position.toArray(), ...s.node.quaternion.toArray(), ...s.node.scale.toArray()]); }
+// A draw observer must not call eyePos(): its simulation path writes root transforms.
+function observedEye(f) {
+  const pos = f.rig.root.position;
+  let h = f.bodyProfile.eyeHeight * f.scale;
+  const down = f.bodyProfile.downHeight * f.scale * .75;
+  if (f.state === 'down' || f.state === 'dead') h = down;
+  else if (f.state === 'getup') h = down + (h - down) * Math.max(0, Math.min(1, f.stateT / .45));
+  else if (f.mocapBody?.bones?.Head && f.bodyProfile.headOffset) {
+    const head = f.mocapBody.bones.Head.localToWorld(new THREE.Vector3(...f.bodyProfile.headOffset));
+    h = Math.max(f.height * .42, Math.min(f.height * 1.08, head.y - pos.y + f.bodyProfile.headRadius * .25 * f.scale));
+  }
+  return new THREE.Vector3(pos.x, pos.y + h, pos.z);
+}
 for (const clsId of CLASS_ORDER) {
   const { g, f } = await makeFighter(clsId);
-  let maxPhaseError = 0, maxUncorrectedPhase = 0, maxRestoreError = 0, maxWristError = 0, draws = 0;
+  let maxPhaseError = 0, maxUncorrectedPhase = 0, maxRestoreError = 0, maxWristError = 0, maxRootError = 0, maxClipError = 0, draws = 0;
   const scenarios = Object.fromEntries(['idle', 'move', 'attack'].map(name => [name, { draws: 0, uncorrectedPhase: 0, correctedPhase: 0 }]));
   for (const scenario of ['idle', 'move', 'attack']) for (const pitch of [-.9, 0, .9]) {
     f.resetState(); f.pitch = g.viewPitch = pitch; g._fpEyeOwner = null;
     for (let i = 0; i < 45; i++) {
-      if (scenario === 'move') { f.vel.set(0, 0, 5); f.state = 'move'; f.pos.z += 5 * STEP; }
+      if (scenario === 'move') { f.vel.set(0, 0, 5); f.state = 'move'; f.pos.z += 5 * STEP; f.pos.y = Math.sin(i * .13) * .8; f.yaw = g.viewYaw = i * .04; }
       if (scenario === 'attack') {
         if (!f.action) f.startAction(f.chain[0], 'atk', { chainIdx: 0 });
         else {
@@ -73,10 +86,12 @@ for (const clsId of CLASS_ORDER) {
         }
       }
       f.updateModel(STEP); Game.prototype.updateCamera.call(g, STEP);
-      const currentEye = f.eyePos().y, currentCamera = g.camera.position.y, simulation = poses(f);
+      const currentEye = f.eyePos(), currentCamera = g.camera.position.clone(), simulation = poses(f);
       const wrists = f.gripHands.map(h => h.wrist);
       for (const alpha of [0, .25, .5, .75]) {
         g.acc = alpha * STEP;
+        const root = f.renderPose.samples.find(s => s.node === f.rig.root);
+        const expectedRoot = [...root.prevP.clone().lerp(root.currP, alpha).toArray(), ...root.prevQ.clone().slerp(root.currQ, alpha).toArray(), ...root.prevS.clone().lerp(root.currS, alpha).toArray()];
         const expectedWrists = wrists.map(wrist => {
           const s = f.renderPose.samples.find(s => s.node === wrist);
           if (!s) return null;
@@ -84,9 +99,15 @@ for (const clsId of CLASS_ORDER) {
         });
         g.renderer.render = (scene, camera) => {
           scene.updateMatrixWorld(true); draws++;
-          const presentedEye = f.eyePos().y;
-          const uncorrected = Math.abs(presentedEye - currentEye);
-          const corrected = Math.abs((camera.position.y - presentedEye) - (currentCamera - currentEye));
+          const actualRoot = [...f.rig.root.position.toArray(), ...f.rig.root.quaternion.toArray(), ...f.rig.root.scale.toArray()];
+          maxRootError = Math.max(maxRootError, ...actualRoot.map((v, k) => Math.abs(v - expectedRoot[k])));
+          for (const body of f.rig.mocapBodyMeshes) {
+            body.onBeforeRender(null, scene, camera);
+            maxClipError = Math.max(maxClipError, Math.abs([].concat(body.material)[0].clippingPlanes[0].constant - (f.rig.root.position.y + 1.36 * f.scale)));
+          }
+          const presentedEye = observedEye(f);
+          const uncorrected = presentedEye.distanceTo(currentEye);
+          const corrected = camera.position.clone().sub(presentedEye).distanceTo(currentCamera.clone().sub(currentEye));
           maxUncorrectedPhase = Math.max(maxUncorrectedPhase, uncorrected);
           maxPhaseError = Math.max(maxPhaseError, corrected);
           scenarios[scenario].draws++;
@@ -99,11 +120,13 @@ for (const clsId of CLASS_ORDER) {
           }
         };
         Game.prototype.render.call(g);
-        maxRestoreError = Math.max(maxRestoreError, Math.abs(g.camera.position.y - currentCamera), ...poses(f).map((v, k) => Math.abs(v - simulation[k])));
+        maxRestoreError = Math.max(maxRestoreError, g.camera.position.distanceTo(currentCamera), ...poses(f).map((v, k) => Math.abs(v - simulation[k])));
       }
     }
   }
   check(`${clsId}: first-person eye follows the displayed pose, retaining camera smoothing/recoil offset`, () => assert(maxPhaseError < 1e-9, `draw-time phase error ${maxPhaseError}m`));
+  check(`${clsId}: draw-time root translation and rotation keep their interpolation`, () => assert(maxRootError < 1e-9, `root interpolation error ${maxRootError}`));
+  check(`${clsId}: torso clipping follows the displayed root height`, () => assert(maxClipError < 1e-9, `clip interpolation error ${maxClipError}`));
   check(`${clsId}: wrists are sampled with the arm and grip-hand pose`, () => assert(maxWristError < 1e-9, `wrist interpolation error ${maxWristError}`));
   check(`${clsId}: drawing restores camera and authoritative transforms exactly`, () => assert.equal(maxRestoreError, 0));
   check(`${clsId}: arm culling/layers and independent materials are preserved`, () => {
@@ -124,19 +147,19 @@ for (const clsId of CLASS_ORDER) {
   for (const mode of ['manual', 'paused', 'thirdPerson', 'legacy', 'cinematic', 'spectating', 'camHook', 'post', 'throw']) {
     g.manual = mode === 'manual'; g.paused = mode === 'paused'; g.firstPerson = mode !== 'thirdPerson'; g.fpBody = mode !== 'legacy';
     g.acc = STEP / 3; g._fpEyeOwner = ['cinematic', 'spectating'].includes(mode) ? null : f.id;
-    const before = poses(f), cameraY = g.camera.position.y; let drawY;
+    const before = poses(f), camera = g.camera.position.clone(), cameraY = camera.y; let drawY;
     g.camHook = mode === 'camHook' ? camera => { camera.position.y = 12; } : null;
     const draw = () => { drawY = g.camera.position.y; if (mode === 'throw') throw Error('intentional draw failure'); };
     g.renderer.render = draw; g.settings.post = mode === 'post'; g.post = { render: draw };
     try { Game.prototype.render.call(g); } catch (error) { assert.equal(error.message, 'intentional draw failure'); }
     check(`${clsId}: ${mode} route preserves camera ownership and simulation`, () => {
       assert.deepEqual(poses(f), before);
-      assert.equal(g.camera.position.y, mode === 'camHook' ? 12 : cameraY);
+      assert.deepEqual(g.camera.position.toArray(), [camera.x, mode === 'camHook' ? 12 : cameraY, camera.z]);
       if (!['post', 'throw'].includes(mode)) assert.equal(drawY, mode === 'camHook' ? 12 : cameraY);
     });
     g.camera.position.y = cameraY;
   }
-  metrics.push({ clsId, draws, maxUncorrectedPhase, maxPhaseError, maxRestoreError, maxWristError, scenarios });
+  metrics.push({ clsId, draws, maxUncorrectedPhase, maxPhaseError, maxRestoreError, maxWristError, maxRootError, maxClipError, scenarios });
   f.dispose();
 }
 const report = { coverage: 'CPU draw-boundary integration; not WebGL pixel/visual verification', passed: results.filter(r => r.passed).length, total: results.length, metrics, failures: results.filter(r => !r.passed) };

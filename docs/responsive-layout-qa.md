@@ -19,14 +19,17 @@ python tools/check-responsive-ui.py http://localhost:8780 --browser /path/to/chr
 python tools/check-combat-ui.py http://localhost:8780 --browser /path/to/chromium --output /tmp/glory-combat-ui
 ```
 
-The responsive check covers 320×568, 360×740, 390×844, 600×700, 700×635, 752×688, 768×1024, 841×701, 1024×768, 667×375, 844×390 and 1440×900 CSS viewports. It checks the launch button, account selection, carousel navigation, match options, return / re-entry, safe areas, reduced viewport height, touch target bounds, overlap, the expanded touch menu, and gesture reset on rotation.
+The responsive check covers 320×568, 360×740, 390×844, 600×700, 700×635, 752×688, 768×1024, 841×701, 1024×768, 667×375, 844×390 1280×320, 1280×400, 1440×400 and 1440×900 CSS viewports. It checks the launch button, account selection, carousel navigation, match options, return / re-entry, safe areas, reduced viewport height, touch target bounds, overlap, the expanded touch menu, and gesture reset on rotation.
 
 `responsive-ui-fixture.html` uses the production Menu class with an explicitly labelled static portrait in place of WebGL. `combat-ui-fixture.html` uses the production HUD, TouchControls and Fighter. Their screenshots are layout evidence only, not rendered-character or 3D gameplay acceptance.
+
+The wide, short desktop cases retain the three-column layout while applying height-based reductions. These checks must be executed in a browser; their presence in the matrix is not a pass.
 
 ## CPU and syntax checks
 
 ```sh
 node tools/touch-viewport-regression.mjs
+node --experimental-loader ./tools/three-local-loader.mjs tools/first-person-render-pose-regression.mjs
 node --check src/ui/touch.js
 python -m py_compile tools/check-responsive-ui.py
 git diff --check

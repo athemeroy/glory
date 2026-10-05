@@ -263,6 +263,16 @@ export function attackWindow(h, def, index = 0) {
   return Math.min(available, h.window ?? available);
 }
 
+// The authored contact-height band, relative to the attacker's root and scale.
+// A point is the actual combat test; an interval is only a conservative AI
+// rejection test. Overlap does not imply that the animated weapon will hit.
+export function hitHeightOverlaps(att, h, low, high = low) {
+  if (!h.h) return true;
+  const scale = att.scale || 1;
+  return !((high - att.pos.y) / scale < h.h[0] - 0.025 ||
+    (low - att.pos.y) / scale > h.h[1] + 0.025);
+}
+
 export function attackSegments(att, h, def) {
   const kind = attackKind(h, def, att), scale = att.scale || 1;
   const bones = att.mocapBody?.bones || att.rig?.bones;

@@ -160,18 +160,21 @@ export class Fighter {
   get stance() { return this.form && this.cls.forms ? this.cls.forms[this.form].stance : this.baseStance; }
   get chain() { return this.form && this.cls.forms ? this.cls.forms[this.form].chain : this.cls.chain; }
   forward(out = new THREE.Vector3()) { return out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)); }
-  eyePos(out = new THREE.Vector3()) {
+  eyePos(out = new THREE.Vector3(), presented = false) {
+    // 绘制期读取已经插值的根节点，不能把它改回当前模拟步。
+    const pos = presented ? this.rig.root.position : this.pos;
     let h = this.bodyProfile.eyeHeight * this.scale;
     const downEye = this.bodyProfile.downHeight * this.scale * .75;
     if (this.state === 'down' || this.state === 'dead') h = downEye;
     else if (this.state === 'getup') h = downEye + (h - downEye) * clamp(this.stateT / 0.45, 0, 1);
     else if (this.mocapBody?.bones?.Head && this.bodyProfile.headOffset) {
       // 上身低伏时相机跟随真实头部的高度；X/Z留在角色轴上，避免挥招甩头。
-      this.rig.root.position.copy(this.pos); this.rig.root.rotation.y = this.yaw; this.rig.root.updateWorldMatrix(true, true);
+      if (!presented) { this.rig.root.position.copy(this.pos); this.rig.root.rotation.y = this.yaw; }
+      this.rig.root.updateWorldMatrix(true, true);
       const head = this.mocapBody.bones.Head.localToWorld(new THREE.Vector3(...this.bodyProfile.headOffset));
-      h = clamp(head.y - this.pos.y + this.bodyProfile.headRadius * .25 * this.scale, this.height * .42, this.height * 1.08);
+      h = clamp(head.y - pos.y + this.bodyProfile.headRadius * .25 * this.scale, this.height * .42, this.height * 1.08);
     }
-    return out.set(this.pos.x, this.pos.y + h, this.pos.z);
+    return out.set(pos.x, pos.y + h, pos.z);
   }
   center(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + this.collisionHeight * .53, this.pos.z); }
 
@@ -396,7 +399,7 @@ export class Fighter {
         this.mp = Math.max(0, this.mp);
         this.guarding = false; this.state = 'idle';
         this.applyDamage(src, Math.round(hit.dmg * 0.6), hit);
-        this.enterStun(500, 'stun');
+        if (!this.dead) this.enterStun(500, 'stun');
         this.emit('guardbreak', { src });
         return 'hit';
       }
@@ -438,7 +441,16 @@ export class Fighter {
     const km = this.knockMul;
     // 浮空
     const inAir = this.state === 'air' || !this.onGround;
-    if (hit.launch && hit.launch > 0) {
+    // 连段保护必须先于挑空/空中追击；倒地者仍走原有倒地追击逻辑。
+    if (!lying && this.comboTaken >= 12 && !this.protectPending) {
+      this.protectPending = true;
+      this.enterAir(inAir ? Math.min(this.vel.y, 0) : 4, dirX, dirZ, (hit.knock || 3) * km, true);
+      this.emit('protect');
+      return 'hit';
+    }
+    // 保护落地前仍受伤害，但后续命中不能再托起或重置下落速度。
+    if (this.protectPending && inAir) return 'hit';
+    if (hit.launch && hit.launch > 0 && !this.protectPending) {
       if (!this.air.protected && this.air.launches < 3) {
         this.air.launches++;
         this.enterAir(hit.launch, dirX, dirZ, (hit.knock || 0.5) * km);
@@ -459,13 +471,6 @@ export class Fighter {
       this.downHits = (this.downHits || 0) + 1;
       if (hit.otgOk && hit.launch && !this.protectPending) { this.enterAir(hit.launch, dirX, dirZ, 0.5); return 'hit'; }
       if (this.downHits <= 3) this.downT = Math.min(this.downT + 120, 1300);
-      return 'hit';
-    }
-    // 连段保护：同一连段第 12 击强制击倒，起身后短暂无敌 + 霸体
-    if (this.comboTaken >= 12 && !this.protectPending) {
-      this.protectPending = true;
-      this.enterAir(4, dirX, dirZ, (hit.knock || 3) * km, true);
-      this.emit('protect');
       return 'hit';
     }
     if (hit.down) {
@@ -738,7 +743,7 @@ export class Fighter {
     const a = this.action;
     if (!a) { this.state = 'idle'; return; }
     ms *= battleMageAttackSpeed(this);
-    const d = a.def;
+    let d = a.def;
     trackHeightSlam(this, a);
     a.t += ms; a.total += ms;
     // 阶段推进
@@ -748,7 +753,8 @@ export class Fighter {
         // 按蓄力程度生成本次重击
         const k = a.chargeFrac, full = k >= 0.98;
         const h = { ...d.hits[0], dmg: Math.round(90 + 140 * k), knock: 6 + 6 * k, stun: 500 + 300 * k, guardBreak: full, down: full || k > 0.6 };
-        a.def = { ...d, wind: a.t, hits: [h] };
+        // 本帧马上注册命中窗口；后续判定与时序必须使用刚生成的重击定义。
+        d = a.def = { ...d, wind: a.t, hits: [h] };
         this.charging = false;
         a.stage = 'active'; a.t = 0; this.emit('active', { def: a.def });
         if (full) this.emit('fullcharge');
