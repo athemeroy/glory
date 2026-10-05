@@ -1,0 +1,111 @@
+name: PR1 rendering and layout QA
+
+on:
+  pull_request:
+    branches: [main]
+    types: [synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: glory-pr1-qa-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: >-
+      github.repository == 'athemeroy/glory' &&
+      github.event.pull_request.number == 1 &&
+      github.event.pull_request.head.repo.full_name == 'athemeroy/glory' &&
+      github.event.pull_request.head.ref == 'fix/foldable-first-person'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Record exact merge candidate
+        run: |
+          mkdir -p qa-evidence
+          git rev-parse HEAD HEAD^1 HEAD^2 | tee qa-evidence/commits.txt
+          node --version
+          python3 --version
+      - name: CPU regressions and syntax
+        run: |
+          set -o pipefail
+          for test in tools/*regression.mjs; do
+            node --experimental-loader ./tools/three-local-loader.mjs "$test" > "qa-evidence/$(basename "$test").log" 2>&1
+          done
+          find src server api -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
+          python3 -m py_compile tools/check-responsive-ui.py tools/check-combat-ui.py tools/check-first-person-render.py tools/browser_qa.py
+          bash -n tools/vercel/build.sh
+          git diff --check
+      - name: Install browser test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends rsync
+          python3 -m venv /tmp/glory-qa-venv
+          /tmp/glory-qa-venv/bin/pip install --disable-pip-version-check playwright==1.62.0
+          /tmp/glory-qa-venv/bin/python -m playwright install --with-deps chromium
+      - name: Assemble existing distribution without deployment
+        run: |
+          set -euo pipefail
+          bash tools/vercel/build.sh | tee qa-evidence/packaging.log
+          test -f dist/play/assets/anim/anims.glb
+          test -f dist/play/src/game/game.js
+          test -f dist/api/ice.js
+          test -f dist/server/ice-config.mjs
+          test -f dist/version.json
+          cat dist/version.json | tee qa-evidence/version.json
+      - name: DOM matrix and WebGL draw checks
+        timeout-minutes: 12
+        run: |
+          set -o pipefail
+          node server/server.mjs > qa-evidence/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://localhost:8780/ > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://localhost:8780/ > /dev/null
+          /tmp/glory-qa-venv/bin/python tools/check-responsive-ui.py http://localhost:8780 --output qa-evidence/responsive
+          /tmp/glory-qa-venv/bin/python tools/check-combat-ui.py http://localhost:8780 --output qa-evidence/combat
+          /tmp/glory-qa-venv/bin/python tools/check-first-person-render.py http://localhost:8780 --output qa-evidence/webgl
+      - name: Bound evidence size
+        if: always()
+        run: |
+          mkdir -p qa-upload
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+          source, dest = Path('qa-evidence'), Path('qa-upload')
+          total = 0
+          # Keep result logs first, then a small selection of layout and WebGL frames.
+          files = sorted(source.rglob('*.json')) + sorted(source.rglob('*.txt')) + sorted(source.rglob('*.log'))
+          files += sorted(source.glob('responsive/*1280x320.png')) + sorted(source.glob('responsive/*1280x400.png')) + sorted(source.glob('responsive/*1440x400.png'))
+          files += sorted(source.glob('responsive/*320x568.png')) + sorted(source.glob('responsive/*752x688.png'))
+          files += sorted(source.glob('webgl/*.jpg'))
+          for path in files:
+              size = path.stat().st_size
+              if total + size > 8 * 1024 * 1024:
+                  continue
+              target = dest/path.relative_to(source)
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copy2(path, target)
+              total += size
+          print(f'Evidence upload: {total} bytes, capped at 8 MiB')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: glory-pr1-qa-${{ github.run_id }}
+          path: qa-upload/
+          retention-days: 1
+          compression-level: 9
+          if-no-files-found: warn

@@ -20,6 +20,10 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 .35em; margin: 0 .1em;
 /* ---------- 菜单通用 ---------- */
 #menu { position: fixed; inset: 0; z-index: 20; }
 #menu.side { inset: 0 auto 0 0; width: 380px; }
+/* Dynamic browser bars must not push fixed menus or thumb controls off screen. */
+#menu, #hud, #touch-controls { bottom: auto; height: 100%; height: 100dvh; }
+#game { height: 100%; height: 100dvh; }
+
 .screen { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: auto; }
 .bg { position: absolute; inset: 0; background-size: cover; background-position: center; z-index: -1; }
 body.attract .main-screen .bg { background-image: none !important; background: transparent; }

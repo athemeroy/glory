@@ -3,11 +3,13 @@
 import argparse,json
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from browser_qa import confine_to_local
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('url');p.add_argument('--output',default='/tmp/glory-combat-ui');p.add_argument('--browser');a=p.parse_args();out=Path(a.output);out.mkdir(parents=True,exist_ok=True)
 results=[]
 with sync_playwright() as pw:
-    browser=pw.chromium.launch(headless=True,args=['--disable-gpu'],**({'executable_path':a.browser} if a.browser else {}))
+    browser=pw.chromium.launch(headless=True,chromium_sandbox=True,args=['--disable-gpu'],**({'executable_path':a.browser} if a.browser else {}))
     context=browser.new_context(viewport={'width':390,'height':844},is_mobile=True,has_touch=True)
+    blocked=confine_to_local(context,a.url)
     page=context.new_page();page.goto(a.url.rstrip('/')+'/tools/combat-ui-fixture.html',wait_until='networkidle');page.wait_for_function('window.__ready')
     def check(exp,label):
         assert page.evaluate(exp),label
@@ -62,8 +64,9 @@ with sync_playwright() as pw:
     page.evaluate('__ui.game.player.effects.push({type:"silence",t:2000});__ui.tick()')
     check('__ui.hud.slots.special.dataset.unavailable==="技能封印"&&!__ui.hud.classContext.classList.contains("can-fire")','技能封印时炫纹发射同样显示被封印')
     check('__errors.length===0','无浏览器错误')
+    assert not blocked,blocked
     context.close()
-    desktop=browser.new_context(viewport={'width':1440,'height':900});page=desktop.new_page();page.goto(a.url.rstrip('/')+'/tools/combat-ui-fixture.html',wait_until='networkidle');page.wait_for_function('window.__ready')
+    desktop=browser.new_context(viewport={'width':1440,'height':900});blocked=confine_to_local(desktop,a.url);page=desktop.new_page();page.goto(a.url.rstrip('/')+'/tools/combat-ui-fixture.html',wait_until='networkidle');page.wait_for_function('window.__ready')
     check('document.querySelector(".self-frame").getBoundingClientRect().right<document.querySelector(".skill-bar").getBoundingClientRect().left','桌面资源和技能分区互不遮挡')
-    page.screenshot(path=str(out/'desktop-1440x900.png'));desktop.close();browser.close()
+    page.screenshot(path=str(out/'desktop-1440x900.png'));assert not blocked,blocked;desktop.close();browser.close()
 (out/'results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2))

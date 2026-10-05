@@ -323,7 +323,7 @@ export class Game {
       for (const material of [].concat(body.material)) material.clippingPlanes = [plane];
       const game = this;
       body.onBeforeRender = (r, sc, cam) => {
-        plane.constant = game.firstPerson && cam === game.camera ? f.pos.y + 1.36 * f.scale : 1e5;
+        plane.constant = game.firstPerson && cam === game.camera ? f.rig.root.position.y + 1.36 * f.scale : 1e5;
       };
     }
     this.vmCamera.position.set(0, 0, 0); this.vmCamera.rotation.set(0, 0, 0);
@@ -847,8 +847,21 @@ export class Game {
     if (this.contextLost) return;
     this._renderDirty = false;
     const smooth = !this.manual && !this.paused && this.fpBody;
+    // 世界身体会插值到上一模拟步与本步之间，眼位也必须取同一姿势。
+    // 保留 updateCamera 的眼高缓动/后坐偏移，同时补偿根节点的插值位移；
+    // 绘制后还原相机，不能让这个临时偏移进入下一帧缓动或战斗计算。
+    const fpEye = smooth && this.firstPerson && this.player && this._fpEyeOwner === this.player.id && !this.camHook ? this.player : null;
+    if (fpEye) fpEye.eyePos(this.tmp);
+    const eyeX = this.tmp.x, eyeY = this.tmp.y, eyeZ = this.tmp.z;
+    const cameraX = this.camera.position.x, cameraY = this.camera.position.y, cameraZ = this.camera.position.z;
     if (smooth) for (const f of this.fighters) f.renderPose?.present(this.acc / STEP);
     try {
+      if (fpEye) {
+        fpEye.eyePos(this.tmp, true);
+        this.camera.position.x += this.tmp.x - eyeX;
+        this.camera.position.y += this.tmp.y - eyeY;
+        this.camera.position.z += this.tmp.z - eyeZ;
+      }
       // 录制工具用：外部接管机位（宣传片运镜），游戏本身不设置
       if (this.camHook) { try { this.camHook(this.camera, this); } catch (e) { this.camHook = null; console.warn('camHook', e); } }
       if (this.settings.post !== false && this.post) { this.post.render(dt); return; }
@@ -870,6 +883,7 @@ export class Game {
       if (smooth) for (const f of this.fighters) {
         f.renderPose?.restore(); f.rig.root.updateMatrixWorld(true);
       }
+      if (fpEye) { this.camera.position.set(cameraX, cameraY, cameraZ); this.camera.updateMatrixWorld(true); }
     }
   }
 }

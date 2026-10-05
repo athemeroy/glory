@@ -160,18 +160,21 @@ export class Fighter {
   get stance() { return this.form && this.cls.forms ? this.cls.forms[this.form].stance : this.baseStance; }
   get chain() { return this.form && this.cls.forms ? this.cls.forms[this.form].chain : this.cls.chain; }
   forward(out = new THREE.Vector3()) { return out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw)); }
-  eyePos(out = new THREE.Vector3()) {
+  eyePos(out = new THREE.Vector3(), presented = false) {
+    // 绘制期读取已经插值的根节点，不能把它改回当前模拟步。
+    const pos = presented ? this.rig.root.position : this.pos;
     let h = this.bodyProfile.eyeHeight * this.scale;
     const downEye = this.bodyProfile.downHeight * this.scale * .75;
     if (this.state === 'down' || this.state === 'dead') h = downEye;
     else if (this.state === 'getup') h = downEye + (h - downEye) * clamp(this.stateT / 0.45, 0, 1);
     else if (this.mocapBody?.bones?.Head && this.bodyProfile.headOffset) {
       // 上身低伏时相机跟随真实头部的高度；X/Z留在角色轴上，避免挥招甩头。
-      this.rig.root.position.copy(this.pos); this.rig.root.rotation.y = this.yaw; this.rig.root.updateWorldMatrix(true, true);
+      if (!presented) { this.rig.root.position.copy(this.pos); this.rig.root.rotation.y = this.yaw; }
+      this.rig.root.updateWorldMatrix(true, true);
       const head = this.mocapBody.bones.Head.localToWorld(new THREE.Vector3(...this.bodyProfile.headOffset));
-      h = clamp(head.y - this.pos.y + this.bodyProfile.headRadius * .25 * this.scale, this.height * .42, this.height * 1.08);
+      h = clamp(head.y - pos.y + this.bodyProfile.headRadius * .25 * this.scale, this.height * .42, this.height * 1.08);
     }
-    return out.set(this.pos.x, this.pos.y + h, this.pos.z);
+    return out.set(pos.x, pos.y + h, pos.z);
   }
   center(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + this.collisionHeight * .53, this.pos.z); }
 
@@ -1019,7 +1022,9 @@ export class Fighter {
     this.applyFlash();
     this.applyTell(dt);
     if (!this.renderPose || this.renderPoseRoot !== this.rig.root) {
-      const nodes = [...Object.values(this.rig.bones), ...Object.values(this.mocapBody?.bones || {}), this.mocapBody?.model];
+      const nodes = [...Object.values(this.rig.bones), ...Object.values(this.mocapBody?.bones || {}), this.mocapBody?.model,
+        // 袖口连接段每步由 connectWrist 改写；必须与握持手/手臂一同插值。
+        ...(this.gripHands || []).map(hand => hand.wrist)];
       for (const object of [this.weapon.obj, this.leftWeapon, ...(this.gripHands || []).map(hand => hand.root)]) {
         if (!object) continue;
         nodes.push(object, object.parent);
